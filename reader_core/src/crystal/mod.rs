@@ -2,6 +2,7 @@ mod draw;
 mod frame;
 mod game_lib;
 mod hook;
+mod memview;
 mod pk2;
 mod reader;
 

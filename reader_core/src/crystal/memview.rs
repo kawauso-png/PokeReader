@@ -7,6 +7,8 @@ const PRESETS: &[(&str, u32, u32, i64)] = &[
     // Bookmarks into WRAM, so the interesting blocks can be reached with A
     // instead of thousands of d-pad presses. The offset is from the region base.
     ("ROM0 6C4", 0x0022f6c4, 0x0000, 0),
+    ("gb D200", 0x0022f6c8, 0xc000, 0x1200),
+    ("gb D220", 0x0022f6c8, 0xc000, 0x1220),
     ("gb D480", 0x0022f6c8, 0xc000, 0x1480),
     ("gb D4A0", 0x0022f6c8, 0xc000, 0x14a0),
     ("gb D4C0", 0x0022f6c8, 0xc000, 0x14c0),
@@ -45,6 +47,8 @@ pub struct MemView {
     step_shift: u32,
     hits: [Option<u32>; 3],
     searched: bool,
+    /// Set when the user asks the trace to watch the address on screen.
+    pub watch_request: Option<u32>,
 }
 
 impl Default for MemView {
@@ -55,6 +59,7 @@ impl Default for MemView {
             step_shift: 0,
             hits: [None; 3],
             searched: false,
+            watch_request: None,
         }
     }
 }
@@ -88,6 +93,8 @@ impl MemView {
             self.searched = false;
         } else if pnp::is_just_pressed(pnp::Button::B) {
             self.search();
+        } else if pnp::is_just_pressed(pnp::Button::Select) {
+            self.watch_request = Some(PRESETS[self.preset].2.wrapping_add(self.offset as u32));
         }
     }
 
@@ -183,6 +190,6 @@ impl MemView {
                 pnp::println!("no hit here");
             }
         }
-        pnp::println!("A next  X+Y lock");
+        pnp::println!("A next  SEL watch");
     }
 }

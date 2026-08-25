@@ -1,5 +1,4 @@
 use crate::pnp;
-use alloc::{format, string::String};
 use num_enum::TryFromPrimitive;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, TryFromPrimitive)]
@@ -19,89 +18,24 @@ pub enum LoadedTitle {
     CrystalFr = 0x0004000000172E00,
     CrystalEs = 0x0004000000173100,
     CrystalIt = 0x0004000000173400,
+    CrystalJp = 0x0004000000172500,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum TitleError {
     InvalidTitle,
-    InvalidUpdate {
-        remaster_version: u16,
-        debug_info: Option<String>,
-        is_citra: bool,
-    },
+    InvalidUpdate { remaster_version: u16 },
 }
 
 static mut LOADED: bool = false;
 static mut LOAD_RESULT: Result<LoadedTitle, TitleError> = Err(TitleError::InvalidTitle);
 
-// Older citra builds can't reliably report the game's version
-// via the fs sysmodule. For that environment we detect whether
-// the running game is the latest version by checking a known, unique
-// 16-byte value located at a fixed address in the game's memory.
-fn check_citra_title_version(addr: u32, expected: &'static [u8; 16], version: u16) -> UpdateInfo {
-    let version_bytes = pnp::read_array::<16>(addr);
-    let version = match &version_bytes == expected {
-        true => version,
-        false => 0,
-    };
-    UpdateInfo {
-        version,
-        debug_info: Some(
-            version_bytes
-                .iter()
-                .map(|byte| format!("{:02x}", byte))
-                .collect::<String>(),
-        ),
-    }
-}
-
-struct UpdateInfo {
-    version: u16,
-    debug_info: Option<String>,
-}
-
-fn get_citra_title_version(title: LoadedTitle) -> UpdateInfo {
-    match title {
-        LoadedTitle::S => check_citra_title_version(0x3d3a90, b"8QjtffIMWFhiFpTz", 2),
-        LoadedTitle::M => check_citra_title_version(0x3d3a90, b"7mXz0DXR4b4CdD8r", 2),
-        LoadedTitle::Us => check_citra_title_version(0x3e5884, b"fnCAH3KrGIl9dgSd", 2),
-        LoadedTitle::Um => check_citra_title_version(0x3e5888, b"b3Gq6LF6EqE1bvKy", 2),
-        LoadedTitle::Or => check_citra_title_version(0x1086bc, b"cRFY0WFHNjPh44If", 7),
-        LoadedTitle::As => check_citra_title_version(0x1086bc, b"guBwm9TlQvYvncKn", 7),
-        LoadedTitle::X => check_citra_title_version(0x10869c, b"h0VRqB2YEgq39zvO", 5),
-        LoadedTitle::Y => check_citra_title_version(0x10869c, b"Slv7vHlUOfqrKMpz", 5),
-        LoadedTitle::Transporter => UpdateInfo {
-            version: 5,
-            debug_info: None,
-        },
-        LoadedTitle::CrystalEn
-        | LoadedTitle::CrystalDe
-        | LoadedTitle::CrystalFr
-        | LoadedTitle::CrystalEs
-        | LoadedTitle::CrystalIt => UpdateInfo {
-            version: 0,
-            debug_info: None,
-        },
-    }
-}
-
-fn get_update_version(title: LoadedTitle) -> UpdateInfo {
-    if pnp::is_citra() {
-        return get_citra_title_version(title);
-    }
-
-    UpdateInfo {
-        version: pnp::update_version(),
-        debug_info: None,
-    }
-}
-
-pub fn loaded_title() -> &'static Result<LoadedTitle, TitleError> {
+pub fn loaded_title() -> Result<LoadedTitle, TitleError> {
     // Reader is single-threaded, so this is safe.
     // Even then, title and update version will also always be the same values.
     unsafe {
         if LOADED {
-            return &LOAD_RESULT;
+            return LOAD_RESULT;
         }
 
         LOADED = true;
@@ -110,12 +44,11 @@ pub fn loaded_title() -> &'static Result<LoadedTitle, TitleError> {
             Ok(title) => title,
             Err(_) => {
                 LOAD_RESULT = Err(TitleError::InvalidTitle);
-                return &LOAD_RESULT;
+                return LOAD_RESULT;
             }
         };
 
-        let update_info = get_update_version(title);
-        LOAD_RESULT = match (title, update_info.version) {
+        LOAD_RESULT = match (title, pnp::update_version()) {
             (LoadedTitle::S, 2)
             | (LoadedTitle::M, 2)
             | (LoadedTitle::Us, 2)
@@ -129,14 +62,11 @@ pub fn loaded_title() -> &'static Result<LoadedTitle, TitleError> {
             | (LoadedTitle::CrystalDe, 0)
             | (LoadedTitle::CrystalFr, 0)
             | (LoadedTitle::CrystalEs, 0)
-            | (LoadedTitle::CrystalIt, 0) => Ok(title),
-            (_, remaster_version) => Err(TitleError::InvalidUpdate {
-                remaster_version,
-                debug_info: update_info.debug_info,
-                is_citra: pnp::is_citra(),
-            }),
+            | (LoadedTitle::CrystalIt, 0)
+            | (LoadedTitle::CrystalJp, 0) => Ok(title),
+            (_, remaster_version) => Err(TitleError::InvalidUpdate { remaster_version }),
         };
 
-        &LOAD_RESULT
+        LOAD_RESULT
     }
 }

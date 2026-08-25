@@ -20,7 +20,7 @@ mod utils;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const GIT_HASH: &str = env!("GIT_HASH");
 
-use title::{LoadedTitle, TitleError, loaded_title};
+use title::{loaded_title, LoadedTitle, TitleError};
 
 #[cfg(target_os = "horizon")]
 #[panic_handler]
@@ -46,7 +46,7 @@ fn my_panic(info: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-fn initialize_loaded_title(title: LoadedTitle) {
+fn initialize_loaded_title(title: &LoadedTitle) {
     match title {
         LoadedTitle::S | LoadedTitle::M => gen7::init_sm(),
         LoadedTitle::Us => gen7::init_us(),
@@ -66,13 +66,12 @@ fn initialize_loaded_title(title: LoadedTitle) {
 #[cfg(target_os = "horizon")]
 #[no_mangle]
 pub extern "C" fn initialize() {
-    match loaded_title() {
-        Ok(title) => initialize_loaded_title(title),
-        Err(_) => {}
+    if let Ok(title) = loaded_title() {
+        initialize_loaded_title(title);
     }
 }
 
-fn run_loaded_title_frame(title: LoadedTitle) {
+fn run_loaded_title_frame(title: &LoadedTitle) {
     match title {
         LoadedTitle::S | LoadedTitle::M => gen7::run_sm_frame(),
         LoadedTitle::Us | LoadedTitle::Um => gen7::run_usum_frame(),
@@ -92,12 +91,29 @@ fn run_loaded_title_frame(title: LoadedTitle) {
 pub extern "C" fn run_frame() {
     match loaded_title() {
         Ok(title) => run_loaded_title_frame(title),
-        Err(TitleError::InvalidUpdate { remaster_version }) => {
+        Err(TitleError::InvalidUpdate {
+            remaster_version,
+            debug_info,
+            is_citra,
+        }) => {
             pnp::println!("Unsupported game update!");
             pnp::println!("");
             pnp::println!("Please update your game");
             pnp::println!("for PokeReader to run");
-            pnp::println!("Update {}", remaster_version)
+            pnp::println!("");
+            pnp::println!("Detected info:");
+            pnp::println!(
+                "Playing on {}",
+                match is_citra {
+                    true => "Citra",
+                    false => "Real hardware",
+                }
+            );
+            pnp::println!("Update ver {}", remaster_version);
+            pnp::println!("Debug: {}", debug_info.as_deref().unwrap_or_default());
+            pnp::println!("");
+            pnp::println!("PokeReader version:");
+            pnp::println!("{} {}", VERSION, GIT_HASH);
         }
         Err(TitleError::InvalidTitle) => {}
     }

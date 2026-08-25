@@ -2,16 +2,21 @@ use crate::pnp;
 
 /// Emulator region base pointers in the Japanese build's .data segment:
 /// (label, address of the global, GB address the region is mapped at).
-const PRESETS: &[(&str, u32, u32)] = &[
-    ("WRAM0 6C8", 0x0022f6c8, 0xc000),
-    ("WRAMb 768", 0x0022f768, 0xd000),
-    ("HRAM 6D8", 0x0022f6d8, 0xff80),
-    ("IO 6DC", 0x0022f6dc, 0xff00),
-    ("SRAM 7F4", 0x0022f7f4, 0xa000),
-    ("VRAM 768+4", 0x0022f76c, 0x8000),
-    ("OAM 6D4", 0x0022f6d4, 0xfe00),
-    ("ROM0 6C4", 0x0022f6c4, 0x0000),
-    ("ROMn 634", 0x0022f634, 0x4000),
+const PRESETS: &[(&str, u32, u32, i64)] = &[
+    // Bookmarks into WRAM, so the interesting blocks can be reached with A
+    // instead of thousands of d-pad presses. The offset is from the region base.
+    ("gb D480", 0x0022f6c8, 0xc000, 0x1480),
+    ("gb D4A0", 0x0022f6c8, 0xc000, 0x14a0),
+    ("gb D4C0", 0x0022f6c8, 0xc000, 0x14c0),
+    ("gb D4E0", 0x0022f6c8, 0xc000, 0x14e0),
+    ("gb DC90", 0x0022f6c8, 0xc000, 0x1c90),
+    ("gb DCB0", 0x0022f6c8, 0xc000, 0x1cb0),
+    // Raw region pointers
+    ("WRAM0 6C8", 0x0022f6c8, 0xc000, 0),
+    ("WRAMb 768", 0x0022f768, 0xd000, 0),
+    ("HRAM 6D8", 0x0022f6d8, 0xff80, 0),
+    ("IO 6DC", 0x0022f6dc, 0xff00, 0),
+    ("SRAM 7F4", 0x0022f7f4, 0xa000, 0),
 ];
 
 /// Trainer id 23264, stored big endian by gen 2.
@@ -23,13 +28,24 @@ fn plausible(ptr: u32) -> bool {
     (0x00100000..0x0c000000).contains(&ptr) || (0x0c000000..0x40000000).contains(&ptr)
 }
 
-#[derive(Default)]
 pub struct MemView {
     preset: usize,
     offset: i64,
     step_shift: u32,
     hits: [Option<u32>; 3],
     searched: bool,
+}
+
+impl Default for MemView {
+    fn default() -> Self {
+        Self {
+            preset: 0,
+            offset: PRESETS[0].3,
+            step_shift: 0,
+            hits: [None; 3],
+            searched: false,
+        }
+    }
 }
 
 impl MemView {
@@ -56,7 +72,7 @@ impl MemView {
             self.step_shift = (self.step_shift + 5) % 6;
         } else if pnp::is_just_pressed(pnp::Button::A) {
             self.preset = (self.preset + 1) % PRESETS.len();
-            self.offset = 0;
+            self.offset = PRESETS[self.preset].3;
             self.hits = [None; 3];
             self.searched = false;
         } else if pnp::is_just_pressed(pnp::Button::B) {
@@ -91,7 +107,7 @@ impl MemView {
     pub fn update_and_draw(&mut self, is_locked: bool) {
         self.update(is_locked);
 
-        let (name, slot, gb_addr) = PRESETS[self.preset];
+        let (name, slot, gb_addr, _) = PRESETS[self.preset];
         let base = self.base();
         let addr = (base as i64 + self.offset) as u32;
 
@@ -108,7 +124,7 @@ impl MemView {
 
         if plausible(addr) {
             pnp::println!("at gb {:04X}", gb_addr.wrapping_add(self.offset as u32));
-            for row in 0..5u32 {
+            for row in 0..8u32 {
                 let a = addr.wrapping_add(row * 4);
                 pnp::println!(
                     "{:04X} {:02X}{:02X}{:02X}{:02X}",

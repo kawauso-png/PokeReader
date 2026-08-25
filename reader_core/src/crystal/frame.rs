@@ -22,6 +22,7 @@ enum CrystalView {
     Wild,
     Egg,
     Research,
+    Memory,
     HelpMenu,
 }
 
@@ -32,6 +33,7 @@ struct PersistedState {
     main_menu: Menu<CrystalView>,
     party_menu: SubMenu,
     help_menu: HelpMenu,
+    mem_view: super::memview::MemView,
 }
 
 const MENU: &[MenuOption<CrystalView>] = &[
@@ -40,6 +42,7 @@ const MENU: &[MenuOption<CrystalView>] = &[
     MenuOption::new(CrystalView::Wild, "Wild"),
     MenuOption::new(CrystalView::Egg, "Egg"),
     MenuOption::new(CrystalView::Research, "Research"),
+    MenuOption::new(CrystalView::Memory, "Memory"),
     MenuOption::new(CrystalView::HelpMenu, "Help"),
 ];
 
@@ -50,6 +53,7 @@ unsafe fn get_state() -> &'static mut PersistedState {
         view: CrystalView::MainMenu,
         party_menu: SubMenu::new(1, 6),
         help_menu: HelpMenu::default(),
+        mem_view: super::memview::MemView::default(),
         main_menu: Menu::new(MENU),
     });
     Lazy::force_mut(&mut STATE)
@@ -89,6 +93,7 @@ pub fn run_frame() {
         }
         CrystalView::Egg => draw_pkx(&reader.egg()),
         CrystalView::Research => draw_research(&reader, state.frame),
+        CrystalView::Memory => state.mem_view.update_and_draw(is_locked),
         CrystalView::HelpMenu => state.help_menu.update_and_draw(is_locked),
         CrystalView::MainMenu => {
             state.main_menu.update_view();

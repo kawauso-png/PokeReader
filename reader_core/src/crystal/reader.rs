@@ -48,8 +48,9 @@ const CRYSTAL_JP_ADDRESSES: Gen2Addresses = Gen2Addresses {
     trainer_id_ptr: 0xd48c,
     // wPartyMon1 dca5, same 0x30 stride as the international release
     party_ptr: 0xdca5,
-    // Not yet confirmed for this release
-    wild_ptr: 0xd206,
+    // wEnemyMon d237, confirmed from a live Celebi battle: species FB at d237,
+    // moves at d239-d23c, DVs at d23d/d23e
+    wild_ptr: 0xd237,
     egg_ptr: 0xdf7b,
 };
 

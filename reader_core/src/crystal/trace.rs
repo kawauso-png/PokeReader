@@ -28,9 +28,21 @@ pub struct TraceEntry {
 pub const FLAG_A_PRESSED: u8 = 1;
 pub const FLAG_WATCH_CHANGED: u8 = 2;
 
+pub fn status_text(state: TraceState) -> &'static str {
+    match state {
+        TraceState::Off => "OFF",
+        TraceState::Armed => "ARMED",
+        TraceState::Recording => "REC",
+        TraceState::Done => "DONE",
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TraceState {
     Off,
+    /// Armed from the pause loop. Recording begins on the first frame that
+    /// actually runs, which is the first frame after the target.
+    Armed,
     Recording,
     Done,
 }
@@ -46,6 +58,7 @@ pub struct Trace {
     write_frame: Option<usize>,
     frames_since_write: u32,
     last_run_id: u32,
+    last_arm_id: u32,
     /// Row shown first in the on screen table.
     pub cursor: usize,
 }
@@ -63,6 +76,7 @@ impl Default for Trace {
             write_frame: None,
             frames_since_write: 0,
             last_run_id: 0,
+            last_arm_id: 0,
             cursor: 0,
         }
     }
@@ -75,6 +89,11 @@ impl Trace {
 
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    /// One line summary for views other than the trace page.
+    pub fn status_line(&self) -> (&'static str, u32, usize) {
+        (status_text(self.state), self.start_advance, self.len)
     }
 
     pub fn watch_addr(&self) -> u32 {
@@ -91,6 +110,16 @@ impl Trace {
 
     pub fn write_frame(&self) -> Option<usize> {
         self.write_frame
+    }
+
+    /// Queue a recording. The values are latched on the first frame that runs,
+    /// because nothing moves while the game is paused.
+    pub fn arm(&mut self) {
+        self.len = 0;
+        self.cursor = 0;
+        self.write_frame = None;
+        self.frames_since_write = 0;
+        self.state = TraceState::Armed;
     }
 
     pub fn start(&mut self, reader: &Gen2Reader) {
@@ -134,10 +163,29 @@ impl Trace {
 
     /// Called once per frame. Copies numbers only, no allocation or IO.
     pub fn record(&mut self, reader: &Gen2Reader) {
-        // Arm off a Fixed A Frame run so the trace needs no hotkey of its own.
+        // Y + START in the pause loop arms or clears the trace.
+        let (arm_id, armed) = pnp::trace_request();
+        if arm_id != self.last_arm_id {
+            self.last_arm_id = arm_id;
+            if armed {
+                self.arm();
+            } else {
+                self.stop();
+            }
+        }
+
+        // A Fixed A Frame run starts the trace too, unless one is already set
+        // up, so arming first and running second keeps the armed start point.
         let run_id = pnp::fixed_run_id();
         if run_id != self.last_run_id {
             self.last_run_id = run_id;
+            if self.state == TraceState::Off || self.state == TraceState::Done {
+                self.start(reader);
+            }
+        }
+
+        // Armed traces latch their start values on the first frame that runs.
+        if self.state == TraceState::Armed {
             self.start(reader);
         }
 
@@ -201,11 +249,7 @@ impl Trace {
             }
         }
 
-        let status = match self.state {
-            TraceState::Off => "OFF",
-            TraceState::Recording => "REC",
-            TraceState::Done => "DONE",
-        };
+        let status = status_text(self.state);
         pnp::println!("Trace {} {}/{}", status, self.len, MAX_FRAMES);
         pnp::println!("watch {:04X}", self.watch_addr);
         pnp::println!("from adv {}", self.start_advance);

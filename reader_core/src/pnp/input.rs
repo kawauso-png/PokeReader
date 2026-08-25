@@ -105,3 +105,22 @@ pub fn trace_request() -> (u32, bool) {
     let bits = unsafe { bindings::host_trace_request() };
     (bits & 0x7fff_ffff, (bits & 0x8000_0000) != 0)
 }
+
+/// Opens a CSV under /luma/plugins/pokereader/traces/. Returns false if the
+/// plugin is not allowed to touch the SD card.
+pub fn trace_file_open(index: u32) -> bool {
+    unsafe { bindings::host_trace_file_open(index) != 0 }
+}
+
+pub fn trace_file_write(data: &[u8]) -> u32 {
+    unsafe { bindings::host_trace_file_write(data.as_ptr(), data.len() as u32) }
+}
+
+pub fn trace_file_close() {
+    unsafe { bindings::host_trace_file_close() }
+}
+
+/// Raw 3DS key bitfield for the current frame.
+pub fn current_keys() -> u32 {
+    unsafe { bindings::get_current_keys() }
+}

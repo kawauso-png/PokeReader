@@ -71,3 +71,30 @@ pub fn is_pressing(io_bits: impl Into<u32>) -> bool {
     let current_keys = unsafe { bindings::get_current_keys() };
     (current_keys & io_bits.into()) != 0
 }
+
+/// State of the Fixed A Frame feature, packed by the plugin's C side.
+pub struct FixedAFrame {
+    pub frames: u8,
+    pub last_run: u8,
+    pub armed: bool,
+    pub running: bool,
+    pub physical_a: bool,
+}
+
+/// Read the Fixed A Frame state.
+pub fn fixed_a_frame() -> FixedAFrame {
+    let bits = unsafe { bindings::host_fixed_state() };
+    FixedAFrame {
+        frames: (bits & 0xff) as u8,
+        last_run: ((bits >> 8) & 0xff) as u8,
+        armed: (bits & (1 << 16)) != 0,
+        running: (bits & (1 << 17)) != 0,
+        physical_a: (bits & (1 << 18)) != 0,
+    }
+}
+
+/// Increments every time a Fixed A Frame run starts. Lets other code arm
+/// itself off the run without needing its own hotkey.
+pub fn fixed_run_id() -> u32 {
+    unsafe { bindings::host_fixed_run_id() }
+}

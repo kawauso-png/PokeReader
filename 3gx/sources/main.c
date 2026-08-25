@@ -16,6 +16,34 @@ static Handle memLayoutChanged;
 static u8 stack[0x1000] __attribute__((aligned(8)));
 static bool is_paused = false;
 
+// ---- Fixed A Frame -------------------------------------------------------
+// Runs the game for an exact number of frames while the player physically
+// holds A, so the length of a human button press stops affecting how much RNG
+// the Celebi event consumes.
+//
+// The HID shared memory is mapped read only, so input cannot be injected. The
+// player holds A for real; while armed, A no longer resumes the game so that
+// holding it does not cancel the pause.
+#define FIXED_A_FRAMES_MIN 1
+#define FIXED_A_FRAMES_MAX 10
+
+static u32 fixed_a_frames = 2;
+static u32 fixed_frames_remaining = 0;
+static u32 fixed_last_run = 0;
+static bool fixed_armed = false;
+static u32 fixed_run_id = 0;
+
+u32 host_fixed_run_id(void)
+{
+    return fixed_run_id;
+}
+
+u32 host_fixed_state(void)
+{
+    u32 physical_a = (get_current_keys() & KEY_A) != 0;
+    return (fixed_a_frames & 0xff) | ((fixed_last_run & 0xff) << 8) | ((u32)fixed_armed << 16) | ((fixed_frames_remaining > 0) << 17) | (physical_a << 18);
+}
+
 void handle_freeze(bool isTopScreen)
 {
     u64 masked_title_id = get_title_id() & 0xfff000;
@@ -30,15 +58,55 @@ void handle_freeze(bool isTopScreen)
         scan_input();
 
         u32 just_pressed = host_just_pressed();
+        u32 held = get_current_keys();
+
+        // A fixed run is in progress: let exactly one frame through and stay
+        // paused. This reuses the existing single frame advance path.
+        if (fixed_frames_remaining > 0)
+        {
+            fixed_frames_remaining--;
+            break;
+        }
+
+        // Y + up / Y + down adjusts the frame count.
+        if (held & KEY_Y)
+        {
+            if ((just_pressed & KEY_DUP) && fixed_a_frames < FIXED_A_FRAMES_MAX)
+            {
+                fixed_a_frames++;
+            }
+            if ((just_pressed & KEY_DDOWN) && fixed_a_frames > FIXED_A_FRAMES_MIN)
+            {
+                fixed_a_frames--;
+            }
+            // Y + B arms and disarms. While armed, A does not resume.
+            if (just_pressed & KEY_B)
+            {
+                fixed_armed = !fixed_armed;
+            }
+            svcSleepThread(50000000);
+            continue;
+        }
+
+        // X starts the run once armed. Hold A before pressing it.
+        if (fixed_armed && (just_pressed & KEY_X))
+        {
+            fixed_frames_remaining = fixed_a_frames;
+            fixed_last_run = fixed_a_frames;
+            fixed_run_id++;
+            continue;
+        }
 
         if (just_pressed & (KEY_SELECT | KEY_L))
         {
             break;
         }
 
-        if (just_pressed & (KEY_A | KEY_START | KEY_R))
+        u32 resume_keys = fixed_armed ? (KEY_START | KEY_R) : (KEY_A | KEY_START | KEY_R);
+        if (just_pressed & resume_keys)
         {
             is_paused = false;
+            fixed_frames_remaining = 0;
             break;
         }
 

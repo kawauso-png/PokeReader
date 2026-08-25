@@ -126,8 +126,6 @@ impl MemView {
         let (seen1, seen2) = hook::pc_seen();
         pnp::println!("hook {}", hook::any_hits());
         pnp::println!("ff04 {}", hook::ff04_hits());
-        let (alt, alt_ff04) = hook::alt_hits();
-        pnp::println!("alt  {} / {}", alt, alt_ff04);
         pnp::println!("pc   {:04X}", hook::last_pc());
         pnp::println!("seen {:04X} {:04X}", seen1, seen2);
         pnp::println!("");

@@ -98,3 +98,10 @@ pub fn fixed_a_frame() -> FixedAFrame {
 pub fn fixed_run_id() -> u32 {
     unsafe { bindings::host_fixed_run_id() }
 }
+
+/// Celebi trace arming, toggled from the pause loop with Y + START.
+/// Returns the toggle counter and whether the trace is currently armed.
+pub fn trace_request() -> (u32, bool) {
+    let bits = unsafe { bindings::host_trace_request() };
+    (bits & 0x7fff_ffff, (bits & 0x8000_0000) != 0)
+}

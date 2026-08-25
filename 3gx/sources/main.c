@@ -39,6 +39,72 @@ static u32 fixed_run_id = 0;
 static bool trace_armed = false;
 static u32 trace_arm_id = 0;
 
+// ---- Trace CSV output ----------------------------------------------------
+// The trace itself never touches the filesystem. Once recording has stopped,
+// the reader streams the buffer here a chunk at a time.
+static Handle trace_file = 0;
+static u64 trace_file_offset = 0;
+
+u32 host_trace_file_open(u32 index)
+{
+    FS_Archive sdmc;
+    char path[128];
+
+    if (trace_file != 0)
+    {
+        return 0;
+    }
+
+    if (R_FAILED(FSUSER_OpenArchive(&sdmc, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""))))
+    {
+        return 0;
+    }
+
+    FSUSER_CreateDirectory(sdmc, fsMakePath(PATH_ASCII, "/luma/plugins/pokereader"), 0);
+    FSUSER_CreateDirectory(sdmc, fsMakePath(PATH_ASCII, "/luma/plugins/pokereader/traces"), 0);
+
+    sprintf(path, "/luma/plugins/pokereader/traces/celebi_trace_%04lu.csv", (unsigned long)index);
+
+    Result res = FSUSER_OpenFile(&trace_file, sdmc, fsMakePath(PATH_ASCII, path), FS_OPEN_WRITE | FS_OPEN_CREATE, 0);
+    FSUSER_CloseArchive(sdmc);
+
+    if (R_FAILED(res))
+    {
+        trace_file = 0;
+        return 0;
+    }
+
+    trace_file_offset = 0;
+    return 1;
+}
+
+u32 host_trace_file_write(const char *data, u32 len)
+{
+    u32 written = 0;
+
+    if (trace_file == 0)
+    {
+        return 0;
+    }
+
+    if (R_FAILED(FSFILE_Write(trace_file, &written, trace_file_offset, data, len, FS_WRITE_FLUSH)))
+    {
+        return 0;
+    }
+
+    trace_file_offset += written;
+    return written;
+}
+
+void host_trace_file_close(void)
+{
+    if (trace_file != 0)
+    {
+        FSFILE_Close(trace_file);
+        trace_file = 0;
+    }
+}
+
 u32 host_trace_request(void)
 {
     return (trace_arm_id & 0x7fffffff) | ((u32)trace_armed << 31);

@@ -1,8 +1,8 @@
-use super::title::{loaded_title, LoadedTitle};
+use super::title::{LoadedTitle, loaded_title};
 use crate::alloc::string::ToString;
 use crate::crystal::CRYSTAL_CYAN;
-use crate::pnp;
 use crate::{GIT_HASH, VERSION};
+use crate::{pnp, utils::menu::MenuOptionValue};
 use pkm_rs::{Nature, Pkx, Shiny};
 
 pub const WHITE: u32 = 0xffffff;
@@ -135,7 +135,8 @@ pub fn print_title() {
             | LoadedTitle::CrystalDe
             | LoadedTitle::CrystalFr
             | LoadedTitle::CrystalEs
-            | LoadedTitle::CrystalIt => {
+            | LoadedTitle::CrystalIt
+            | LoadedTitle::CrystalJp => {
                 pnp::println!(color = 0xaf00d7, " Pokemon Crystal")
             }
         },
@@ -240,6 +241,10 @@ pub fn draw_controls_help() {
     pnp::println!(" - Frame Advance");
 }
 
+pub fn draw_specific_help(draw_func: fn() -> ()) {
+    draw_func();
+}
+
 pub fn draw_misc_help() {
     pnp::println!("PokeReader");
     draw_version();
@@ -254,7 +259,8 @@ pub fn draw_misc_help() {
         | Ok(LoadedTitle::CrystalEs)
         | Ok(LoadedTitle::CrystalDe)
         | Ok(LoadedTitle::CrystalFr)
-        | Ok(LoadedTitle::CrystalIt) => pnp::println!(color = CRYSTAL_CYAN, " discord.gg/d8JuAvg"),
+        | Ok(LoadedTitle::CrystalIt)
+        | Ok(LoadedTitle::CrystalJp) => pnp::println!(color = CRYSTAL_CYAN, " discord.gg/d8JuAvg"),
         _ => pnp::println!(color = MUTED_CYAN, " discord.gg/d8JuAvg"),
     }
 }
@@ -263,7 +269,7 @@ pub fn draw_version() {
     pnp::println!(" Ver {} {}", VERSION, GIT_HASH);
 }
 
-pub fn draw_header<T: Eq>(main_menu: T, current_view: T, is_locked: bool) {
+pub fn draw_header<T: MenuOptionValue + Eq>(main_menu: T, current_view: T, is_locked: bool) {
     if is_locked {
         pnp::println!("Unlock X+Y");
     } else if current_view == main_menu {

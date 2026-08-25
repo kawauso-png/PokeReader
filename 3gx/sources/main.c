@@ -33,6 +33,17 @@ static u32 fixed_last_run = 0;
 static bool fixed_armed = false;
 static u32 fixed_run_id = 0;
 
+// Celebi trace arming. The reader only runs while frames are being presented,
+// so the trace has to be armed from inside the pause loop. Toggling must not
+// let a frame through.
+static bool trace_armed = false;
+static u32 trace_arm_id = 0;
+
+u32 host_trace_request(void)
+{
+    return (trace_arm_id & 0x7fffffff) | ((u32)trace_armed << 31);
+}
+
 u32 host_fixed_run_id(void)
 {
     return fixed_run_id;
@@ -83,6 +94,12 @@ void handle_freeze(bool isTopScreen)
             if (just_pressed & KEY_B)
             {
                 fixed_armed = !fixed_armed;
+            }
+            // Y + START arms the Celebi trace without advancing a frame.
+            if (just_pressed & KEY_START)
+            {
+                trace_armed = !trace_armed;
+                trace_arm_id++;
             }
             svcSleepThread(50000000);
             continue;

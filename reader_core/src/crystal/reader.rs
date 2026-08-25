@@ -6,22 +6,51 @@ struct Gen2Addresses {
     div_ptr: u32,
     pc_reg_ptr: u32,
     gb_rng_ptr: u32,
-    dst_ptr: u32,
+    /// None on the Japanese release, which has no daylight saving setting.
+    dst_ptr: Option<u32>,
     time_ptr: u32,
     time_day_ptr: u32,
     play_time_ptr: u32,
     trainer_id_ptr: u32,
+    party_ptr: u32,
+    wild_ptr: u32,
+    egg_ptr: u32,
 }
 
 const CRYSTAL_ADDRESSES: Gen2Addresses = Gen2Addresses {
     div_ptr: 0x22f794,
     pc_reg_ptr: 0x22f5fc,
     gb_rng_ptr: 0xffe1,
-    dst_ptr: 0xd4c2,
+    dst_ptr: Some(0xd4c2),
     time_ptr: 0xff94,
     time_day_ptr: 0xd4cb,
     play_time_ptr: 0xd4c5,
     trainer_id_ptr: 0xd47b,
+    party_ptr: 0xdcdf,
+    wild_ptr: 0xd206,
+    egg_ptr: 0xdf7b,
+};
+
+// The Japanese release has a different WRAM layout: shorter name buffers and no
+// daylight saving setting. The emulator side pointers are unchanged.
+// Save data map: https://vs-prof-oak.hatenablog.com/entry/2024/03/02/134741
+const CRYSTAL_JP_ADDRESSES: Gen2Addresses = Gen2Addresses {
+    div_ptr: 0x22f794,
+    pc_reg_ptr: 0x22f5fc,
+    gb_rng_ptr: 0xffe1,
+    dst_ptr: None,
+    time_ptr: 0xff94,
+    // wGameTimeHours d4b7-d4b8, so the low byte is d4b8, then minutes, seconds
+    play_time_ptr: 0xd4b8,
+    // wCurDay d4be-d4bf
+    time_day_ptr: 0xd4be,
+    // wPlayerID d48c-d48d
+    trainer_id_ptr: 0xd48c,
+    // wPartyMon1 dca5, same 0x30 stride as the international release
+    party_ptr: 0xdca5,
+    // Not yet confirmed for this release
+    wild_ptr: 0xd206,
+    egg_ptr: 0xdf7b,
 };
 
 pub struct Gen2Reader {
@@ -30,9 +59,11 @@ pub struct Gen2Reader {
 
 impl Gen2Reader {
     pub fn crystal() -> Self {
-        Self {
-            addrs: &CRYSTAL_ADDRESSES,
-        }
+        let addrs = match crate::title::loaded_title() {
+            Ok(crate::title::LoadedTitle::CrystalJp) => &CRYSTAL_JP_ADDRESSES,
+            _ => &CRYSTAL_ADDRESSES,
+        };
+        Self { addrs }
     }
 
     pub fn div(&self) -> u8 {
@@ -44,7 +75,7 @@ impl Gen2Reader {
     }
 
     pub fn party(&self, slot: u8) -> Pk2 {
-        let poke_addr = 0xDCDF + (slot as u32 * 0x30);
+        let poke_addr = self.addrs.party_ptr + (slot as u32 * 0x30);
         let experience = gb_mem::read_u32(poke_addr + 0x8);
         let atkdef = gb_mem::read_u8(poke_addr + 0x15);
         let spespc = gb_mem::read_u8(poke_addr + 0x16);
@@ -53,16 +84,16 @@ impl Gen2Reader {
     }
 
     pub fn wild(&self) -> Pk2 {
-        let spec_index = gb_mem::read_u8(0xD206);
-        let atkdef = gb_mem::read_u8(0xD20C);
-        let spespc = gb_mem::read_u8(0xD20D);
+        let spec_index = gb_mem::read_u8(self.addrs.wild_ptr);
+        let atkdef = gb_mem::read_u8(self.addrs.wild_ptr + 0x6);
+        let spespc = gb_mem::read_u8(self.addrs.wild_ptr + 0x7);
         Pk2::new(spec_index, atkdef, spespc, 0)
     }
 
     pub fn egg(&self) -> Pk2 {
-        let spec_index = gb_mem::read_u8(0xDF7B);
-        let atkdef = gb_mem::read_u8(0xDF90);
-        let spespc = gb_mem::read_u8(0xDF91);
+        let spec_index = gb_mem::read_u8(self.addrs.egg_ptr);
+        let atkdef = gb_mem::read_u8(self.addrs.egg_ptr + 0x15);
+        let spespc = gb_mem::read_u8(self.addrs.egg_ptr + 0x16);
         Pk2::new(spec_index, atkdef, spespc, 0)
     }
 
@@ -99,7 +130,10 @@ impl Gen2Reader {
     }
 
     pub fn dst(&self) -> bool {
-        (gb_mem::read_u8(self.addrs.dst_ptr) & 0x80) != 0
+        match self.addrs.dst_ptr {
+            Some(ptr) => (gb_mem::read_u8(ptr) & 0x80) != 0,
+            None => false,
+        }
     }
 
     pub fn trainer_id(&self) -> u16 {

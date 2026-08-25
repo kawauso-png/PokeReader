@@ -1,3 +1,4 @@
+use super::hook;
 use crate::pnp;
 
 /// Emulator region base pointers in the Japanese build's .data segment:
@@ -175,6 +176,11 @@ impl MemView {
                 pnp::println!("no hit here");
             }
         }
+        pnp::println!("");
+        let (seen1, seen2) = hook::pc_seen();
+        pnp::println!("hook {} ff04 {}", hook::any_hits(), hook::ff04_hits());
+        pnp::println!("pc {:04X}", hook::last_pc());
+        pnp::println!("seen {:04X} {:04X}", seen1, seen2);
         pnp::println!("A next  X+Y lock");
     }
 }

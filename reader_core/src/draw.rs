@@ -135,7 +135,8 @@ pub fn print_title() {
             | LoadedTitle::CrystalDe
             | LoadedTitle::CrystalFr
             | LoadedTitle::CrystalEs
-            | LoadedTitle::CrystalIt => {
+            | LoadedTitle::CrystalIt
+            | LoadedTitle::CrystalJp => {
                 pnp::println!(color = 0xaf00d7, " Pokemon Crystal")
             }
         },
@@ -254,7 +255,8 @@ pub fn draw_misc_help() {
         | Ok(LoadedTitle::CrystalEs)
         | Ok(LoadedTitle::CrystalDe)
         | Ok(LoadedTitle::CrystalFr)
-        | Ok(LoadedTitle::CrystalIt) => pnp::println!(color = CRYSTAL_CYAN, " discord.gg/d8JuAvg"),
+        | Ok(LoadedTitle::CrystalIt)
+        | Ok(LoadedTitle::CrystalJp) => pnp::println!(color = CRYSTAL_CYAN, " discord.gg/d8JuAvg"),
         _ => pnp::println!(color = MUTED_CYAN, " discord.gg/d8JuAvg"),
     }
 }

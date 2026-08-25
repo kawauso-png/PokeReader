@@ -82,4 +82,14 @@ pub fn draw_research(reader: &Gen2Reader, frame: usize) {
         reader.play_minutes(),
         reader.play_seconds()
     );
+
+    let fixed = pnp::fixed_a_frame();
+    pnp::println!("");
+    pnp::println!("A Frames {}", fixed.frames);
+    pnp::println!(
+        "Armed {}  Run {}",
+        fixed.armed,
+        if fixed.running { "yes" } else { "no" }
+    );
+    pnp::println!("Last {}  PhysA {}", fixed.last_run, fixed.physical_a);
 }

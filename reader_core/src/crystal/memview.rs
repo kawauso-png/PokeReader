@@ -123,6 +123,13 @@ impl MemView {
     pub fn update_and_draw(&mut self, is_locked: bool) {
         self.update(is_locked);
 
+        let (seen1, seen2) = hook::pc_seen();
+        pnp::println!("hook {}", hook::any_hits());
+        pnp::println!("ff04 {}", hook::ff04_hits());
+        pnp::println!("pc   {:04X}", hook::last_pc());
+        pnp::println!("seen {:04X} {:04X}", seen1, seen2);
+        pnp::println!("");
+
         let (name, slot, gb_addr, _) = PRESETS[self.preset];
         let base = self.base();
         let addr = (base as i64 + self.offset) as u32;
@@ -140,7 +147,7 @@ impl MemView {
 
         if plausible(addr) {
             pnp::println!("at gb {:04X}", gb_addr.wrapping_add(self.offset as u32));
-            for row in 0..8u32 {
+            for row in 0..4u32 {
                 let a = addr.wrapping_add(row * 4);
                 pnp::println!(
                     "{:04X} {:02X}{:02X}{:02X}{:02X}",
@@ -176,11 +183,6 @@ impl MemView {
                 pnp::println!("no hit here");
             }
         }
-        pnp::println!("");
-        let (seen1, seen2) = hook::pc_seen();
-        pnp::println!("hook {} ff04 {}", hook::any_hits(), hook::ff04_hits());
-        pnp::println!("pc {:04X}", hook::last_pc());
-        pnp::println!("seen {:04X} {:04X}", seen1, seen2);
         pnp::println!("A next  X+Y lock");
     }
 }

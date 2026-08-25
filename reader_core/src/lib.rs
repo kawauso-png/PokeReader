@@ -58,7 +58,8 @@ fn initialize_loaded_title(title: &LoadedTitle) {
         | LoadedTitle::CrystalDe
         | LoadedTitle::CrystalFr
         | LoadedTitle::CrystalEs
-        | LoadedTitle::CrystalIt => crystal::init_crystal(),
+        | LoadedTitle::CrystalIt
+        | LoadedTitle::CrystalJp => crystal::init_crystal(),
     }
 }
 
@@ -81,7 +82,8 @@ fn run_loaded_title_frame(title: &LoadedTitle) {
         | LoadedTitle::CrystalDe
         | LoadedTitle::CrystalFr
         | LoadedTitle::CrystalEs
-        | LoadedTitle::CrystalIt => crystal::run_frame(),
+        | LoadedTitle::CrystalIt
+        | LoadedTitle::CrystalJp => crystal::run_frame(),
     }
 }
 

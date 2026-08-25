@@ -9,6 +9,7 @@ extern "C" {
     pub fn get_current_keys() -> u32;
     pub fn host_fixed_state() -> u32;
     pub fn host_fixed_run_id() -> u32;
+    pub fn host_trace_request() -> u32;
     pub fn get_remaster_version() -> u16;
     pub fn osGetTime() -> u64;
     pub fn get_trampoline_addr() -> u32;
@@ -50,6 +51,10 @@ pub mod test_stubs {
     }
     #[no_mangle]
     pub extern "C" fn host_fixed_run_id() -> u32 {
+        0
+    }
+    #[no_mangle]
+    pub extern "C" fn host_trace_request() -> u32 {
         0
     }
     #[no_mangle]

@@ -16,6 +16,8 @@ static mut CYCLE_COUNTER: u32 = 0;
 // program counter does it see when the game reads the DIV register?
 static mut FF04_HITS: u32 = 0;
 static mut ANY_HITS: u32 = 0;
+static mut ALT_HITS: u32 = 0;
+static mut ALT_FF04: u32 = 0;
 static mut LAST_PC: u16 = 0;
 static mut PC_SEEN_1: u16 = 0;
 static mut PC_SEEN_2: u16 = 0;
@@ -26,6 +28,10 @@ pub fn ff04_hits() -> u32 {
 
 pub fn any_hits() -> u32 {
     unsafe { ANY_HITS }
+}
+
+pub fn alt_hits() -> (u32, u32) {
+    unsafe { (ALT_HITS, ALT_FF04) }
 }
 
 pub fn last_pc() -> u16 {
@@ -156,10 +162,50 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     }
 }
 
+/// The other call site into the GB memory read dispatcher that uses LDH
+/// addressing. On the Japanese release the usual one never executes, so both
+/// are hooked until we know which handles `ldh a, [n8]`.
+fn gb_read_mem_alt(regs: &[u32], _stack_pointer: *mut u32) {
+    unsafe { ALT_HITS = ALT_HITS.wrapping_add(1) };
+
+    if regs[0] != 0xff04 {
+        return;
+    }
+
+    unsafe { ALT_FF04 = ALT_FF04.wrapping_add(1) };
+
+    let reader = Gen2Reader::crystal();
+    let pc = reader.pc_reg();
+
+    unsafe {
+        LAST_PC = pc;
+        if PC_SEEN_1 == 0 || PC_SEEN_1 == pc {
+            PC_SEEN_1 = pc;
+        } else if PC_SEEN_2 == 0 || PC_SEEN_2 == pc {
+            PC_SEEN_2 = pc;
+        }
+    }
+
+    const RNG_DIV_READ_1: u16 = 0x2b5 + 1;
+    const RNG_DIV_READ_2: u16 = 0x2bd + 1;
+    if pc == RNG_DIV_READ_1 {
+        let div = reader.div();
+        unsafe { ADIV = div };
+        unsafe { ADD_DIV_TRACKER.update(div) };
+        unsafe { RNG_ADVANCE = RNG_ADVANCE.wrapping_add(1) };
+    }
+    if pc == RNG_DIV_READ_2 {
+        let div = reader.div();
+        unsafe { SDIV = div };
+        unsafe { SUB_DIV_TRACKER.update(div) };
+    }
+}
+
 pub fn init_crystal() {
     utils::hook_game_branch!(
         game_name = crystal,
         update_cycle_counter = 0x1a8360,
         gb_read_mem = 0x1af17c,
+        gb_read_mem_alt = 0x1af11c,
     );
 }

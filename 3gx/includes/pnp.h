@@ -11,6 +11,8 @@ void host_read_mem(u32 game_addr, u32 size, u32 out_ptr);
 void host_write_mem(u32 game_addr, u32 size, u32 in_ptr);
 void scan_input();
 u32 host_just_pressed();
+u32 host_fixed_state(void);
+u32 host_fixed_run_id(void);
 u32 host_is_just_pressed(u32 io_bits);
 void host_set_print_max_len(u32 max_len);
 u64 host_get_game_title_id();

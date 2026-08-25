@@ -13,6 +13,7 @@ void scan_input();
 u32 host_just_pressed();
 u32 host_fixed_state(void);
 u32 host_fixed_run_id(void);
+u32 host_trace_request(void);
 u32 host_is_just_pressed(u32 io_bits);
 void host_set_print_max_len(u32 max_len);
 u64 host_get_game_title_id();

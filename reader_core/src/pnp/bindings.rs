@@ -10,6 +10,9 @@ extern "C" {
     pub fn host_fixed_state() -> u32;
     pub fn host_fixed_run_id() -> u32;
     pub fn host_trace_request() -> u32;
+    pub fn host_trace_file_open(index: u32) -> u32;
+    pub fn host_trace_file_write(data: *const u8, len: u32) -> u32;
+    pub fn host_trace_file_close();
     pub fn get_remaster_version() -> u16;
     pub fn osGetTime() -> u64;
     pub fn get_trampoline_addr() -> u32;
@@ -57,6 +60,16 @@ pub mod test_stubs {
     pub extern "C" fn host_trace_request() -> u32 {
         0
     }
+    #[no_mangle]
+    pub extern "C" fn host_trace_file_open(_index: u32) -> u32 {
+        0
+    }
+    #[no_mangle]
+    pub extern "C" fn host_trace_file_write(_data: *const u8, _len: u32) -> u32 {
+        0
+    }
+    #[no_mangle]
+    pub extern "C" fn host_trace_file_close() {}
     #[no_mangle]
     pub extern "C" fn osGetTime() -> u64 {
         0

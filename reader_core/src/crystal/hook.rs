@@ -12,6 +12,30 @@ static mut ADIV: u8 = 0;
 static mut SDIV: u8 = 0;
 static mut CYCLE_COUNTER: u32 = 0;
 
+// Diagnostics for the Japanese release: is the hook firing at all, and what
+// program counter does it see when the game reads the DIV register?
+static mut FF04_HITS: u32 = 0;
+static mut ANY_HITS: u32 = 0;
+static mut LAST_PC: u16 = 0;
+static mut PC_SEEN_1: u16 = 0;
+static mut PC_SEEN_2: u16 = 0;
+
+pub fn ff04_hits() -> u32 {
+    unsafe { FF04_HITS }
+}
+
+pub fn any_hits() -> u32 {
+    unsafe { ANY_HITS }
+}
+
+pub fn last_pc() -> u16 {
+    unsafe { LAST_PC }
+}
+
+pub fn pc_seen() -> (u16, u16) {
+    unsafe { (PC_SEEN_1, PC_SEEN_2) }
+}
+
 pub fn measured_div() -> u16 {
     unsafe { (ADIV as u16) << 8 | SDIV as u16 }
 }
@@ -98,12 +122,24 @@ pub fn sub_div_tracker() -> &'static DivTracker {
 }
 
 fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
+    unsafe { ANY_HITS = ANY_HITS.wrapping_add(1) };
+
     if regs[0] != 0xff04 {
         return;
     }
 
     let reader = Gen2Reader::crystal();
     let pc = reader.pc_reg();
+
+    unsafe {
+        FF04_HITS = FF04_HITS.wrapping_add(1);
+        LAST_PC = pc;
+        if PC_SEEN_1 == 0 || PC_SEEN_1 == pc {
+            PC_SEEN_1 = pc;
+        } else if PC_SEEN_2 == 0 || PC_SEEN_2 == pc {
+            PC_SEEN_2 = pc;
+        }
+    }
     const RNG_DIV_READ_1: u16 = 0x2b5 + 1;
     const RNG_DIV_READ_2: u16 = 0x2bd + 1;
     if pc == RNG_DIV_READ_1 {

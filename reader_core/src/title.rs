@@ -19,6 +19,7 @@ pub enum LoadedTitle {
     CrystalFr = 0x0004000000172E00,
     CrystalEs = 0x0004000000173100,
     CrystalIt = 0x0004000000173400,
+    CrystalJp = 0x0004000000172500,
 }
 
 #[derive(Debug, Clone)]
@@ -78,7 +79,8 @@ fn get_citra_title_version(title: LoadedTitle) -> UpdateInfo {
         | LoadedTitle::CrystalDe
         | LoadedTitle::CrystalFr
         | LoadedTitle::CrystalEs
-        | LoadedTitle::CrystalIt => UpdateInfo {
+        | LoadedTitle::CrystalIt
+        | LoadedTitle::CrystalJp => UpdateInfo {
             version: 0,
             debug_info: None,
         },
@@ -129,7 +131,8 @@ pub fn loaded_title() -> &'static Result<LoadedTitle, TitleError> {
             | (LoadedTitle::CrystalDe, 0)
             | (LoadedTitle::CrystalFr, 0)
             | (LoadedTitle::CrystalEs, 0)
-            | (LoadedTitle::CrystalIt, 0) => Ok(title),
+            | (LoadedTitle::CrystalIt, 0)
+            | (LoadedTitle::CrystalJp, 0) => Ok(title),
             (_, remaster_version) => Err(TitleError::InvalidUpdate {
                 remaster_version,
                 debug_info: update_info.debug_info,

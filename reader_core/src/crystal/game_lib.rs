@@ -1,6 +1,19 @@
+use crate::title::{loaded_title, LoadedTitle};
 use crate::utils::game_fn;
 
-game_fn!(read_gb_mem(gb_addr: u32) -> u8 = 0x1690b0);
+// The GB memory read dispatcher sits at a different address in the Japanese
+// release. Verified against the decrypted .code of title 0004000000172500:
+// 0x169018 is `lsr r1, r0, #12 / cmp r1, #0x10 / ldrlo pc, [pc, r1, lsl #2]`,
+// while 0x1690b0 falls inside the VRAM handler.
+game_fn!(read_gb_mem_intl(gb_addr: u32) -> u8 = 0x1690b0);
+game_fn!(read_gb_mem_jp(gb_addr: u32) -> u8 = 0x169018);
+
+fn read_gb_mem(gb_addr: u32) -> u8 {
+    match loaded_title() {
+        Ok(LoadedTitle::CrystalJp) => read_gb_mem_jp(gb_addr),
+        _ => read_gb_mem_intl(gb_addr),
+    }
+}
 
 pub mod gb_mem {
     use super::*;

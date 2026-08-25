@@ -5,6 +5,7 @@ use crate::pnp;
 const PRESETS: &[(&str, u32, u32, i64)] = &[
     // Bookmarks into WRAM, so the interesting blocks can be reached with A
     // instead of thousands of d-pad presses. The offset is from the region base.
+    ("ROM0 6C4", 0x0022f6c4, 0x0000, 0),
     ("gb D480", 0x0022f6c8, 0xc000, 0x1480),
     ("gb D4A0", 0x0022f6c8, 0xc000, 0x14a0),
     ("gb D4C0", 0x0022f6c8, 0xc000, 0x14c0),
@@ -21,6 +22,15 @@ const PRESETS: &[(&str, u32, u32, i64)] = &[
 
 /// Trainer id 23264, stored big endian by gen 2.
 const NEEDLE: [u8; 2] = [0x5a, 0xe0];
+
+/// The VBlank RNG update, as raw GB opcodes:
+///   ldh a,[rDIV] / ld b,a / ldh a,[hRandomAdd] / adc b / ldh [hRandomAdd],a
+///   ldh a,[rDIV] / ld b,a / ldh a,[hRandomSub] / sbc b / ldh [hRandomSub],a
+/// PokeReader hooks the two rDIV reads by program counter, so finding this
+/// pattern gives the two values it needs.
+const RNG_PATTERN: [u8; 16] = [
+    0xf0, 0x04, 0x47, 0xf0, 0xe1, 0x88, 0xe0, 0xe1, 0xf0, 0x04, 0x47, 0xf0, 0xe2, 0x98, 0xe0, 0xe2,
+];
 
 /// Ranges the 3ds actually maps for an application. The emulator keeps its GB
 /// regions around 0x08a3xxxx, so that block has to be included.
@@ -80,8 +90,7 @@ impl MemView {
         }
     }
 
-    /// Scan the whole region the selected pointer covers and record where the
-    /// trainer id sits, expressed as a GB address.
+    /// In ROM, look for the VBlank RNG update. In RAM, look for the trainer id.
     fn search(&mut self) {
         let base = self.base();
         let gb_base = PRESETS[self.preset].2;
@@ -92,11 +101,17 @@ impl MemView {
             return;
         }
 
+        let rom = gb_base < 0x8000;
         let mut found = 0;
         let mut scanned = 0u32;
         while scanned < 0x8000 && found < 3 {
             let addr = base + scanned;
-            if pnp::read::<u8>(addr) == NEEDLE[0] && pnp::read::<u8>(addr + 1) == NEEDLE[1] {
+            let matched = if rom {
+                (0..RNG_PATTERN.len() as u32).all(|i| pnp::read::<u8>(addr + i) == RNG_PATTERN[i as usize])
+            } else {
+                pnp::read::<u8>(addr) == NEEDLE[0] && pnp::read::<u8>(addr + 1) == NEEDLE[1]
+            };
+            if matched {
                 self.hits[found] = Some(gb_base.wrapping_add(scanned));
                 found += 1;
             }
@@ -141,12 +156,19 @@ impl MemView {
         }
 
         pnp::println!("");
+        let rom = gb_addr < 0x8000;
         if !self.searched {
-            pnp::println!("[B] find 5AE0");
+            pnp::println!("[B] {}", if rom { "find RNG" } else { "find 5AE0" });
         } else {
             let mut any = false;
             for hit in self.hits.iter().flatten() {
-                pnp::println!("TID at gb {:04X}", hit);
+                if rom {
+                    // The two rDIV reads sit at +1 and +9 from the pattern start.
+                    pnp::println!("RNG1 {:04X}", hit.wrapping_add(1));
+                    pnp::println!("RNG2 {:04X}", hit.wrapping_add(9));
+                } else {
+                    pnp::println!("TID at gb {:04X}", hit);
+                }
                 any = true;
             }
             if !any {

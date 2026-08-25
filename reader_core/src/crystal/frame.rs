@@ -91,7 +91,11 @@ pub fn run_frame() {
     draw_header(CrystalView::MainMenu, state.view, is_locked);
 
     match state.view {
-        CrystalView::Rng => draw_rng(&reader),
+        CrystalView::Rng => {
+            draw_rng(&reader);
+            let (status, start, len) = state.trace.status_line();
+            pnp::println!("Trace {} {} f{}", status, start, len);
+        }
         CrystalView::Wild => draw_pkx(&reader.wild()),
         CrystalView::Party => {
             let slot = state.party_menu.update_and_draw(is_locked);

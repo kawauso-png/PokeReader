@@ -23,24 +23,13 @@ fn plausible(ptr: u32) -> bool {
         || (0x30000000..0x38000000).contains(&ptr)
 }
 
+#[derive(Default)]
 pub struct MemView {
     preset: usize,
     offset: i64,
     step_shift: u32,
     found: Option<i64>,
     searched: bool,
-}
-
-impl Default for MemView {
-    fn default() -> Self {
-        Self {
-            preset: 0,
-            offset: 0,
-            step_shift: 0,
-            found: None,
-            searched: false,
-        }
-    }
 }
 
 impl MemView {

@@ -143,7 +143,7 @@ impl Trace {
     /// Short save indicator for the rng page: "-", "OK" or the error code.
     pub fn save_status(&self) -> (&'static str, u32) {
         match self.save_result {
-            Some(true) => ("OK", self.save_index.wrapping_sub(1)),
+            Some(true) => ("OK", pnp::trace_written_slot()),
             Some(false) => ("ERR", pnp::trace_last_error()),
             None => ("-", 0),
         }
@@ -368,7 +368,7 @@ impl Trace {
         pnp::println!("watch {:04X}", self.watch_addr);
         pnp::println!("changes {}", self.watch_changes);
         match self.save_result {
-            Some(true) => pnp::println!("saved #{}", self.save_index - 1),
+            Some(true) => pnp::println!("saved #{}", pnp::trace_written_slot()),
             Some(false) => pnp::println!("FAIL {:08X}", pnp::trace_last_error()),
             None => pnp::println!("SEL saves csv"),
         }

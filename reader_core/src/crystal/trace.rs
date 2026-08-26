@@ -1,7 +1,10 @@
 use core::fmt::Write;
 
 use super::game_lib::gb_mem;
-use super::hook::{add_div_tracker, measured_div, rng_advance, sub_div_tracker};
+use super::hook::{
+    add_div_tracker, call_log_count, call_log_entry, call_log_start, call_log_stop, measured_div,
+    rng_advance, sub_div_tracker,
+};
 use super::reader::Gen2Reader;
 use crate::pnp;
 
@@ -181,11 +184,13 @@ impl Trace {
         self.start_advance = rng_advance();
         self.start_state = reader.rng_state();
         self.watch_last = gb_mem::read_u16(self.watch_addr);
+        call_log_start();
         self.state = TraceState::Recording;
     }
 
     pub fn stop(&mut self) {
         if self.state == TraceState::Recording || self.state == TraceState::Armed {
+            call_log_stop();
             self.state = TraceState::Done;
         }
     }
@@ -235,6 +240,7 @@ impl Trace {
         }
 
         if self.len >= MAX_FRAMES {
+            call_log_stop();
             self.state = TraceState::Done;
             return;
         }
@@ -327,6 +333,30 @@ impl Trace {
             pnp::trace_file_write(line.as_bytes());
         }
 
+        // Second section: every Random call, which is what shows how the DVs
+        // are actually produced inside a single frame.
+        line.clear();
+        let _ = write!(line, "\ncall_index,pc,advance,add,sub,div\n");
+        pnp::trace_file_write(line.as_bytes());
+
+        let total = call_log_count() as usize;
+        let shown = total.min(super::hook::CALL_LOG_LEN);
+        for i in 0..shown {
+            let e = call_log_entry(i);
+            line.clear();
+            let _ = write!(
+                line,
+                "{},{:04X},{},{:02X},{:02X},{:04X}\n",
+                total - shown + i,
+                e.pc,
+                e.advance,
+                e.add,
+                e.sub,
+                e.div
+            );
+            pnp::trace_file_write(line.as_bytes());
+        }
+
         pnp::trace_file_close();
         self.save_index += 1;
         self.save_result = Some(true);
@@ -367,6 +397,7 @@ impl Trace {
         pnp::println!("from st  {:04X}", self.start_state);
         pnp::println!("watch {:04X}", self.watch_addr);
         pnp::println!("changes {}", self.watch_changes);
+        pnp::println!("calls {}", call_log_count());
         match self.save_result {
             Some(true) => pnp::println!("saved #{}", pnp::trace_written_slot()),
             Some(false) => pnp::println!("FAIL {:08X}", pnp::trace_last_error()),

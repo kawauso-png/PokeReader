@@ -104,6 +104,8 @@ pub struct Trace {
     start_state: u16,
     last_run_id: u32,
     last_arm_id: u32,
+    last_stop_req: u32,
+    last_save_req: u32,
     save_index: u32,
     save_result: Option<bool>,
     /// Row shown first in the on screen table.
@@ -124,6 +126,8 @@ impl Default for Trace {
             start_state: 0,
             last_run_id: 0,
             last_arm_id: 0,
+            last_stop_req: 0,
+            last_save_req: 0,
             save_index: 1,
             save_result: None,
             cursor: 0,
@@ -134,6 +138,15 @@ impl Default for Trace {
 impl Trace {
     pub fn status_line(&self) -> (&'static str, u32, usize) {
         (status_text(self.state), self.start_advance, self.len)
+    }
+
+    /// Short save indicator for the rng page: "-", "OK" or the error code.
+    pub fn save_status(&self) -> (&'static str, u32) {
+        match self.save_result {
+            Some(true) => ("OK", self.save_index.wrapping_sub(1)),
+            Some(false) => ("ERR", pnp::trace_last_error()),
+            None => ("-", 0),
+        }
     }
 
     pub fn set_watch_addr(&mut self, addr: u32) {
@@ -187,6 +200,19 @@ impl Trace {
                 self.arm();
             } else {
                 self.stop();
+            }
+        }
+
+        // Y + SELECT stops, Y + A saves. Both are queued from the pause loop.
+        let (stop_req, save_req) = pnp::trace_cmds();
+        if stop_req != self.last_stop_req {
+            self.last_stop_req = stop_req;
+            self.stop();
+        }
+        if save_req != self.last_save_req {
+            self.last_save_req = save_req;
+            if self.state != TraceState::Recording {
+                self.save();
             }
         }
 

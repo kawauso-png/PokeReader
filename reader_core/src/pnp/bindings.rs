@@ -15,6 +15,7 @@ extern "C" {
     pub fn host_trace_file_close();
     pub fn host_trace_last_error() -> u32;
     pub fn host_trace_cmds() -> u32;
+    pub fn host_trace_written_slot() -> u32;
     pub fn get_remaster_version() -> u16;
     pub fn osGetTime() -> u64;
     pub fn get_trampoline_addr() -> u32;
@@ -78,6 +79,10 @@ pub mod test_stubs {
     }
     #[no_mangle]
     pub extern "C" fn host_trace_cmds() -> u32 {
+        0
+    }
+    #[no_mangle]
+    pub extern "C" fn host_trace_written_slot() -> u32 {
         0
     }
     #[no_mangle]

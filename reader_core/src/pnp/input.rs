@@ -129,3 +129,10 @@ pub fn current_keys() -> u32 {
 pub fn trace_last_error() -> u32 {
     unsafe { bindings::host_trace_last_error() }
 }
+
+/// Stop and save counters, bumped from the pause loop with Y + SELECT and
+/// Y + A. Returns (stop_requests, save_requests).
+pub fn trace_cmds() -> (u32, u32) {
+    let bits = unsafe { bindings::host_trace_cmds() };
+    (bits & 0xffff, (bits >> 16) & 0xffff)
+}

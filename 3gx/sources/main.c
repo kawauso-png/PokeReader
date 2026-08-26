@@ -44,6 +44,12 @@ static u32 trace_arm_id = 0;
 // the reader streams the buffer here a chunk at a time.
 static Handle trace_file = 0;
 static u64 trace_file_offset = 0;
+static u32 trace_last_error = 0;
+
+u32 host_trace_last_error(void)
+{
+    return trace_last_error;
+}
 
 u32 host_trace_file_open(u32 index)
 {
@@ -55,8 +61,20 @@ u32 host_trace_file_open(u32 index)
         return 0;
     }
 
-    if (R_FAILED(FSUSER_OpenArchive(&sdmc, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""))))
+    // The FS session is not open by default in this context. title_info.c does
+    // the same thing before touching FSUSER.
+    Result init_res = fsInit();
+    if (R_FAILED(init_res))
     {
+        trace_last_error = (u32)init_res;
+        return 0;
+    }
+
+    Result arc_res = FSUSER_OpenArchive(&sdmc, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""));
+    if (R_FAILED(arc_res))
+    {
+        trace_last_error = (u32)arc_res;
+        fsExit();
         return 0;
     }
 
@@ -70,11 +88,14 @@ u32 host_trace_file_open(u32 index)
 
     if (R_FAILED(res))
     {
+        trace_last_error = (u32)res;
         trace_file = 0;
+        fsExit();
         return 0;
     }
 
     trace_file_offset = 0;
+    trace_last_error = 0;
     return 1;
 }
 
@@ -102,6 +123,7 @@ void host_trace_file_close(void)
     {
         FSFILE_Close(trace_file);
         trace_file = 0;
+        fsExit();
     }
 }
 

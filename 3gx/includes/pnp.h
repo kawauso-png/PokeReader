@@ -17,6 +17,7 @@ u32 host_trace_request(void);
 u32 host_trace_file_open(u32 index);
 u32 host_trace_file_write(const char *data, u32 len);
 void host_trace_file_close(void);
+u32 host_trace_last_error(void);
 u32 host_is_just_pressed(u32 io_bits);
 void host_set_print_max_len(u32 max_len);
 u64 host_get_game_title_id();

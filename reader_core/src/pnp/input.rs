@@ -136,3 +136,8 @@ pub fn trace_cmds() -> (u32, u32) {
     let bits = unsafe { bindings::host_trace_cmds() };
     (bits & 0xffff, (bits >> 16) & 0xffff)
 }
+
+/// File number the last successful save actually used.
+pub fn trace_written_slot() -> u32 {
+    unsafe { bindings::host_trace_written_slot() }
+}

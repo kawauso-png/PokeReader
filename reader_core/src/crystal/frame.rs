@@ -95,6 +95,8 @@ pub fn run_frame() {
             draw_rng(&reader);
             let (status, start, len) = state.trace.status_line();
             pnp::println!("Trace {} {} f{}", status, start, len);
+            let (save, code) = state.trace.save_status();
+            pnp::println!("Save {} {:08X}", save, code);
         }
         CrystalView::Wild => draw_pkx(&reader.wild()),
         CrystalView::Party => {

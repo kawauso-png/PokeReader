@@ -20,6 +20,61 @@ static mut LAST_PC: u16 = 0;
 static mut PC_SEEN_1: u16 = 0;
 static mut PC_SEEN_2: u16 = 0;
 
+// Per-Random-call log. The hook fires on every rDIV read, which is exactly
+// once per Random call, so this captures the intra-frame calls that a
+// per-frame trace cannot see. Ring buffer: the tail is what matters.
+pub const CALL_LOG_LEN: usize = 2048;
+
+#[derive(Clone, Copy, Default)]
+pub struct CallEntry {
+    pub pc: u16,
+    pub div: u16,
+    pub add: u8,
+    pub sub: u8,
+    pub advance: u32,
+}
+
+static mut CALL_LOG: [CallEntry; CALL_LOG_LEN] = [CallEntry {
+    pc: 0,
+    div: 0,
+    add: 0,
+    sub: 0,
+    advance: 0,
+}; CALL_LOG_LEN];
+static mut CALL_WRITE: usize = 0;
+static mut CALL_COUNT: u32 = 0;
+static mut CALL_LOGGING: bool = false;
+
+pub fn call_log_start() {
+    unsafe {
+        CALL_WRITE = 0;
+        CALL_COUNT = 0;
+        CALL_LOGGING = true;
+    }
+}
+
+pub fn call_log_stop() {
+    unsafe { CALL_LOGGING = false };
+}
+
+pub fn call_log_count() -> u32 {
+    unsafe { CALL_COUNT }
+}
+
+/// Entries in order, oldest first, capped at the ring size.
+pub fn call_log_entry(index: usize) -> CallEntry {
+    unsafe {
+        let total = CALL_COUNT as usize;
+        let len = total.min(CALL_LOG_LEN);
+        let start = if total > CALL_LOG_LEN {
+            CALL_WRITE
+        } else {
+            0
+        };
+        CALL_LOG[(start + index) % CALL_LOG_LEN]
+    }
+}
+
 pub fn ff04_hits() -> u32 {
     unsafe { FF04_HITS }
 }
@@ -132,6 +187,19 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     let pc = reader.pc_reg();
 
     unsafe {
+        if CALL_LOGGING {
+            let state = reader.rng_state();
+            CALL_LOG[CALL_WRITE] = CallEntry {
+                pc,
+                div: reader.div() as u16,
+                add: (state >> 8) as u8,
+                sub: state as u8,
+                advance: RNG_ADVANCE,
+            };
+            CALL_WRITE = (CALL_WRITE + 1) % CALL_LOG_LEN;
+            CALL_COUNT = CALL_COUNT.wrapping_add(1);
+        }
+
         FF04_HITS = FF04_HITS.wrapping_add(1);
         LAST_PC = pc;
         if PC_SEEN_1 == 0 || PC_SEEN_1 == pc {

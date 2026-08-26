@@ -124,3 +124,8 @@ pub fn trace_file_close() {
 pub fn current_keys() -> u32 {
     unsafe { bindings::get_current_keys() }
 }
+
+/// Raw 3DS Result code from the last failed trace save.
+pub fn trace_last_error() -> u32 {
+    unsafe { bindings::host_trace_last_error() }
+}

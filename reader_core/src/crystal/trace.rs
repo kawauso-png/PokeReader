@@ -343,7 +343,7 @@ impl Trace {
         pnp::println!("changes {}", self.watch_changes);
         match self.save_result {
             Some(true) => pnp::println!("saved #{}", self.save_index - 1),
-            Some(false) => pnp::println!("save FAILED"),
+            Some(false) => pnp::println!("FAIL {:08X}", pnp::trace_last_error()),
             None => pnp::println!("SEL saves csv"),
         }
 

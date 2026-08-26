@@ -52,6 +52,12 @@ u32 host_trace_cmds(void)
 static Handle trace_file = 0;
 static u64 trace_file_offset = 0;
 static u32 trace_last_error = 0;
+static u32 trace_written_slot = 0;
+
+u32 host_trace_written_slot(void)
+{
+    return trace_written_slot;
+}
 
 u32 host_trace_last_error(void)
 {
@@ -88,9 +94,38 @@ u32 host_trace_file_open(u32 index)
     FSUSER_CreateDirectory(sdmc, fsMakePath(PATH_ASCII, "/luma/plugins/pokereader"), 0);
     FSUSER_CreateDirectory(sdmc, fsMakePath(PATH_ASCII, "/luma/plugins/pokereader/traces"), 0);
 
-    sprintf(path, "/luma/plugins/pokereader/traces/celebi_trace_%04lu.csv", (unsigned long)index);
+    // Walk forward until an unused name is found, so a shorter run can never
+    // be written over a longer one and leave its tail behind.
+    Result res = 0;
+    u32 slot = index;
+    for (; slot < index + 200; slot++)
+    {
+        u64 size = 0;
 
-    Result res = FSUSER_OpenFile(&trace_file, sdmc, fsMakePath(PATH_ASCII, path), FS_OPEN_WRITE | FS_OPEN_CREATE, 0);
+        sprintf(path, "/luma/plugins/pokereader/traces/celebi_trace_%04lu.csv", (unsigned long)slot);
+        res = FSUSER_OpenFile(&trace_file, sdmc, fsMakePath(PATH_ASCII, path), FS_OPEN_WRITE | FS_OPEN_CREATE, 0);
+
+        if (R_FAILED(res))
+        {
+            break;
+        }
+
+        if (R_SUCCEEDED(FSFILE_GetSize(trace_file, &size)) && size == 0)
+        {
+            break;
+        }
+
+        FSFILE_Close(trace_file);
+        trace_file = 0;
+    }
+
+    // Empty the file anyway, in case the size check could not be trusted.
+    if (R_SUCCEEDED(res) && trace_file != 0)
+    {
+        FSFILE_SetSize(trace_file, 0);
+    }
+
+    trace_written_slot = slot;
     FSUSER_CloseArchive(sdmc);
 
     if (R_FAILED(res))

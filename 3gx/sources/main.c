@@ -38,6 +38,13 @@ static u32 fixed_run_id = 0;
 // let a frame through.
 static bool trace_armed = false;
 static u32 trace_arm_id = 0;
+static u32 trace_stop_req = 0;
+static u32 trace_save_req = 0;
+
+u32 host_trace_cmds(void)
+{
+    return (trace_stop_req & 0xffff) | ((trace_save_req & 0xffff) << 16);
+}
 
 // ---- Trace CSV output ----------------------------------------------------
 // The trace itself never touches the filesystem. Once recording has stopped,
@@ -188,6 +195,16 @@ void handle_freeze(bool isTopScreen)
             {
                 trace_armed = !trace_armed;
                 trace_arm_id++;
+            }
+            // Y + SELECT stops recording, Y + A writes the CSV. Both are
+            // handled by the reader on its next frame.
+            if (just_pressed & KEY_SELECT)
+            {
+                trace_stop_req++;
+            }
+            if (just_pressed & KEY_A)
+            {
+                trace_save_req++;
             }
             svcSleepThread(50000000);
             continue;

@@ -8,8 +8,11 @@ use super::hook::{
 use super::reader::Gen2Reader;
 use crate::pnp;
 
-/// Frames kept in RAM. At 28 bytes an entry this is about 57 KB.
-const MAX_FRAMES: usize = 2048;
+/// Frames kept in RAM. At 28 bytes an entry this is about 229 KB. The buffer
+/// lives in .bss (see TRACE_ENTRIES) rather than inside the Trace struct, so
+/// growing it does not put a quarter of a megabyte on the stack when the
+/// persisted state is first built.
+const MAX_FRAMES: usize = 8192;
 
 /// First byte of the window copied every frame. The Japanese enemy Pokémon
 /// struct starts at D237 (species), so this also captures the two bytes in
@@ -20,9 +23,10 @@ const WINDOW_LEN: usize = 10;
 /// Default watch pair: the enemy DVs on the Japanese release, D237 + 6.
 const DEFAULT_WATCH: u32 = 0xd23d;
 
-/// Celebi's species number, so the frames where the struct is populated can be
-/// picked out of the CSV afterwards.
+/// Species numbers that mark the frames where the enemy struct is populated,
+/// so they can be picked out of the CSV afterwards. Celebi is FB, Suicune F5.
 const CELEBI_SPECIES: u8 = 0xfb;
+const SUICUNE_SPECIES: u8 = 0xf5;
 
 #[derive(Clone, Copy, Default)]
 pub struct TraceEntry {
@@ -35,6 +39,23 @@ pub struct TraceEntry {
     pub flags: u8,
     pub window: [u8; WINDOW_LEN],
 }
+
+impl TraceEntry {
+    const EMPTY: Self = Self {
+        advance: 0,
+        state: 0,
+        div: 0,
+        adiv: 0,
+        sdiv: 0,
+        keys: 0,
+        flags: 0,
+        window: [0; WINDOW_LEN],
+    };
+}
+
+/// The frame buffer itself. Kept as a static so it is zero initialised in .bss
+/// and never copied through the stack.
+static mut TRACE_ENTRIES: [TraceEntry; MAX_FRAMES] = [TraceEntry::EMPTY; MAX_FRAMES];
 
 pub const FLAG_A_PRESSED: u8 = 1;
 pub const FLAG_WATCH_CHANGED: u8 = 2;
@@ -96,7 +117,7 @@ impl Write for LineBuf {
 }
 
 pub struct Trace {
-    entries: [TraceEntry; MAX_FRAMES],
+    entries: &'static mut [TraceEntry],
     len: usize,
     state: TraceState,
     watch_addr: u32,
@@ -118,7 +139,9 @@ pub struct Trace {
 impl Default for Trace {
     fn default() -> Self {
         Self {
-            entries: [TraceEntry::default(); MAX_FRAMES],
+            // Safe for the same reason the persisted state is: the reader runs
+            // single threaded, and only one Trace is ever built.
+            entries: unsafe { &mut *core::ptr::addr_of_mut!(TRACE_ENTRIES) },
             len: 0,
             state: TraceState::Off,
             watch_addr: DEFAULT_WATCH,
@@ -268,7 +291,7 @@ impl Trace {
             flags |= FLAG_WATCH_CHANGED;
         }
         // D237 holds the enemy species once the struct is populated.
-        if window[2] == CELEBI_SPECIES {
+        if window[2] == CELEBI_SPECIES || window[2] == SUICUNE_SPECIES {
             flags |= FLAG_CELEBI_SPECIES;
         }
 

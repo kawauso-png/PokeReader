@@ -23,7 +23,9 @@ static mut PC_SEEN_2: u16 = 0;
 // Per-Random-call log. The hook fires on every rDIV read, which is exactly
 // once per Random call, so this captures the intra-frame calls that a
 // per-frame trace cannot see. Ring buffer: the tail is what matters.
-pub const CALL_LOG_LEN: usize = 2048;
+// 12 bytes an entry. Sized to cover a full 8192 frame trace: a map transition
+// puts the stall region far from the tail, so a short ring would drop it.
+pub const CALL_LOG_LEN: usize = 16384;
 
 #[derive(Clone, Copy, Default)]
 pub struct CallEntry {

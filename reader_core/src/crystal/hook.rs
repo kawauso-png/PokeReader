@@ -11,6 +11,11 @@ static mut RNG_ADVANCE: u32 = 0;
 static mut ADIV: u8 = 0;
 static mut SDIV: u8 = 0;
 static mut CYCLE_COUNTER: u32 = 0;
+// Cycle counter sampled at the moment each of the two VBlank rDIV reads
+// happens. The difference between these and the frame boundary is the
+// sub-tick position that the DIV byte alone cannot show.
+static mut ACYCLES: u32 = 0;
+static mut SCYCLES: u32 = 0;
 
 // Diagnostics for the Japanese release: is the hook firing at all, and what
 // program counter does it see when the game reads the DIV register?
@@ -34,6 +39,7 @@ pub struct CallEntry {
     pub add: u8,
     pub sub: u8,
     pub advance: u32,
+    pub cycles: u32,
 }
 
 static mut CALL_LOG: [CallEntry; CALL_LOG_LEN] = [CallEntry {
@@ -42,6 +48,7 @@ static mut CALL_LOG: [CallEntry; CALL_LOG_LEN] = [CallEntry {
     add: 0,
     sub: 0,
     advance: 0,
+    cycles: 0,
 }; CALL_LOG_LEN];
 static mut CALL_WRITE: usize = 0;
 static mut CALL_COUNT: u32 = 0;
@@ -95,6 +102,22 @@ pub fn pc_seen() -> (u16, u16) {
 
 pub fn measured_div() -> u16 {
     unsafe { (ADIV as u16) << 8 | SDIV as u16 }
+}
+
+/// Cycle counter as of the first VBlank rDIV read of the current frame.
+pub fn adiv_cycles() -> u32 {
+    unsafe { ACYCLES }
+}
+
+/// Cycle counter as of the second VBlank rDIV read of the current frame.
+pub fn sdiv_cycles() -> u32 {
+    unsafe { SCYCLES }
+}
+
+/// Raw accumulated cycle counter. Stays at zero if the counter hook never
+/// fires, which is how to tell that its address is wrong for this release.
+pub fn cycle_counter() -> u32 {
+    unsafe { CYCLE_COUNTER }
 }
 
 pub fn rng_advance() -> u32 {
@@ -197,6 +220,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
                 add: (state >> 8) as u8,
                 sub: state as u8,
                 advance: RNG_ADVANCE,
+                cycles: CYCLE_COUNTER,
             };
             CALL_WRITE = (CALL_WRITE + 1) % CALL_LOG_LEN;
             CALL_COUNT = CALL_COUNT.wrapping_add(1);
@@ -218,6 +242,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     if RNG_DIV_READ_1.contains(&pc) {
         let div = reader.div();
         unsafe { ADIV = div };
+        unsafe { ACYCLES = CYCLE_COUNTER };
 
         unsafe { ADD_DIV_TRACKER.update(div) };
         unsafe { RNG_ADVANCE = RNG_ADVANCE.wrapping_add(1) };
@@ -225,6 +250,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     if RNG_DIV_READ_2.contains(&pc) {
         let div = reader.div();
         unsafe { SDIV = div };
+        unsafe { SCYCLES = CYCLE_COUNTER };
         unsafe { SUB_DIV_TRACKER.update(div) };
     }
 }

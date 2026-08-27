@@ -182,7 +182,8 @@ u32 host_fixed_run_id(void)
 u32 host_fixed_state(void)
 {
     u32 physical_a = (get_current_keys() & KEY_A) != 0;
-    return (fixed_a_frames & 0xff) | ((fixed_last_run & 0xff) << 8) | ((u32)fixed_armed << 16) | ((fixed_frames_remaining > 0) << 17) | (physical_a << 18);
+    u32 physical_up = (get_current_keys() & KEY_DUP) != 0;
+    return (fixed_a_frames & 0xff) | ((fixed_last_run & 0xff) << 8) | ((u32)fixed_armed << 16) | ((fixed_frames_remaining > 0) << 17) | (physical_a << 18) | (physical_up << 19);
 }
 
 void handle_freeze(bool isTopScreen)
@@ -209,14 +210,15 @@ void handle_freeze(bool isTopScreen)
             break;
         }
 
-        // Y + up / Y + down adjusts the frame count.
+        // Y + right / Y + left adjusts the frame count. The horizontal axis is
+        // used so that holding up (to walk into a door) never touches it.
         if (held & KEY_Y)
         {
-            if ((just_pressed & KEY_DUP) && fixed_a_frames < FIXED_A_FRAMES_MAX)
+            if ((just_pressed & KEY_DRIGHT) && fixed_a_frames < FIXED_A_FRAMES_MAX)
             {
                 fixed_a_frames++;
             }
-            if ((just_pressed & KEY_DDOWN) && fixed_a_frames > FIXED_A_FRAMES_MIN)
+            if ((just_pressed & KEY_DLEFT) && fixed_a_frames > FIXED_A_FRAMES_MIN)
             {
                 fixed_a_frames--;
             }
@@ -241,16 +243,17 @@ void handle_freeze(bool isTopScreen)
             {
                 trace_save_req++;
             }
+            // Y + L starts the run once armed. X cannot be used: the VC maps it
+            // to the GB START button, so pressing it opens the in-game menu.
+            // R is excluded so that the L -> R pause combo cannot start a run.
+            if (fixed_armed && (just_pressed & KEY_L) && !(held & KEY_R))
+            {
+                fixed_frames_remaining = fixed_a_frames;
+                fixed_last_run = fixed_a_frames;
+                fixed_run_id++;
+                continue;
+            }
             svcSleepThread(50000000);
-            continue;
-        }
-
-        // X starts the run once armed. Hold A before pressing it.
-        if (fixed_armed && (just_pressed & KEY_X))
-        {
-            fixed_frames_remaining = fixed_a_frames;
-            fixed_last_run = fixed_a_frames;
-            fixed_run_id++;
             continue;
         }
 

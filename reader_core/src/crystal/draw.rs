@@ -91,10 +91,12 @@ pub fn draw_research(reader: &Gen2Reader, frame: usize) {
         fixed.armed,
         if fixed.running { "yes" } else { "no" }
     );
+    // Kept short on purpose: the RNG page prints at a 22 character limit, so
+    // spelling these out pushes the last field off the screen.
     pnp::println!(
-        "Last {}  PhysA {}  PhysUp {}",
+        "Last {}  A{} Up{}",
         fixed.last_run,
-        fixed.physical_a,
-        fixed.physical_up
+        fixed.physical_a as u8,
+        fixed.physical_up as u8
     );
 }

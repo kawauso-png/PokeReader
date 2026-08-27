@@ -91,5 +91,10 @@ pub fn draw_research(reader: &Gen2Reader, frame: usize) {
         fixed.armed,
         if fixed.running { "yes" } else { "no" }
     );
-    pnp::println!("Last {}  PhysA {}", fixed.last_run, fixed.physical_a);
+    pnp::println!(
+        "Last {}  PhysA {}  PhysUp {}",
+        fixed.last_run,
+        fixed.physical_a,
+        fixed.physical_up
+    );
 }

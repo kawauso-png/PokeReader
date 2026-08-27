@@ -2,13 +2,13 @@ use core::fmt::Write;
 
 use super::game_lib::gb_mem;
 use super::hook::{
-    add_div_tracker, call_log_count, call_log_entry, call_log_start, call_log_stop, measured_div,
-    rng_advance, sub_div_tracker,
+    add_div_tracker, adiv_cycles, call_log_count, call_log_entry, call_log_start, call_log_stop,
+    cycle_counter, measured_div, rng_advance, sdiv_cycles, sub_div_tracker,
 };
 use super::reader::Gen2Reader;
 use crate::pnp;
 
-/// Frames kept in RAM. At 28 bytes an entry this is about 229 KB. The buffer
+/// Frames kept in RAM. At 36 bytes an entry this is about 288 KB. The buffer
 /// lives in .bss (see TRACE_ENTRIES) rather than inside the Trace struct, so
 /// growing it does not put a quarter of a megabyte on the stack when the
 /// persisted state is first built.
@@ -38,6 +38,11 @@ pub struct TraceEntry {
     pub keys: u16,
     pub flags: u8,
     pub window: [u8; WINDOW_LEN],
+    /// Cycle counter at the two VBlank rDIV reads of this frame. The DIV byte
+    /// only resolves 256 cycles; these resolve the position inside that step,
+    /// which is what the +/-1 phase slips turn on.
+    pub acyc: u32,
+    pub scyc: u32,
 }
 
 impl TraceEntry {
@@ -50,6 +55,8 @@ impl TraceEntry {
         keys: 0,
         flags: 0,
         window: [0; WINDOW_LEN],
+        acyc: 0,
+        scyc: 0,
     };
 }
 
@@ -304,6 +311,8 @@ impl Trace {
             keys: pnp::current_keys() as u16,
             flags,
             window,
+            acyc: adiv_cycles(),
+            scyc: sdiv_cycles(),
         };
 
         self.len += 1;
@@ -324,7 +333,7 @@ impl Trace {
         let mut line = LineBuf::new();
         let _ = write!(
             line,
-            "frame,rel_adv,advance,state,div,adiv,sdiv,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
+            "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
         );
         pnp::trace_file_write(line.as_bytes());
 
@@ -333,7 +342,7 @@ impl Trace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{},{},{:04X},{:04X},{},{},{:04X},{},",
+                "{},{},{},{:04X},{:04X},{},{},{},{},{:04X},{},",
                 index,
                 entry.advance.wrapping_sub(self.start_advance),
                 entry.advance,
@@ -341,6 +350,8 @@ impl Trace {
                 entry.div,
                 entry.adiv,
                 entry.sdiv,
+                entry.acyc,
+                entry.scyc,
                 entry.keys,
                 (entry.flags & FLAG_A_PRESSED != 0) as u8
             );
@@ -359,7 +370,7 @@ impl Trace {
         // Second section: every Random call, which is what shows how the DVs
         // are actually produced inside a single frame.
         line.clear();
-        let _ = write!(line, "\ncall_index,pc,advance,add,sub,div\n");
+        let _ = write!(line, "\ncall_index,pc,advance,add,sub,div,cycles\n");
         pnp::trace_file_write(line.as_bytes());
 
         let total = call_log_count() as usize;
@@ -369,13 +380,14 @@ impl Trace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{:04X},{},{:02X},{:02X},{:04X}\n",
+                "{},{:04X},{},{:02X},{:02X},{:04X},{}\n",
                 total - shown + i,
                 e.pc,
                 e.advance,
                 e.add,
                 e.sub,
-                e.div
+                e.div,
+                e.cycles
             );
             pnp::trace_file_write(line.as_bytes());
         }
@@ -421,6 +433,9 @@ impl Trace {
         pnp::println!("watch {:04X}", self.watch_addr);
         pnp::println!("changes {}", self.watch_changes);
         pnp::println!("calls {}", call_log_count());
+        // If this stays at 0 the cycle-counter hook address is wrong for this
+        // release and the acyc/scyc columns will be useless.
+        pnp::println!("cyc {:08X}", cycle_counter());
         match self.save_result {
             Some(true) => pnp::println!("saved #{}", pnp::trace_written_slot()),
             Some(false) => pnp::println!("FAIL {:08X}", pnp::trace_last_error()),

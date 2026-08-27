@@ -79,6 +79,7 @@ pub struct FixedAFrame {
     pub armed: bool,
     pub running: bool,
     pub physical_a: bool,
+    pub physical_up: bool,
 }
 
 /// Read the Fixed A Frame state.
@@ -90,6 +91,7 @@ pub fn fixed_a_frame() -> FixedAFrame {
         armed: (bits & (1 << 16)) != 0,
         running: (bits & (1 << 17)) != 0,
         physical_a: (bits & (1 << 18)) != 0,
+        physical_up: (bits & (1 << 19)) != 0,
     }
 }
 

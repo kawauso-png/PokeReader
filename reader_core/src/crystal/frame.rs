@@ -103,6 +103,7 @@ pub fn run_frame() {
     match state.view {
         CrystalView::Rng => {
             draw_rng(&reader);
+            state.trace.draw_rng_status();
             let (status, start, len) = state.trace.status_line();
             pnp::println!("Trace {} {} f{}", status, start, len);
             let (save, code) = state.trace.save_status();

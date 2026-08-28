@@ -31,6 +31,11 @@ static u32 fixed_a_frames = 2;
 static u32 fixed_frames_remaining = 0;
 static u32 fixed_last_run = 0;
 static bool fixed_armed = false;
+// A Y+L press only schedules the run.  The game is not allowed to advance
+// until the Y/L trigger buttons have been physically released.  This keeps
+// those modifier buttons out of the exact input window (for Suicune this
+// means the two released frames can contain UP only).
+static bool fixed_run_pending = false;
 static u32 fixed_run_id = 0;
 
 // Celebi trace arming. The reader only runs while frames are being presented,
@@ -195,7 +200,7 @@ u32 host_fixed_state(void)
 {
     u32 physical_a = (get_current_keys() & KEY_A) != 0;
     u32 physical_up = (get_current_keys() & KEY_DUP) != 0;
-    return (fixed_a_frames & 0xff) | ((fixed_last_run & 0xff) << 8) | ((u32)fixed_armed << 16) | ((fixed_frames_remaining > 0) << 17) | (physical_a << 18) | (physical_up << 19);
+    return (fixed_a_frames & 0xff) | ((fixed_last_run & 0xff) << 8) | ((u32)fixed_armed << 16) | (((fixed_frames_remaining > 0) || fixed_run_pending) << 17) | (physical_a << 18) | (physical_up << 19);
 }
 
 void handle_freeze(bool isTopScreen)
@@ -213,6 +218,25 @@ void handle_freeze(bool isTopScreen)
 
         u32 just_pressed = host_just_pressed();
         u32 held = get_current_keys();
+
+        // Y+L schedules a fixed run, but do not let a game frame through while
+        // either trigger modifier is still physically held.  This avoids the
+        // first 1-2 frames seeing Y/L together with the intended game input.
+        // Keep the intended input itself (UP, A, etc.) held while releasing
+        // Y+L; once only that input remains, the exact N-frame run begins.
+        if (fixed_run_pending)
+        {
+            if ((held & (KEY_Y | KEY_L | KEY_R)) == 0)
+            {
+                fixed_run_pending = false;
+                fixed_frames_remaining = fixed_a_frames;
+                fixed_last_run = fixed_a_frames;
+                fixed_run_id++;
+                continue;
+            }
+            svcSleepThread(10000000);
+            continue;
+        }
 
         // A fixed run is in progress: let exactly one frame through and stay
         // paused. This reuses the existing single frame advance path.
@@ -267,9 +291,10 @@ void handle_freeze(bool isTopScreen)
             // R is excluded so that the L -> R pause combo cannot start a run.
             if (fixed_armed && (just_pressed & KEY_L) && !(held & KEY_R))
             {
-                fixed_frames_remaining = fixed_a_frames;
-                fixed_last_run = fixed_a_frames;
-                fixed_run_id++;
+                // Do not start the game frames yet.  Wait for Y+L to be
+                // released first so the fixed window contains only the
+                // intended physical input (UP for Suicune, A for Celebi).
+                fixed_run_pending = true;
                 continue;
             }
             svcSleepThread(50000000);
@@ -286,6 +311,7 @@ void handle_freeze(bool isTopScreen)
         {
             is_paused = false;
             fixed_frames_remaining = 0;
+            fixed_run_pending = false;
             break;
         }
 

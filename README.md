@@ -38,3 +38,7 @@ Thanks to these projects, teams, and individuals for being great resources:
 - [PKHeX](https://github.com/kwsch/PKHeX/) for Pokemon related documentation, examples, and code
 - [ShinySylveon04](https://github.com/ShinySylveon04/) for building most of the UI
 - [Bambo-Rambo for the DexNav and Radar addresses](https://github.com/Bambo-Rambo/TinyFinder/blob/99917164b43bf79bd7432b271cced7a4d62b8431/Subforms/NTR/NtrClient.cs#L319-L326)
+
+## Suicune Deep Probe v3.5
+
+Japanese Crystal VC research build: direct F604 M-cycle subtick logging (`asub/ssub`) with the heavy v3.4 differential scan disabled during normal probes. See `SUICUNE_SUBTICK_V35.md`.

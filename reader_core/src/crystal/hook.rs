@@ -16,6 +16,12 @@ static mut CYCLE_COUNTER: u32 = 0;
 // sub-tick position that the DIV byte alone cannot show.
 static mut ACYCLES: u32 = 0;
 static mut SCYCLES: u32 = 0;
+// JP VC emulator-side LR35902 M-cycle position discovered by the same-VBlank
+// differential probe (0061): 02B6 -> 02BE advances this byte by exactly 11,
+// matching the 11 M-cycles between Crystal's two VBlank rDIV reads.
+const CRYSTAL_M_CYCLE_SUBTICK_ADDR: u32 = 0x0022f604;
+static mut ASUB: u8 = 0;
+static mut SSUB: u8 = 0;
 // High-resolution host tick at the same two VBlank rDIV reads.  The legacy
 // cycle hook is currently zero on JP VC, so these provide a safe timing
 // fallback without guessing and patching an unverified emulator code address.
@@ -53,6 +59,7 @@ pub struct CallEntry {
     pub advance: u32,
     pub cycles: u32,
     pub host_tick: u64,
+    pub mcycle: u8,
 }
 
 // Deep Suicune probe.  Unlike CALL_LOG, this only samples the first rDIV read
@@ -84,6 +91,10 @@ const HOST_STACK_WORDS: usize = 8;
 // (02BD/02BE).  Only changed bytes are retained.  The emulated CPU is stopped
 // while the host memcpy runs, so the pair still brackets the same LR35902
 // instruction interval even though host wall-clock time is perturbed.
+// v3.5 keeps the proven differential code for diagnostics, but disables its
+// 128 KiB memcpy pair during ordinary Suicune probes so timing is no longer
+// perturbed. The lightweight F604 read below replaces it for normal logging.
+const ENABLE_DIFF_PROBE: bool = false;
 pub const DIFF_REGION_BASE: u32 = 0x00220000;
 pub const DIFF_REGION_LEN: usize = 0x10000;
 pub const DIFF_MAX_CHANGES: usize = 2048;
@@ -336,6 +347,7 @@ pub struct DeepEntry {
     pub advance: u32,
     pub cycles: u32,
     pub host_tick: u64,
+    pub mcycle: u8,
     pub regs: [u32; 15],
     pub host_stack: [u32; HOST_STACK_WORDS],
     pub cpu_ctx: [u8; CPU_CTX_LEN],
@@ -352,6 +364,7 @@ impl DeepEntry {
         advance: 0,
         cycles: 0,
         host_tick: 0,
+        mcycle: 0,
         regs: [0; 15],
         host_stack: [0; HOST_STACK_WORDS],
         cpu_ctx: [0; CPU_CTX_LEN],
@@ -371,12 +384,16 @@ pub fn deep_log_start() {
         DEEP_COUNT = 0;
         DEEP_LOGGING = true;
     }
-    diff_probe_start();
+    if ENABLE_DIFF_PROBE {
+        diff_probe_start();
+    }
 }
 
 pub fn deep_log_stop() {
     unsafe { DEEP_LOGGING = false };
-    diff_probe_stop();
+    if ENABLE_DIFF_PROBE {
+        diff_probe_stop();
+    }
 }
 
 /// Clear stale deep samples as well as stopping capture.  Regular Trace saves
@@ -387,7 +404,9 @@ pub fn deep_log_clear() {
         DEEP_COUNT = 0;
         DEEP_LOGGING = false;
     }
-    diff_probe_clear();
+    if ENABLE_DIFF_PROBE {
+        diff_probe_clear();
+    }
 }
 
 pub fn deep_log_count() -> u32 {
@@ -408,6 +427,7 @@ fn capture_deep_random(
     stack_pointer: *mut u32,
     pc: u16,
     host_tick: u64,
+    mcycle: u8,
 ) {
     // Only one snapshot per Random call.  2F68 is the second rDIV read of the
     // same call and would nearly double the overhead without adding much.
@@ -459,6 +479,7 @@ fn capture_deep_random(
         advance: rng_advance(),
         cycles: cycle_counter(),
         host_tick,
+        mcycle,
         regs: saved_regs,
         host_stack: saved_stack,
         cpu_ctx,
@@ -481,6 +502,7 @@ static mut CALL_LOG: [CallEntry; CALL_LOG_LEN] = [CallEntry {
     advance: 0,
     cycles: 0,
     host_tick: 0,
+    mcycle: 0,
 }; CALL_LOG_LEN];
 static mut CALL_WRITE: usize = 0;
 static mut CALL_COUNT: u32 = 0;
@@ -543,6 +565,16 @@ pub fn adiv_cycles() -> u32 {
 /// Cycle counter as of the second VBlank rDIV read of the current frame.
 pub fn sdiv_cycles() -> u32 {
     unsafe { SCYCLES }
+}
+
+/// Direct emulator M-cycle subtick sampled at the first VBlank rDIV read.
+pub fn adiv_subtick() -> u8 {
+    unsafe { ASUB }
+}
+
+/// Direct emulator M-cycle subtick sampled at the second VBlank rDIV read.
+pub fn sdiv_subtick() -> u8 {
+    unsafe { SSUB }
 }
 
 /// High-resolution host tick at the first VBlank rDIV read.
@@ -662,8 +694,11 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     // Sample once and reuse the value for every record produced by this rDIV
     // hook.  This keeps the hot-path overhead deterministic.
     let host_tick = pnp::system_tick();
+    // One direct host-memory byte read. Unlike the old 64 KiB differential
+    // snapshot this does not materially perturb the emulated instruction path.
+    let mcycle = pnp::read::<u8>(CRYSTAL_M_CYCLE_SUBTICK_ADDR);
 
-    capture_deep_random(&reader, regs, _stack_pointer, pc, host_tick);
+    capture_deep_random(&reader, regs, _stack_pointer, pc, host_tick, mcycle);
 
     unsafe {
         if CALL_LOGGING {
@@ -676,6 +711,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
                 advance: RNG_ADVANCE,
                 cycles: CYCLE_COUNTER,
                 host_tick,
+                mcycle,
             };
             CALL_WRITE = (CALL_WRITE + 1) % CALL_LOG_LEN;
             CALL_COUNT = CALL_COUNT.wrapping_add(1);
@@ -696,8 +732,11 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     const RNG_DIV_READ_2: [u16; 2] = [0x2bd, 0x2be];
     if RNG_DIV_READ_1.contains(&pc) {
         let div = reader.div();
-        capture_diff_begin(pc, div, host_tick);
+        if ENABLE_DIFF_PROBE {
+            capture_diff_begin(pc, div, host_tick);
+        }
         unsafe { ADIV = div };
+        unsafe { ASUB = mcycle };
         unsafe { ACYCLES = CYCLE_COUNTER };
         unsafe { ATICKS = host_tick };
 
@@ -706,8 +745,11 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     }
     if RNG_DIV_READ_2.contains(&pc) {
         let div = reader.div();
-        capture_diff_end(pc, div, host_tick);
+        if ENABLE_DIFF_PROBE {
+            capture_diff_end(pc, div, host_tick);
+        }
         unsafe { SDIV = div };
+        unsafe { SSUB = mcycle };
         unsafe { SCYCLES = CYCLE_COUNTER };
         unsafe { STICKS = host_tick };
         unsafe { SUB_DIV_TRACKER.update(div) };

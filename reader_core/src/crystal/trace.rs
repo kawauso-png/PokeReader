@@ -2,11 +2,10 @@ use core::fmt::Write;
 
 use super::game_lib::gb_mem;
 use super::hook::{
-    add_div_tracker, adiv_cycles, adiv_tick, call_log_count, call_log_entry, call_log_start,
-    call_log_stop, cyc_hook_ret, cyc_hook_word, cycle_counter, deep_log_clear, deep_log_count,
-    deep_log_entry, deep_log_start, deep_log_stop, diff_change_count, diff_entry, diff_meta,
-    diff_total_changes, measured_div, rng_advance, sdiv_cycles, sdiv_tick, sub_div_tracker,
-    DIFF_MAX_CHANGES,
+    add_div_tracker, adiv_cycles, adiv_subtick, adiv_tick, call_log_count, call_log_entry,
+    call_log_start, call_log_stop, cyc_hook_ret, cyc_hook_word, cycle_counter, deep_log_clear,
+    deep_log_count, deep_log_entry, deep_log_start, deep_log_stop, measured_div, rng_advance,
+    sdiv_cycles, sdiv_subtick, sdiv_tick, sub_div_tracker,
 };
 use super::reader::Gen2Reader;
 use crate::pnp;
@@ -46,6 +45,9 @@ pub struct TraceEntry {
     /// which is what the +/-1 phase slips turn on.
     pub acyc: u32,
     pub scyc: u32,
+    /// Direct M-cycle subticks from emulator state 0x0022F604.
+    pub asub: u8,
+    pub ssub: u8,
     pub atick: u64,
     pub stick: u64,
 }
@@ -62,6 +64,8 @@ impl TraceEntry {
         window: [0; WINDOW_LEN],
         acyc: 0,
         scyc: 0,
+        asub: 0,
+        ssub: 0,
         atick: 0,
         stick: 0,
     };
@@ -84,6 +88,8 @@ pub struct ProbeTarget {
     pub sdiv: u16,
     pub acyc: u32,
     pub scyc: u32,
+    pub asub: u8,
+    pub ssub: u8,
     pub atick: u64,
     pub stick: u64,
     pub keys: u16,
@@ -256,6 +262,8 @@ impl Trace {
             sdiv: sub_div_tracker().index().unwrap_or(0) as u16,
             acyc: adiv_cycles(),
             scyc: sdiv_cycles(),
+            asub: adiv_subtick(),
+            ssub: sdiv_subtick(),
             atick: adiv_tick(),
             stick: sdiv_tick(),
             keys: pnp::current_keys() as u16,
@@ -509,6 +517,8 @@ impl Trace {
             window,
             acyc: adiv_cycles(),
             scyc: sdiv_cycles(),
+            asub: adiv_subtick(),
+            ssub: sdiv_subtick(),
             atick: adiv_tick(),
             stick: sdiv_tick(),
         };
@@ -556,16 +566,20 @@ impl Trace {
         if self.probe_session {
             let phase_a = self.probe_target.adiv & 15;
             let phase_s = self.probe_target.sdiv & 15;
+            let adiv_byte = (self.probe_target.div >> 8) as u8;
+            let sdiv_byte = self.probe_target.div as u8;
+            let target_a12 = ((adiv_byte as u16) << 4) | ((self.probe_target.asub as u16) >> 2);
+            let target_s12 = ((sdiv_byte as u16) << 4) | ((self.probe_target.ssub as u16) >> 2);
             let _ = write!(
                 line,
-                "probe,target,target_state,target_div,target_adiv,target_sdiv,target_acyc,target_scyc,target_atick,target_stick,target_keys,phase_a,phase_s,result,dv_advance,offset,route,raw_dv,clean_tail,call_first,call_final,deep_samples\n"
+                "probe,target,target_state,target_div,target_adiv,target_sdiv,target_acyc,target_scyc,target_asub,target_ssub,target_a12,target_s12,target_atick,target_stick,target_keys,phase_a,phase_s,result,dv_advance,offset,route,raw_dv,clean_tail,call_first,call_final,deep_samples\n"
             );
             pnp::trace_file_write(line.as_bytes());
             line.clear();
             if let Some(result) = self.probe_result {
                 let _ = write!(
                     line,
-                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{},{},{:04X},{},{},OK,{},{},{},{:04X},{},{},{},{}\n\n",
+                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{:03X},{:03X},{},{},{:04X},{},{},OK,{},{},{},{:04X},{},{},{},{}\n\n",
                     self.probe_target.advance,
                     self.probe_target.state,
                     self.probe_target.div,
@@ -573,6 +587,10 @@ impl Trace {
                     self.probe_target.sdiv,
                     self.probe_target.acyc,
                     self.probe_target.scyc,
+                    self.probe_target.asub,
+                    self.probe_target.ssub,
+                    target_a12,
+                    target_s12,
                     self.probe_target.atick,
                     self.probe_target.stick,
                     self.probe_target.keys,
@@ -590,7 +608,7 @@ impl Trace {
             } else {
                 let _ = write!(
                     line,
-                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{},{},{:04X},{},{},NO_RESULT,,,,,,,,{}\n\n",
+                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{:03X},{:03X},{},{},{:04X},{},{},NO_RESULT,,,,,,,,{}\n\n",
                     self.probe_target.advance,
                     self.probe_target.state,
                     self.probe_target.div,
@@ -598,6 +616,10 @@ impl Trace {
                     self.probe_target.sdiv,
                     self.probe_target.acyc,
                     self.probe_target.scyc,
+                    self.probe_target.asub,
+                    self.probe_target.ssub,
+                    target_a12,
+                    target_s12,
                     self.probe_target.atick,
                     self.probe_target.stick,
                     self.probe_target.keys,
@@ -612,7 +634,7 @@ impl Trace {
 
         let _ = write!(
             line,
-            "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,atick,stick,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
+            "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,asub,ssub,atick,stick,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
         );
         pnp::trace_file_write(line.as_bytes());
 
@@ -621,7 +643,7 @@ impl Trace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{},{},{:04X},{:04X},{},{},{},{},{},{},{:04X},{},",
+                "{},{},{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{},{},{:04X},{},",
                 index,
                 entry.advance.wrapping_sub(self.start_advance),
                 entry.advance,
@@ -631,6 +653,8 @@ impl Trace {
                 entry.sdiv,
                 entry.acyc,
                 entry.scyc,
+                entry.asub,
+                entry.ssub,
                 entry.atick,
                 entry.stick,
                 entry.keys,
@@ -651,7 +675,7 @@ impl Trace {
         // Second section: every Random call, which is what shows how the DVs
         // are actually produced inside a single frame.
         line.clear();
-        let _ = write!(line, "\ncall_index,pc,advance,add,sub,div,cycles,host_tick\n");
+        let _ = write!(line, "\ncall_index,pc,advance,add,sub,div,cycles,host_tick,mcycle\n");
         pnp::trace_file_write(line.as_bytes());
 
         let total = call_log_count() as usize;
@@ -661,7 +685,7 @@ impl Trace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{:04X},{},{:02X},{:02X},{:04X},{},{}\n",
+                "{},{:04X},{},{:02X},{:02X},{:04X},{},{},{:02X}\n",
                 total - shown + i,
                 e.pc,
                 e.advance,
@@ -669,7 +693,8 @@ impl Trace {
                 e.sub,
                 e.div,
                 e.cycles,
-                e.host_tick
+                e.host_tick,
+                e.mcycle
             );
             pnp::trace_file_write(line.as_bytes());
         }
@@ -680,7 +705,7 @@ impl Trace {
         line.clear();
         let _ = write!(
             line,
-            "\ndeep_index,pc,advance,add,sub,div,cycles,host_tick,r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,lr,host_pc,stk0,stk1,stk2,stk3,stk4,stk5,stk6,stk7,cpu_ctx_22f5e0_64,wram_d200_d27f,hram_ff80_ffff\n"
+            "\ndeep_index,pc,advance,add,sub,div,cycles,host_tick,mcycle,r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,lr,host_pc,stk0,stk1,stk2,stk3,stk4,stk5,stk6,stk7,cpu_ctx_22f5e0_64,wram_d200_d27f,hram_ff80_ffff\n"
         );
         pnp::trace_file_write(line.as_bytes());
 
@@ -691,7 +716,7 @@ impl Trace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{:04X},{},{:02X},{:02X},{:04X},{},{}",
+                "{},{:04X},{},{:02X},{:02X},{:04X},{},{},{:02X}",
                 deep_total - deep_shown + i,
                 e.pc,
                 e.advance,
@@ -699,7 +724,8 @@ impl Trace {
                 e.sub,
                 e.div,
                 e.cycles,
-                e.host_tick
+                e.host_tick,
+                e.mcycle
             );
             for reg in e.regs.iter() {
                 let _ = write!(line, ",{:08X}", reg);
@@ -723,70 +749,8 @@ impl Trace {
             pnp::trace_file_write(line.as_bytes());
         }
 
-        // Fourth section: one same-frame 02B6 -> 02BE differential scan.
-        // Only bytes that changed inside the selected 64 KiB region are kept.
-        // The 16/32-bit fields are little-endian views starting at each changed
-        // byte and are useful for spotting a hidden counter whose high bytes
-        // happened not to change during this short interval.
-        let dm = diff_meta();
-        line.clear();
-        let _ = write!(
-            line,
-            "\ndiff_region,base,len,valid,completed,pair_ok,start_pc,end_pc,start_advance,end_advance,start_div,end_div,start_tick,end_tick,total_changes,stored_changes,overflow\n"
-        );
-        pnp::trace_file_write(line.as_bytes());
-        line.clear();
-        let _ = write!(
-            line,
-            "DIFF,{:08X},{},{},{},{},{:04X},{:04X},{},{},{:02X},{:02X},{},{},{},{},{}\n",
-            dm.region_base,
-            dm.region_len,
-            dm.valid,
-            dm.completed,
-            dm.pair_ok,
-            dm.start_pc,
-            dm.end_pc,
-            dm.start_advance,
-            dm.end_advance,
-            dm.start_div,
-            dm.end_div,
-            dm.start_tick,
-            dm.end_tick,
-            dm.total_changes,
-            dm.stored_changes,
-            (dm.total_changes > dm.stored_changes) as u8
-        );
-        pnp::trace_file_write(line.as_bytes());
-
-        line.clear();
-        let _ = write!(
-            line,
-            "diff_index,address,offset,before,after,delta8,before16_le,after16_le,delta16_le,before32_le,after32_le,delta32_le\n"
-        );
-        pnp::trace_file_write(line.as_bytes());
-
-        let diff_shown = (diff_change_count() as usize).min(DIFF_MAX_CHANGES);
-        for i in 0..diff_shown {
-            let e = diff_entry(i);
-            line.clear();
-            let _ = write!(
-                line,
-                "{},{:08X},{:04X},{:02X},{:02X},{:02X},{:04X},{:04X},{:04X},{:08X},{:08X},{:08X}\n",
-                i,
-                dm.region_base.wrapping_add(e.offset as u32),
-                e.offset,
-                e.before,
-                e.after,
-                e.after.wrapping_sub(e.before),
-                e.before16,
-                e.after16,
-                e.after16.wrapping_sub(e.before16),
-                e.before32,
-                e.after32,
-                e.after32.wrapping_sub(e.before32)
-            );
-            pnp::trace_file_write(line.as_bytes());
-        }
+        // v3.5 intentionally omits the heavy differential dump. F604 is now
+        // sampled directly at every rDIV hook, so ordinary probe timing stays clean.
 
         pnp::trace_file_close();
         self.save_index += 1;
@@ -818,35 +782,25 @@ impl Trace {
         if self.probe_active {
             let mode = if self.state == TraceState::Armed { "ARM" } else { "REC" };
             pnp::println!("Probe {} T{}", mode, self.probe_target.advance);
-            let dm = diff_meta();
             pnp::println!(
-                "Ph {}/{} D{} X{}/{}",
+                "Ph {}/{} D{}",
                 self.probe_target.adiv & 15,
                 self.probe_target.sdiv & 15,
-                deep_log_count(),
-                diff_change_count(),
-                diff_total_changes()
+                deep_log_count()
             );
-            if dm.completed == 0 {
-                pnp::println!("Diff WAIT {:08X}", dm.region_base);
-            }
+            pnp::println!(
+                "Sub {:02X}/{:02X}",
+                self.probe_target.asub,
+                self.probe_target.ssub
+            );
         } else if let Some(result) = self.probe_result {
             pnp::println!("Probe OK +{} {}c", result.offset, result.route);
-            pnp::println!(
-                "DV {:04X} D{} X{}/{}",
-                result.raw_dv,
-                deep_log_count(),
-                diff_change_count(),
-                diff_total_changes()
-            );
+            pnp::println!("DV {:04X} D{}", result.raw_dv, deep_log_count());
+            pnp::println!("Sub {:02X}/{:02X}", adiv_subtick(), sdiv_subtick());
         } else if self.probe_session {
             pnp::println!("Probe STOP T{}", self.probe_target.advance);
-            pnp::println!(
-                "NO RESULT D{} X{}/{}",
-                deep_log_count(),
-                diff_change_count(),
-                diff_total_changes()
-            );
+            pnp::println!("NO RESULT D{}", deep_log_count());
+            pnp::println!("Sub {:02X}/{:02X}", adiv_subtick(), sdiv_subtick());
         } else {
             pnp::println!("Probe OFF");
             pnp::println!("Deep 0");
@@ -891,13 +845,8 @@ impl Trace {
         pnp::println!("from adv {}", self.start_advance);
         pnp::println!("from st  {:04X}", self.start_state);
         pnp::println!("watch {:04X} chg {}", self.watch_addr, self.watch_changes);
-        pnp::println!(
-            "calls {} d{} x{}/{}",
-            call_log_count(),
-            deep_log_count(),
-            diff_change_count(),
-            diff_total_changes()
-        );
+        pnp::println!("calls {} d{}", call_log_count(), deep_log_count());
+        pnp::println!("sub {:02X}/{:02X}", adiv_subtick(), sdiv_subtick());
         if self.probe_active {
             pnp::println!("Probe ARMED T{}", self.probe_target.advance);
         } else if let Some(result) = self.probe_result {

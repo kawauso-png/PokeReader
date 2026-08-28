@@ -4,9 +4,9 @@ use super::game_lib::gb_mem;
 use super::hook::{
     add_div_tracker, adiv_cycles, adiv_tick, call_log_count, call_log_entry, call_log_start,
     call_log_stop, cyc_hook_ret, cyc_hook_word, cycle_counter, deep_log_clear, deep_log_count,
-    deep_log_entry, deep_log_start, deep_log_stop, measured_div, rng_advance, sdiv_cycles,
-    sdiv_tick, sub_div_tracker, wide_ctx_byte, wide_log_count, wide_log_meta, wide_near_byte,
-    CTX_WIDE_LEN, DIV_NEAR_LEN, WIDE_LOG_LEN,
+    deep_log_entry, deep_log_start, deep_log_stop, diff_change_count, diff_entry, diff_meta,
+    diff_total_changes, measured_div, rng_advance, sdiv_cycles, sdiv_tick, sub_div_tracker,
+    DIFF_MAX_CHANGES,
 };
 use super::reader::Gen2Reader;
 use crate::pnp;
@@ -723,60 +723,68 @@ impl Trace {
             pnp::trace_file_write(line.as_bytes());
         }
 
-        // Fourth section: exactly eight first-VBlank rDIV snapshots for
-        // locating the emulator's internal 16-bit divider.  The blobs are
-        // streamed in small chunks because a 1 KiB snapshot expands to 2048
-        // hex characters, larger than LineBuf by design.
+        // Fourth section: one same-frame 02B6 -> 02BE differential scan.
+        // Only bytes that changed inside the selected 64 KiB region are kept.
+        // The 16/32-bit fields are little-endian views starting at each changed
+        // byte and are useful for spotting a hidden counter whose high bytes
+        // happened not to change during this short interval.
+        let dm = diff_meta();
         line.clear();
         let _ = write!(
             line,
-            "\nwide_index,pc,advance,div,host_tick,div_ptr,ctx_base,ctx_valid,ctx_bytes,near_base,near_valid,near_bytes,cyc_hook_word,cyc_hook_ret\n"
+            "\ndiff_region,base,len,valid,completed,pair_ok,start_pc,end_pc,start_advance,end_advance,start_div,end_div,start_tick,end_tick,total_changes,stored_changes,overflow\n"
+        );
+        pnp::trace_file_write(line.as_bytes());
+        line.clear();
+        let _ = write!(
+            line,
+            "DIFF,{:08X},{},{},{},{},{:04X},{:04X},{},{},{:02X},{:02X},{},{},{},{},{}\n",
+            dm.region_base,
+            dm.region_len,
+            dm.valid,
+            dm.completed,
+            dm.pair_ok,
+            dm.start_pc,
+            dm.end_pc,
+            dm.start_advance,
+            dm.end_advance,
+            dm.start_div,
+            dm.end_div,
+            dm.start_tick,
+            dm.end_tick,
+            dm.total_changes,
+            dm.stored_changes,
+            (dm.total_changes > dm.stored_changes) as u8
         );
         pnp::trace_file_write(line.as_bytes());
 
-        let wide_shown = (wide_log_count() as usize).min(WIDE_LOG_LEN);
-        for i in 0..wide_shown {
-            let e = wide_log_meta(i);
+        line.clear();
+        let _ = write!(
+            line,
+            "diff_index,address,offset,before,after,delta8,before16_le,after16_le,delta16_le,before32_le,after32_le,delta32_le\n"
+        );
+        pnp::trace_file_write(line.as_bytes());
 
+        let diff_shown = (diff_change_count() as usize).min(DIFF_MAX_CHANGES);
+        for i in 0..diff_shown {
+            let e = diff_entry(i);
             line.clear();
             let _ = write!(
                 line,
-                "{},{:04X},{},{:02X},{},{:08X},{:08X},{},",
+                "{},{:08X},{:04X},{:02X},{:02X},{:02X},{:04X},{:04X},{:04X},{:08X},{:08X},{:08X}\n",
                 i,
-                e.pc,
-                e.advance,
-                e.div,
-                e.host_tick,
-                e.div_ptr,
-                e.ctx_base,
-                e.ctx_valid
+                dm.region_base.wrapping_add(e.offset as u32),
+                e.offset,
+                e.before,
+                e.after,
+                e.after.wrapping_sub(e.before),
+                e.before16,
+                e.after16,
+                e.after16.wrapping_sub(e.before16),
+                e.before32,
+                e.after32,
+                e.after32.wrapping_sub(e.before32)
             );
-            pnp::trace_file_write(line.as_bytes());
-
-            for start in (0..CTX_WIDE_LEN).step_by(256) {
-                line.clear();
-                let end = core::cmp::min(start + 256, CTX_WIDE_LEN);
-                for offset in start..end {
-                    let _ = write!(line, "{:02X}", wide_ctx_byte(i, offset));
-                }
-                pnp::trace_file_write(line.as_bytes());
-            }
-
-            line.clear();
-            let _ = write!(line, ",{:08X},{},", e.near_base, e.near_valid);
-            pnp::trace_file_write(line.as_bytes());
-
-            for start in (0..DIV_NEAR_LEN).step_by(256) {
-                line.clear();
-                let end = core::cmp::min(start + 256, DIV_NEAR_LEN);
-                for offset in start..end {
-                    let _ = write!(line, "{:02X}", wide_near_byte(i, offset));
-                }
-                pnp::trace_file_write(line.as_bytes());
-            }
-
-            line.clear();
-            let _ = write!(line, ",{:08X},{:08X}\n", cyc_hook_word(), cyc_hook_ret());
             pnp::trace_file_write(line.as_bytes());
         }
 
@@ -810,24 +818,35 @@ impl Trace {
         if self.probe_active {
             let mode = if self.state == TraceState::Armed { "ARM" } else { "REC" };
             pnp::println!("Probe {} T{}", mode, self.probe_target.advance);
+            let dm = diff_meta();
             pnp::println!(
-                "Ph {}/{} D{} W{}",
+                "Ph {}/{} D{} X{}/{}",
                 self.probe_target.adiv & 15,
                 self.probe_target.sdiv & 15,
                 deep_log_count(),
-                wide_log_count()
+                diff_change_count(),
+                diff_total_changes()
             );
+            if dm.completed == 0 {
+                pnp::println!("Diff WAIT {:08X}", dm.region_base);
+            }
         } else if let Some(result) = self.probe_result {
             pnp::println!("Probe OK +{} {}c", result.offset, result.route);
             pnp::println!(
-                "DV {:04X} D{} W{}",
+                "DV {:04X} D{} X{}/{}",
                 result.raw_dv,
                 deep_log_count(),
-                wide_log_count()
+                diff_change_count(),
+                diff_total_changes()
             );
         } else if self.probe_session {
             pnp::println!("Probe STOP T{}", self.probe_target.advance);
-            pnp::println!("NO RESULT D{} W{}", deep_log_count(), wide_log_count());
+            pnp::println!(
+                "NO RESULT D{} X{}/{}",
+                deep_log_count(),
+                diff_change_count(),
+                diff_total_changes()
+            );
         } else {
             pnp::println!("Probe OFF");
             pnp::println!("Deep 0");
@@ -873,10 +892,11 @@ impl Trace {
         pnp::println!("from st  {:04X}", self.start_state);
         pnp::println!("watch {:04X} chg {}", self.watch_addr, self.watch_changes);
         pnp::println!(
-            "calls {} d{} w{}",
+            "calls {} d{} x{}/{}",
             call_log_count(),
             deep_log_count(),
-            wide_log_count()
+            diff_change_count(),
+            diff_total_changes()
         );
         if self.probe_active {
             pnp::println!("Probe ARMED T{}", self.probe_target.advance);

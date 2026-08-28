@@ -1,0 +1,976 @@
+diff --git a/SUICUNE_DIV_DIFF.md b/SUICUNE_DIV_DIFF.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..9d98dddbb10d7943b3eb836e8e411c0a3018b32e
+--- /dev/null
++++ b/SUICUNE_DIV_DIFF.md
+@@ -0,0 +1,108 @@
++# Suicune Deep Probe v3.4 — same-VBlank DIV differential probe
++
++This replaces the v3.2 consecutive-frame Wide capture for the next experiment.
++The goal is to find emulator state that changes **inside one VBlank RNG update**,
++between the first rDIV read (`02B5/02B6`) and the second (`02BD/02BE`).
++
++## Why this experiment
++
++The v3.2 traces proved that the byte immediately after the known rDIV host byte
++behaves like another GB I/O register, not a useful hidden DIV low byte.  They
++also showed that the old JP cycle hook at `0x1A8360` is not installed
++(`E3500000`, return address 0).  Consecutive-frame wide dumps additionally pick
++up unrelated fast accumulators, so v3.4 changes the question from "what moves
++between frames?" to "what moves during the exact 02B6 -> 02BE interval?".
++
++## v3.4 round A
++
++The build scans exactly one region:
++
++```
++0x00220000 - 0x0022FFFF   (64 KiB)
++```
++
++At the first `02B6` after a Deep Probe starts it copies that region to a static
++buffer.  At the matching `02BE` of the same VBlank it copies the region again,
++compares locally, and retains only changed bytes.  The scan then disables
++itself; the normal Suicune trace continues until DV/route auto-detection.
++
++The metadata contains `pair_ok`.  Because PokeReader increments its logical
++`RNG_ADVANCE` at the first VBlank read, a clean same-VBlank pair appears as
++`start_advance -> start_advance+1`; `pair_ok=1` verifies exactly that.
++
++## CSV sections
++
++Near the end of the CSV:
++
++```
++diff_region,base,len,valid,completed,pair_ok,...
++DIFF,00220000,65536,1,1,1,02B6,02BE,...
++
++diff_index,address,offset,before,after,delta8,before16_le,after16_le,delta16_le,before32_le,after32_le,delta32_le
++...
++```
++
++`total_changes` is the number of changed bytes in the 64 KiB region.
++`stored_changes` is capped at 2048.  `overflow=1` means the changed-byte list was
++larger than the retained prefix and the run should be narrowed before drawing a
++negative conclusion.
++
++The 16/32-bit views start at each changed byte.  They are not claims about the
++actual structure; they are included so the offline analyzer can immediately
++recognize a counter whose low byte changed but whose neighbouring bytes did not.
++
++## Analyzer
++
++```
++python3 analyze_div_diff.py celebi_trace_XXXX.csv
++```
++
++It gives highest weight to a 16-bit value whose visible byte follows
++`start_div -> end_div`, then ranks changes near plausible 48 T-cycle / 12
++M-cycle increments.  A candidate is still only a candidate until a later
++lightweight targeted read reproduces it over multiple runs.
++
++## 3DS operation
++
++The Suicune operation is unchanged:
++
++1. Pause at Target.
++2. `Y+X` — arm Deep Probe.
++3. `Y+B` — arm Fixed A Frame.
++4. Hold Up.
++5. Tap `Y+L`.
++6. Release Y/L while keeping Up held.
++7. After the exact 2 frames finish, release Up.
++8. `R` — resume.
++9. Hands off until the plugin auto-pauses after locking the Suicune result.
++
++The first pair scan occurs at the beginning of the run.  It intentionally adds
++host-side work to that frame, but the emulated LR35902 does not advance while
++the hook is executing.  Do not use v3.4 trials as timing-quality production
++trials; they are instrumentation runs.
++
++On the RNG page, `Xstored/total` is the differential count.  Example:
++
++```
++Probe REC T1234
++Ph 5/15 D0 X17/17
++```
++
++and after the Suicune result is locked:
++
++```
++Probe OK +730 4c
++DV 679C D4 X17/17
++```
++
++## What to do with the result
++
++For round A, one complete CSV is enough.
++
++- If a strong candidate appears, replace this invasive 64 KiB scan with a tiny
++  targeted read around that address and verify it over several runs.
++- If there is no convincing candidate and `pair_ok=1`, `overflow=0`, that means
++  only that **this 64 KiB region has no convincing persistent subtick state**.
++  The next regions are `0x08A30000-0x08A3FFFF`, then
++  `0x08A40000-0x08A4FFFF`; it does not prove that the emulator has no
++  cycle-accurate state anywhere.
+diff --git a/analyze_div_diff.py b/analyze_div_diff.py
+new file mode 100755
+index 0000000000000000000000000000000000000000..5fbc3919c47b73c4c4618335d83eb16f803db19c
+--- /dev/null
++++ b/analyze_div_diff.py
+@@ -0,0 +1,241 @@
++#!/usr/bin/env python3
++"""Analyze the v3.4 same-VBlank 02B6 -> 02BE differential section.
++
++The script intentionally does not assume that the VC stores the Game Boy
++internal divider as a literal little-endian u16.  It ranks changed addresses by:
++  * a u16 view whose visible byte agrees with start_div/end_div,
++  * increments close to plausible 48 T-cycle / 12 M-cycle scales,
++  * small monotonic counter-like changes,
++  * adjacency with other changed bytes.
++
++Usage:
++    python3 analyze_div_diff.py celebi_trace_0060.csv
++"""
++from __future__ import annotations
++
++import csv
++import sys
++from dataclasses import dataclass
++from pathlib import Path
++
++EXPECTED = (48, 24, 12, 6, 3, 1)
++
++
++def hx(v: int, width: int) -> str:
++    return f"{v & ((1 << (width*4))-1):0{width}X}"
++
++
++def wrap_distance(value: int, expected: int, bits: int) -> int:
++    mod = 1 << bits
++    value %= mod
++    expected %= mod
++    return min((value - expected) % mod, (expected - value) % mod)
++
++
++def parse_int(s: str, base=10) -> int:
++    return int(s.strip(), base)
++
++
++@dataclass
++class Meta:
++    base: int
++    length: int
++    valid: int
++    completed: int
++    pair_ok: int
++    start_pc: int
++    end_pc: int
++    start_adv: int
++    end_adv: int
++    start_div: int
++    end_div: int
++    start_tick: int
++    end_tick: int
++    total: int
++    stored: int
++    overflow: int
++
++
++@dataclass
++class Row:
++    index: int
++    address: int
++    offset: int
++    before: int
++    after: int
++    d8: int
++    b16: int
++    a16: int
++    d16: int
++    b32: int
++    a32: int
++    d32: int
++
++    @property
++    def b16be(self) -> int:
++        return ((self.b16 & 0xFF) << 8) | (self.b16 >> 8)
++
++    @property
++    def a16be(self) -> int:
++        return ((self.a16 & 0xFF) << 8) | (self.a16 >> 8)
++
++    @property
++    def d16be(self) -> int:
++        return (self.a16be - self.b16be) & 0xFFFF
++
++
++def load(path: Path) -> tuple[Meta, list[Row]]:
++    lines = path.read_text(errors="replace").splitlines()
++    try:
++        mh = next(i for i, l in enumerate(lines) if l.startswith("diff_region,"))
++    except StopIteration:
++        raise SystemExit("diff_region section not found: this is not a v3.4 CSV")
++    if mh + 1 >= len(lines):
++        raise SystemExit("diff metadata row missing")
++
++    m = next(csv.reader([lines[mh + 1]]))
++    if not m or m[0] != "DIFF":
++        raise SystemExit("invalid diff metadata row")
++    meta = Meta(
++        base=parse_int(m[1], 16), length=parse_int(m[2]), valid=parse_int(m[3]),
++        completed=parse_int(m[4]), pair_ok=parse_int(m[5]),
++        start_pc=parse_int(m[6], 16), end_pc=parse_int(m[7], 16),
++        start_adv=parse_int(m[8]), end_adv=parse_int(m[9]),
++        start_div=parse_int(m[10], 16), end_div=parse_int(m[11], 16),
++        start_tick=parse_int(m[12]), end_tick=parse_int(m[13]),
++        total=parse_int(m[14]), stored=parse_int(m[15]), overflow=parse_int(m[16]),
++    )
++
++    try:
++        rh = next(i for i in range(mh + 2, len(lines)) if lines[i].startswith("diff_index,"))
++    except StopIteration:
++        raise SystemExit("diff row header missing")
++
++    rows: list[Row] = []
++    for line in lines[rh + 1:]:
++        if not line.strip() or not line[0].isdigit():
++            break
++        c = next(csv.reader([line]))
++        if len(c) < 12:
++            continue
++        rows.append(Row(
++            index=parse_int(c[0]), address=parse_int(c[1], 16), offset=parse_int(c[2], 16),
++            before=parse_int(c[3], 16), after=parse_int(c[4], 16), d8=parse_int(c[5], 16),
++            b16=parse_int(c[6], 16), a16=parse_int(c[7], 16), d16=parse_int(c[8], 16),
++            b32=parse_int(c[9], 16), a32=parse_int(c[10], 16), d32=parse_int(c[11], 16),
++        ))
++    return meta, rows
++
++
++def score(row: Row, meta: Meta, changed: set[int]) -> tuple[int, list[str]]:
++    score = 0
++    why: list[str] = []
++
++    # Strongest test: a literal internal 16-bit divider beginning here.
++    if (row.b16 >> 8) == meta.start_div and (row.a16 >> 8) == meta.end_div:
++        score += 120
++        why.append("LE16 high=DIV")
++    if (row.b16be >> 8) == meta.start_div and (row.a16be >> 8) == meta.end_div:
++        score += 120
++        why.append("BE16 high=DIV")
++
++    # 48 T-cycles is the primary hypothesis; 12 is the same interval in M-cycles.
++    for exp in EXPECTED:
++        d = wrap_distance(row.d8, exp, 8)
++        if d == 0:
++            score += 35 if exp in (48, 12) else 18
++            why.append(f"d8~{exp}")
++            break
++        if d <= 2:
++            score += 12
++            why.append(f"d8 near {exp}")
++            break
++
++    for name, delta, bits in (("d16", row.d16, 16), ("d16be", row.d16be, 16), ("d32", row.d32, 32)):
++        for exp in EXPECTED:
++            d = wrap_distance(delta, exp, bits)
++            if d == 0:
++                score += 28 if exp in (48, 12) else 12
++                why.append(f"{name}={exp}")
++                break
++            if d <= 2:
++                score += 8
++                why.append(f"{name} near {exp}")
++                break
++
++    # Counters tend to change in compact clusters rather than isolated pointers.
++    neighbours = sum((row.address + d) in changed for d in (-2, -1, 1, 2))
++    if neighbours:
++        score += min(neighbours * 4, 12)
++        why.append(f"adj{neighbours}")
++
++    # Tiny toggles and flags are useful diagnostics but weak counter candidates.
++    signed8 = row.d8 if row.d8 < 0x80 else row.d8 - 0x100
++    if abs(signed8) <= 2:
++        score -= 4
++
++    return score, why
++
++
++def main() -> None:
++    if len(sys.argv) != 2:
++        raise SystemExit("usage: analyze_div_diff.py <trace.csv>")
++    path = Path(sys.argv[1])
++    meta, rows = load(path)
++
++    print(f"file: {path.name}")
++    print(
++        f"region=0x{meta.base:08X}-0x{meta.base + meta.length - 1:08X} "
++        f"valid={meta.valid} completed={meta.completed} pair_ok={meta.pair_ok}"
++    )
++    print(
++        f"pair: pc {meta.start_pc:04X}->{meta.end_pc:04X}, "
++        f"advance {meta.start_adv}->{meta.end_adv}, DIV {meta.start_div:02X}->{meta.end_div:02X}, "
++        f"host_tick_delta={meta.end_tick-meta.start_tick}"
++    )
++    print(f"changes: total={meta.total}, stored={meta.stored}, overflow={meta.overflow}")
++
++    if not meta.valid:
++        print("RESULT: region was not fully mapped; do not interpret this run.")
++        return
++    if not meta.completed or not meta.pair_ok:
++        print("RESULT: no clean same-VBlank pair was completed; retry before interpreting candidates.")
++        return
++    if meta.total == 0:
++        print("RESULT: no persistent byte in this 64 KiB region changed between 02B6 and 02BE.")
++        return
++    if meta.overflow:
++        print("WARNING: changed-byte list overflowed; candidates after the stored prefix may be missing.")
++
++    changed = {r.address for r in rows}
++    ranked = []
++    for r in rows:
++        sc, why = score(r, meta, changed)
++        ranked.append((sc, r, why))
++    ranked.sort(key=lambda x: (-x[0], x[1].address))
++
++    print("\nTop candidates")
++    print("score address    byte    d8  LE16->LE16 d16   LE32->LE32         d32       reasons")
++    for sc, r, why in ranked[:40]:
++        print(
++            f"{sc:5d} 0x{r.address:08X} {r.before:02X}->{r.after:02X} {r.d8:02X}  "
++            f"{r.b16:04X}->{r.a16:04X} {r.d16:04X}  "
++            f"{r.b32:08X}->{r.a32:08X} {r.d32:08X}  {'; '.join(why) or '-'}"
++        )
++
++    literal = [x for x in ranked if "LE16 high=DIV" in x[2] or "BE16 high=DIV" in x[2]]
++    print("\nLiteral DIV-shaped candidates:", len(literal))
++    for sc, r, why in literal[:20]:
++        print(f"  0x{r.address:08X} score={sc} {', '.join(why)}")
++
++    print("\nInterpretation:")
++    if literal:
++        print("  At least one changed location has a 16-bit view whose high byte follows rDIV.")
++        print("  Verify the best address with a lightweight targeted probe before using it as ASUB/SSUB.")
++    else:
++        print("  No literal 16-bit divider begins at a stored changed byte in this region.")
++        print("  Inspect the ranked small-delta counters; if none are convincing, move to the next region.")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/reader_core/src/crystal/hook.rs b/reader_core/src/crystal/hook.rs
+index 5d4f912434c8aa6e102ff7062ee0d5dbf75a06e0..29c2ade66cdf94f591f40090fafdf59fd7c64ea8 100644
+--- a/reader_core/src/crystal/hook.rs
++++ b/reader_core/src/crystal/hook.rs
+@@ -75,149 +75,255 @@ const WRAM_SNAPSHOT_LEN: usize = 128; // D200-D27F
+ const HRAM_SNAPSHOT_LEN: usize = 128; // FF80-FFFF
+ const HOST_STACK_WORDS: usize = 8;
+ 
+-// Short-lived wide snapshot used only to locate the emulator's internal
+-// 16-bit DIV counter.  Eight first-VBlank samples are enough to correlate the
+-// visible DIV byte with the missing low byte while keeping probe overhead
+-// bounded.  The 1 KiB context window covers 0x22F400..0x22F7FF, including the
+-// known emulator-side pointers around 0x22F6xx/0x22F794.  A second 512-byte
+-// window is centered around the host byte pointer that Gen2Reader already uses
+-// to read rDIV.
+-pub const WIDE_LOG_LEN: usize = 8;
+-pub const CTX_WIDE_BASE: u32 = 0x0022f400;
+-pub const CTX_WIDE_LEN: usize = 1024;
+-pub const DIV_NEAR_LEN: usize = 512;
+-const DIV_NEAR_BEFORE: u32 = 0x100;
++// One-shot same-frame differential probe used to locate cycle/subtick state.
++//
++// The old wide probe compared consecutive 02B6 samples, so fast accumulators
++// unrelated to DIV could look promising.  This probe instead snapshots one
++// 64 KiB emulator-state region at the first VBlank rDIV read (02B5/02B6), then
++// compares the exact same region at the second read of that same VBlank
++// (02BD/02BE).  Only changed bytes are retained.  The emulated CPU is stopped
++// while the host memcpy runs, so the pair still brackets the same LR35902
++// instruction interval even though host wall-clock time is perturbed.
++pub const DIFF_REGION_BASE: u32 = 0x00220000;
++pub const DIFF_REGION_LEN: usize = 0x10000;
++pub const DIFF_MAX_CHANGES: usize = 2048;
+ 
+ #[derive(Clone, Copy, Default)]
+-pub struct WideMeta {
+-    pub pc: u16,
+-    pub advance: u32,
+-    pub div: u8,
+-    pub host_tick: u64,
+-    pub div_ptr: u32,
+-    pub ctx_base: u32,
+-    pub ctx_valid: u8,
+-    pub near_base: u32,
+-    pub near_valid: u8,
++pub struct DiffMeta {
++    pub region_base: u32,
++    pub region_len: u32,
++    pub valid: u8,
++    pub completed: u8,
++    pub pair_ok: u8,
++    pub start_pc: u16,
++    pub end_pc: u16,
++    pub start_advance: u32,
++    pub end_advance: u32,
++    pub start_div: u8,
++    pub end_div: u8,
++    pub start_tick: u64,
++    pub end_tick: u64,
++    pub total_changes: u32,
++    pub stored_changes: u32,
+ }
+ 
+-static mut WIDE_META: [WideMeta; WIDE_LOG_LEN] = [WideMeta {
+-    pc: 0,
+-    advance: 0,
+-    div: 0,
+-    host_tick: 0,
+-    div_ptr: 0,
+-    ctx_base: CTX_WIDE_BASE,
+-    ctx_valid: 0,
+-    near_base: 0,
+-    near_valid: 0,
+-}; WIDE_LOG_LEN];
+-static mut WIDE_CTX: [[u8; CTX_WIDE_LEN]; WIDE_LOG_LEN] = [[0; CTX_WIDE_LEN]; WIDE_LOG_LEN];
+-static mut WIDE_NEAR: [[u8; DIV_NEAR_LEN]; WIDE_LOG_LEN] = [[0; DIV_NEAR_LEN]; WIDE_LOG_LEN];
+-static mut WIDE_COUNT: u32 = 0;
+-static mut WIDE_LOGGING: bool = false;
+-
+-fn wide_log_start() {
++#[derive(Clone, Copy)]
++pub struct DiffEntry {
++    pub offset: u16,
++    pub before: u8,
++    pub after: u8,
++    // Little-endian views starting at this changed byte.  These make it
++    // possible to recognize a 16/32-bit counter even when only its low byte
++    // changed during the 02B6 -> 02BE interval.
++    pub before16: u16,
++    pub after16: u16,
++    pub before32: u32,
++    pub after32: u32,
++}
++
++impl DiffEntry {
++    const EMPTY: Self = Self {
++        offset: 0,
++        before: 0,
++        after: 0,
++        before16: 0,
++        after16: 0,
++        before32: 0,
++        after32: 0,
++    };
++}
++
++static mut DIFF_BEFORE: [u8; DIFF_REGION_LEN] = [0; DIFF_REGION_LEN];
++static mut DIFF_AFTER: [u8; DIFF_REGION_LEN] = [0; DIFF_REGION_LEN];
++static mut DIFF_ENTRIES: [DiffEntry; DIFF_MAX_CHANGES] =
++    [DiffEntry::EMPTY; DIFF_MAX_CHANGES];
++static mut DIFF_META: DiffMeta = DiffMeta {
++    region_base: DIFF_REGION_BASE,
++    region_len: DIFF_REGION_LEN as u32,
++    valid: 0,
++    completed: 0,
++    pair_ok: 0,
++    start_pc: 0,
++    end_pc: 0,
++    start_advance: 0,
++    end_advance: 0,
++    start_div: 0,
++    end_div: 0,
++    start_tick: 0,
++    end_tick: 0,
++    total_changes: 0,
++    stored_changes: 0,
++};
++static mut DIFF_ARMED: bool = false;
++static mut DIFF_PENDING: bool = false;
++
++fn diff_region_mapped() -> bool {
++    // Check every 4 KiB page rather than assuming that matching endpoints mean
++    // the full 64 KiB range is readable.
++    for offset in (0..DIFF_REGION_LEN).step_by(0x1000) {
++        if !pnp::is_memory_mapped(DIFF_REGION_BASE + offset as u32) {
++            return false;
++        }
++    }
++    true
++}
++
++fn raw_le16(ptr: *const u8, offset: usize) -> u16 {
+     unsafe {
+-        WIDE_COUNT = 0;
+-        WIDE_LOGGING = true;
++        let b0 = core::ptr::read(ptr.add(offset)) as u16;
++        let b1 = if offset + 1 < DIFF_REGION_LEN {
++            core::ptr::read(ptr.add(offset + 1)) as u16
++        } else {
++            0
++        };
++        b0 | (b1 << 8)
+     }
+ }
+ 
+-fn wide_log_stop() {
+-    unsafe { WIDE_LOGGING = false };
++fn raw_le32(ptr: *const u8, offset: usize) -> u32 {
++    unsafe {
++        let mut value = 0u32;
++        for i in 0..4usize {
++            if offset + i < DIFF_REGION_LEN {
++                value |= (core::ptr::read(ptr.add(offset + i)) as u32) << (i * 8);
++            }
++        }
++        value
++    }
+ }
+ 
+-fn wide_log_clear() {
++fn diff_probe_start() {
+     unsafe {
+-        WIDE_COUNT = 0;
+-        WIDE_LOGGING = false;
++        DIFF_META = DiffMeta {
++            region_base: DIFF_REGION_BASE,
++            region_len: DIFF_REGION_LEN as u32,
++            ..DiffMeta::default()
++        };
++        DIFF_ARMED = true;
++        DIFF_PENDING = false;
+     }
+ }
+ 
+-pub fn wide_log_count() -> u32 {
+-    unsafe { WIDE_COUNT.min(WIDE_LOG_LEN as u32) }
++fn diff_probe_stop() {
++    unsafe {
++        DIFF_ARMED = false;
++        DIFF_PENDING = false;
++    }
+ }
+ 
+-pub fn wide_log_meta(index: usize) -> WideMeta {
++fn diff_probe_clear() {
+     unsafe {
+-        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize {
+-            WIDE_META[index]
+-        } else {
+-            WideMeta::default()
+-        }
++        DIFF_META = DiffMeta {
++            region_base: DIFF_REGION_BASE,
++            region_len: DIFF_REGION_LEN as u32,
++            ..DiffMeta::default()
++        };
++        DIFF_ARMED = false;
++        DIFF_PENDING = false;
+     }
+ }
+ 
+-pub fn wide_ctx_byte(index: usize, offset: usize) -> u8 {
++pub fn diff_meta() -> DiffMeta {
++    unsafe { DIFF_META }
++}
++
++pub fn diff_change_count() -> u32 {
++    unsafe { DIFF_META.stored_changes }
++}
++
++pub fn diff_total_changes() -> u32 {
++    unsafe { DIFF_META.total_changes }
++}
++
++pub fn diff_entry(index: usize) -> DiffEntry {
+     unsafe {
+-        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize && offset < CTX_WIDE_LEN {
+-            WIDE_CTX[index][offset]
++        if index < DIFF_META.stored_changes.min(DIFF_MAX_CHANGES as u32) as usize {
++            DIFF_ENTRIES[index]
+         } else {
+-            0
++            DiffEntry::EMPTY
+         }
+     }
+ }
+ 
+-pub fn wide_near_byte(index: usize, offset: usize) -> u8 {
++fn capture_diff_begin(pc: u16, div: u8, host_tick: u64) {
+     unsafe {
+-        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize && offset < DIV_NEAR_LEN {
+-            WIDE_NEAR[index][offset]
+-        } else {
+-            0
++        if !DIFF_ARMED || DIFF_PENDING || DIFF_META.completed != 0 {
++            return;
+         }
+     }
+-}
+ 
+-fn capture_wide_vblank(reader: &Gen2Reader, pc: u16, div: u8, host_tick: u64) {
+-    let index = unsafe {
+-        if !WIDE_LOGGING || WIDE_COUNT as usize >= WIDE_LOG_LEN {
+-            WIDE_LOGGING = false;
++    let valid = diff_region_mapped();
++    unsafe {
++        DIFF_META.region_base = DIFF_REGION_BASE;
++        DIFF_META.region_len = DIFF_REGION_LEN as u32;
++        DIFF_META.valid = valid as u8;
++        DIFF_META.start_pc = pc;
++        DIFF_META.start_advance = RNG_ADVANCE;
++        DIFF_META.start_div = div;
++        DIFF_META.start_tick = host_tick;
++        DIFF_META.total_changes = 0;
++        DIFF_META.stored_changes = 0;
++
++        if !valid {
++            DIFF_META.completed = 1;
++            DIFF_ARMED = false;
+             return;
+         }
+-        WIDE_COUNT as usize
+-    };
+ 
+-    let div_ptr = reader.div_host_ptr();
+-    let near_base = div_ptr.saturating_sub(DIV_NEAR_BEFORE);
+-    let ctx_valid = pnp::is_memory_mapped(CTX_WIDE_BASE)
+-        && pnp::is_memory_mapped(CTX_WIDE_BASE + CTX_WIDE_LEN as u32 - 1);
+-    let near_valid = div_ptr != 0
+-        && pnp::is_memory_mapped(near_base)
+-        && pnp::is_memory_mapped(near_base + DIV_NEAR_LEN as u32 - 1);
++        let before = core::ptr::addr_of_mut!(DIFF_BEFORE).cast::<u8>();
++        pnp::read_into_raw(DIFF_REGION_BASE, before, DIFF_REGION_LEN);
++        DIFF_PENDING = true;
++    }
++}
+ 
++fn capture_diff_end(pc: u16, div: u8, host_tick: u64) {
+     unsafe {
+-        let ctx_out = core::ptr::addr_of_mut!(WIDE_CTX)
+-            .cast::<u8>()
+-            .add(index * CTX_WIDE_LEN);
+-        core::ptr::write_bytes(ctx_out, 0, CTX_WIDE_LEN);
+-        if ctx_valid {
+-            pnp::read_into_raw(CTX_WIDE_BASE, ctx_out, CTX_WIDE_LEN);
++        if !DIFF_ARMED || !DIFF_PENDING || DIFF_META.completed != 0 {
++            return;
+         }
+ 
+-        let near_out = core::ptr::addr_of_mut!(WIDE_NEAR)
+-            .cast::<u8>()
+-            .add(index * DIV_NEAR_LEN);
+-        core::ptr::write_bytes(near_out, 0, DIV_NEAR_LEN);
+-        if near_valid {
+-            pnp::read_into_raw(near_base, near_out, DIV_NEAR_LEN);
++        let after_ptr = core::ptr::addr_of_mut!(DIFF_AFTER).cast::<u8>();
++        pnp::read_into_raw(DIFF_REGION_BASE, after_ptr, DIFF_REGION_LEN);
++        let before_ptr = core::ptr::addr_of!(DIFF_BEFORE).cast::<u8>();
++        let after_ptr_const = core::ptr::addr_of!(DIFF_AFTER).cast::<u8>();
++
++        let mut total = 0u32;
++        let mut stored = 0usize;
++        for offset in 0..DIFF_REGION_LEN {
++            let before = core::ptr::read(before_ptr.add(offset));
++            let after = core::ptr::read(after_ptr_const.add(offset));
++            if before == after {
++                continue;
++            }
++
++            total = total.wrapping_add(1);
++            if stored < DIFF_MAX_CHANGES {
++                DIFF_ENTRIES[stored] = DiffEntry {
++                    offset: offset as u16,
++                    before,
++                    after,
++                    before16: raw_le16(before_ptr, offset),
++                    after16: raw_le16(after_ptr_const, offset),
++                    before32: raw_le32(before_ptr, offset),
++                    after32: raw_le32(after_ptr_const, offset),
++                };
++                stored += 1;
++            }
+         }
+ 
+-        WIDE_META[index] = WideMeta {
+-            pc,
+-            advance: RNG_ADVANCE,
+-            div,
+-            host_tick,
+-            div_ptr,
+-            ctx_base: CTX_WIDE_BASE,
+-            ctx_valid: ctx_valid as u8,
+-            near_base: if near_valid { near_base } else { 0 },
+-            near_valid: near_valid as u8,
+-        };
+-        WIDE_COUNT = WIDE_COUNT.wrapping_add(1);
+-        if WIDE_COUNT as usize >= WIDE_LOG_LEN {
+-            WIDE_LOGGING = false;
+-        }
++        DIFF_META.end_pc = pc;
++        DIFF_META.end_advance = RNG_ADVANCE;
++        DIFF_META.end_div = div;
++        DIFF_META.end_tick = host_tick;
++        // RNG_ADVANCE increments immediately after the first VBlank read, so
++        // the second read of the same VBlank should observe start+1.
++        DIFF_META.pair_ok =
++            (RNG_ADVANCE == DIFF_META.start_advance.wrapping_add(1)) as u8;
++        DIFF_META.total_changes = total;
++        DIFF_META.stored_changes = stored as u32;
++        DIFF_META.completed = 1;
++        DIFF_PENDING = false;
++        DIFF_ARMED = false;
+     }
+ }
+ 
+@@ -265,12 +371,12 @@ pub fn deep_log_start() {
+         DEEP_COUNT = 0;
+         DEEP_LOGGING = true;
+     }
+-    wide_log_start();
++    diff_probe_start();
+ }
+ 
+ pub fn deep_log_stop() {
+     unsafe { DEEP_LOGGING = false };
+-    wide_log_stop();
++    diff_probe_stop();
+ }
+ 
+ /// Clear stale deep samples as well as stopping capture.  Regular Trace saves
+@@ -281,7 +387,7 @@ pub fn deep_log_clear() {
+         DEEP_COUNT = 0;
+         DEEP_LOGGING = false;
+     }
+-    wide_log_clear();
++    diff_probe_clear();
+ }
+ 
+ pub fn deep_log_count() -> u32 {
+@@ -590,7 +696,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
+     const RNG_DIV_READ_2: [u16; 2] = [0x2bd, 0x2be];
+     if RNG_DIV_READ_1.contains(&pc) {
+         let div = reader.div();
+-        capture_wide_vblank(&reader, pc, div, host_tick);
++        capture_diff_begin(pc, div, host_tick);
+         unsafe { ADIV = div };
+         unsafe { ACYCLES = CYCLE_COUNTER };
+         unsafe { ATICKS = host_tick };
+@@ -600,6 +706,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
+     }
+     if RNG_DIV_READ_2.contains(&pc) {
+         let div = reader.div();
++        capture_diff_end(pc, div, host_tick);
+         unsafe { SDIV = div };
+         unsafe { SCYCLES = CYCLE_COUNTER };
+         unsafe { STICKS = host_tick };
+@@ -616,7 +723,7 @@ pub fn init_crystal() {
+     // Read the instruction before hook_game_branch potentially rewrites it.
+     // If this is not an ARM BL (top byte EB), replace_arm_branch intentionally
+     // leaves it untouched and returns 0; the pair is shown on Trace and saved
+-    // with the wide samples.
++    // with the differential metadata.
+     unsafe { CYC_HOOK_WORD = pnp::read::<u32>(0x1a8360) };
+ 
+     if let Ok(crate::title::LoadedTitle::CrystalJp) = crate::title::loaded_title() {
+diff --git a/reader_core/src/crystal/reader.rs b/reader_core/src/crystal/reader.rs
+index 0222d6340f81ffc7d7dd42f7254dd0f7a5b5ff96..e4cd4c466faa37fdb7ce138c156a61e17decf214 100644
+--- a/reader_core/src/crystal/reader.rs
++++ b/reader_core/src/crystal/reader.rs
+@@ -69,9 +69,9 @@ impl Gen2Reader {
+ 
+     /// Host-process pointer to the byte that backs the emulated rDIV register.
+     /// The Japanese and international Crystal builds currently share the same
+-    /// pointer slot (0x22F794).  Exposing the resolved pointer lets the short
+-    /// DIV-wide probe inspect its immediate neighbourhood without duplicating
+-    /// emulator-layout knowledge in the hook.
++    /// pointer slot (0x22F794).  Keeping the resolved host pointer available
++    /// is useful for diagnostics even though the current differential probe
++    /// scans the emulator-state region directly.
+     pub fn div_host_ptr(&self) -> u32 {
+         pnp::read::<u32>(self.addrs.div_ptr)
+     }
+diff --git a/reader_core/src/crystal/trace.rs b/reader_core/src/crystal/trace.rs
+index 79d59cb6c0effc74abe10b185c63bb4b9e5ebad7..ae2ce710ebf6187dc862cd21de1f7f07cee5c9c8 100644
+--- a/reader_core/src/crystal/trace.rs
++++ b/reader_core/src/crystal/trace.rs
+@@ -4,9 +4,9 @@ use super::game_lib::gb_mem;
+ use super::hook::{
+     add_div_tracker, adiv_cycles, adiv_tick, call_log_count, call_log_entry, call_log_start,
+     call_log_stop, cyc_hook_ret, cyc_hook_word, cycle_counter, deep_log_clear, deep_log_count,
+-    deep_log_entry, deep_log_start, deep_log_stop, measured_div, rng_advance, sdiv_cycles,
+-    sdiv_tick, sub_div_tracker, wide_ctx_byte, wide_log_count, wide_log_meta, wide_near_byte,
+-    CTX_WIDE_LEN, DIV_NEAR_LEN, WIDE_LOG_LEN,
++    deep_log_entry, deep_log_start, deep_log_stop, diff_change_count, diff_entry, diff_meta,
++    diff_total_changes, measured_div, rng_advance, sdiv_cycles, sdiv_tick, sub_div_tracker,
++    DIFF_MAX_CHANGES,
+ };
+ use super::reader::Gen2Reader;
+ use crate::pnp;
+@@ -723,61 +723,69 @@ impl Trace {
+             pnp::trace_file_write(line.as_bytes());
+         }
+ 
+-        // Fourth section: exactly eight first-VBlank rDIV snapshots for
+-        // locating the emulator's internal 16-bit divider.  The blobs are
+-        // streamed in small chunks because a 1 KiB snapshot expands to 2048
+-        // hex characters, larger than LineBuf by design.
++        // Fourth section: one same-frame 02B6 -> 02BE differential scan.
++        // Only bytes that changed inside the selected 64 KiB region are kept.
++        // The 16/32-bit fields are little-endian views starting at each changed
++        // byte and are useful for spotting a hidden counter whose high bytes
++        // happened not to change during this short interval.
++        let dm = diff_meta();
+         line.clear();
+         let _ = write!(
+             line,
+-            "\nwide_index,pc,advance,div,host_tick,div_ptr,ctx_base,ctx_valid,ctx_bytes,near_base,near_valid,near_bytes,cyc_hook_word,cyc_hook_ret\n"
++            "\ndiff_region,base,len,valid,completed,pair_ok,start_pc,end_pc,start_advance,end_advance,start_div,end_div,start_tick,end_tick,total_changes,stored_changes,overflow\n"
++        );
++        pnp::trace_file_write(line.as_bytes());
++        line.clear();
++        let _ = write!(
++            line,
++            "DIFF,{:08X},{},{},{},{},{:04X},{:04X},{},{},{:02X},{:02X},{},{},{},{},{}\n",
++            dm.region_base,
++            dm.region_len,
++            dm.valid,
++            dm.completed,
++            dm.pair_ok,
++            dm.start_pc,
++            dm.end_pc,
++            dm.start_advance,
++            dm.end_advance,
++            dm.start_div,
++            dm.end_div,
++            dm.start_tick,
++            dm.end_tick,
++            dm.total_changes,
++            dm.stored_changes,
++            (dm.total_changes > dm.stored_changes) as u8
+         );
+         pnp::trace_file_write(line.as_bytes());
+ 
+-        let wide_shown = (wide_log_count() as usize).min(WIDE_LOG_LEN);
+-        for i in 0..wide_shown {
+-            let e = wide_log_meta(i);
++        line.clear();
++        let _ = write!(
++            line,
++            "diff_index,address,offset,before,after,delta8,before16_le,after16_le,delta16_le,before32_le,after32_le,delta32_le\n"
++        );
++        pnp::trace_file_write(line.as_bytes());
+ 
++        let diff_shown = (diff_change_count() as usize).min(DIFF_MAX_CHANGES);
++        for i in 0..diff_shown {
++            let e = diff_entry(i);
+             line.clear();
+             let _ = write!(
+                 line,
+-                "{},{:04X},{},{:02X},{},{:08X},{:08X},{},",
++                "{},{:08X},{:04X},{:02X},{:02X},{:02X},{:04X},{:04X},{:04X},{:08X},{:08X},{:08X}\n",
+                 i,
+-                e.pc,
+-                e.advance,
+-                e.div,
+-                e.host_tick,
+-                e.div_ptr,
+-                e.ctx_base,
+-                e.ctx_valid
++                dm.region_base.wrapping_add(e.offset as u32),
++                e.offset,
++                e.before,
++                e.after,
++                e.after.wrapping_sub(e.before),
++                e.before16,
++                e.after16,
++                e.after16.wrapping_sub(e.before16),
++                e.before32,
++                e.after32,
++                e.after32.wrapping_sub(e.before32)
+             );
+             pnp::trace_file_write(line.as_bytes());
+-
+-            for start in (0..CTX_WIDE_LEN).step_by(256) {
+-                line.clear();
+-                let end = core::cmp::min(start + 256, CTX_WIDE_LEN);
+-                for offset in start..end {
+-                    let _ = write!(line, "{:02X}", wide_ctx_byte(i, offset));
+-                }
+-                pnp::trace_file_write(line.as_bytes());
+-            }
+-
+-            line.clear();
+-            let _ = write!(line, ",{:08X},{},", e.near_base, e.near_valid);
+-            pnp::trace_file_write(line.as_bytes());
+-
+-            for start in (0..DIV_NEAR_LEN).step_by(256) {
+-                line.clear();
+-                let end = core::cmp::min(start + 256, DIV_NEAR_LEN);
+-                for offset in start..end {
+-                    let _ = write!(line, "{:02X}", wide_near_byte(i, offset));
+-                }
+-                pnp::trace_file_write(line.as_bytes());
+-            }
+-
+-            line.clear();
+-            let _ = write!(line, ",{:08X},{:08X}\n", cyc_hook_word(), cyc_hook_ret());
+-            pnp::trace_file_write(line.as_bytes());
+         }
+ 
+         pnp::trace_file_close();
+@@ -810,24 +818,35 @@ impl Trace {
+         if self.probe_active {
+             let mode = if self.state == TraceState::Armed { "ARM" } else { "REC" };
+             pnp::println!("Probe {} T{}", mode, self.probe_target.advance);
++            let dm = diff_meta();
+             pnp::println!(
+-                "Ph {}/{} D{} W{}",
++                "Ph {}/{} D{} X{}/{}",
+                 self.probe_target.adiv & 15,
+                 self.probe_target.sdiv & 15,
+                 deep_log_count(),
+-                wide_log_count()
++                diff_change_count(),
++                diff_total_changes()
+             );
++            if dm.completed == 0 {
++                pnp::println!("Diff WAIT {:08X}", dm.region_base);
++            }
+         } else if let Some(result) = self.probe_result {
+             pnp::println!("Probe OK +{} {}c", result.offset, result.route);
+             pnp::println!(
+-                "DV {:04X} D{} W{}",
++                "DV {:04X} D{} X{}/{}",
+                 result.raw_dv,
+                 deep_log_count(),
+-                wide_log_count()
++                diff_change_count(),
++                diff_total_changes()
+             );
+         } else if self.probe_session {
+             pnp::println!("Probe STOP T{}", self.probe_target.advance);
+-            pnp::println!("NO RESULT D{} W{}", deep_log_count(), wide_log_count());
++            pnp::println!(
++                "NO RESULT D{} X{}/{}",
++                deep_log_count(),
++                diff_change_count(),
++                diff_total_changes()
++            );
+         } else {
+             pnp::println!("Probe OFF");
+             pnp::println!("Deep 0");
+@@ -873,10 +892,11 @@ impl Trace {
+         pnp::println!("from st  {:04X}", self.start_state);
+         pnp::println!("watch {:04X} chg {}", self.watch_addr, self.watch_changes);
+         pnp::println!(
+-            "calls {} d{} w{}",
++            "calls {} d{} x{}/{}",
+             call_log_count(),
+             deep_log_count(),
+-            wide_log_count()
++            diff_change_count(),
++            diff_total_changes()
+         );
+         if self.probe_active {
+             pnp::println!("Probe ARMED T{}", self.probe_target.advance);

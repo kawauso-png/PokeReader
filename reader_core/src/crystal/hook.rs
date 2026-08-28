@@ -75,149 +75,255 @@ const WRAM_SNAPSHOT_LEN: usize = 128; // D200-D27F
 const HRAM_SNAPSHOT_LEN: usize = 128; // FF80-FFFF
 const HOST_STACK_WORDS: usize = 8;
 
-// Short-lived wide snapshot used only to locate the emulator's internal
-// 16-bit DIV counter.  Eight first-VBlank samples are enough to correlate the
-// visible DIV byte with the missing low byte while keeping probe overhead
-// bounded.  The 1 KiB context window covers 0x22F400..0x22F7FF, including the
-// known emulator-side pointers around 0x22F6xx/0x22F794.  A second 512-byte
-// window is centered around the host byte pointer that Gen2Reader already uses
-// to read rDIV.
-pub const WIDE_LOG_LEN: usize = 8;
-pub const CTX_WIDE_BASE: u32 = 0x0022f400;
-pub const CTX_WIDE_LEN: usize = 1024;
-pub const DIV_NEAR_LEN: usize = 512;
-const DIV_NEAR_BEFORE: u32 = 0x100;
+// One-shot same-frame differential probe used to locate cycle/subtick state.
+//
+// The old wide probe compared consecutive 02B6 samples, so fast accumulators
+// unrelated to DIV could look promising.  This probe instead snapshots one
+// 64 KiB emulator-state region at the first VBlank rDIV read (02B5/02B6), then
+// compares the exact same region at the second read of that same VBlank
+// (02BD/02BE).  Only changed bytes are retained.  The emulated CPU is stopped
+// while the host memcpy runs, so the pair still brackets the same LR35902
+// instruction interval even though host wall-clock time is perturbed.
+pub const DIFF_REGION_BASE: u32 = 0x00220000;
+pub const DIFF_REGION_LEN: usize = 0x10000;
+pub const DIFF_MAX_CHANGES: usize = 2048;
 
 #[derive(Clone, Copy, Default)]
-pub struct WideMeta {
-    pub pc: u16,
-    pub advance: u32,
-    pub div: u8,
-    pub host_tick: u64,
-    pub div_ptr: u32,
-    pub ctx_base: u32,
-    pub ctx_valid: u8,
-    pub near_base: u32,
-    pub near_valid: u8,
+pub struct DiffMeta {
+    pub region_base: u32,
+    pub region_len: u32,
+    pub valid: u8,
+    pub completed: u8,
+    pub pair_ok: u8,
+    pub start_pc: u16,
+    pub end_pc: u16,
+    pub start_advance: u32,
+    pub end_advance: u32,
+    pub start_div: u8,
+    pub end_div: u8,
+    pub start_tick: u64,
+    pub end_tick: u64,
+    pub total_changes: u32,
+    pub stored_changes: u32,
 }
 
-static mut WIDE_META: [WideMeta; WIDE_LOG_LEN] = [WideMeta {
-    pc: 0,
-    advance: 0,
-    div: 0,
-    host_tick: 0,
-    div_ptr: 0,
-    ctx_base: CTX_WIDE_BASE,
-    ctx_valid: 0,
-    near_base: 0,
-    near_valid: 0,
-}; WIDE_LOG_LEN];
-static mut WIDE_CTX: [[u8; CTX_WIDE_LEN]; WIDE_LOG_LEN] = [[0; CTX_WIDE_LEN]; WIDE_LOG_LEN];
-static mut WIDE_NEAR: [[u8; DIV_NEAR_LEN]; WIDE_LOG_LEN] = [[0; DIV_NEAR_LEN]; WIDE_LOG_LEN];
-static mut WIDE_COUNT: u32 = 0;
-static mut WIDE_LOGGING: bool = false;
-
-fn wide_log_start() {
-    unsafe {
-        WIDE_COUNT = 0;
-        WIDE_LOGGING = true;
-    }
+#[derive(Clone, Copy)]
+pub struct DiffEntry {
+    pub offset: u16,
+    pub before: u8,
+    pub after: u8,
+    // Little-endian views starting at this changed byte.  These make it
+    // possible to recognize a 16/32-bit counter even when only its low byte
+    // changed during the 02B6 -> 02BE interval.
+    pub before16: u16,
+    pub after16: u16,
+    pub before32: u32,
+    pub after32: u32,
 }
 
-fn wide_log_stop() {
-    unsafe { WIDE_LOGGING = false };
+impl DiffEntry {
+    const EMPTY: Self = Self {
+        offset: 0,
+        before: 0,
+        after: 0,
+        before16: 0,
+        after16: 0,
+        before32: 0,
+        after32: 0,
+    };
 }
 
-fn wide_log_clear() {
-    unsafe {
-        WIDE_COUNT = 0;
-        WIDE_LOGGING = false;
-    }
-}
+static mut DIFF_BEFORE: [u8; DIFF_REGION_LEN] = [0; DIFF_REGION_LEN];
+static mut DIFF_AFTER: [u8; DIFF_REGION_LEN] = [0; DIFF_REGION_LEN];
+static mut DIFF_ENTRIES: [DiffEntry; DIFF_MAX_CHANGES] =
+    [DiffEntry::EMPTY; DIFF_MAX_CHANGES];
+static mut DIFF_META: DiffMeta = DiffMeta {
+    region_base: DIFF_REGION_BASE,
+    region_len: DIFF_REGION_LEN as u32,
+    valid: 0,
+    completed: 0,
+    pair_ok: 0,
+    start_pc: 0,
+    end_pc: 0,
+    start_advance: 0,
+    end_advance: 0,
+    start_div: 0,
+    end_div: 0,
+    start_tick: 0,
+    end_tick: 0,
+    total_changes: 0,
+    stored_changes: 0,
+};
+static mut DIFF_ARMED: bool = false;
+static mut DIFF_PENDING: bool = false;
 
-pub fn wide_log_count() -> u32 {
-    unsafe { WIDE_COUNT.min(WIDE_LOG_LEN as u32) }
-}
-
-pub fn wide_log_meta(index: usize) -> WideMeta {
-    unsafe {
-        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize {
-            WIDE_META[index]
-        } else {
-            WideMeta::default()
+fn diff_region_mapped() -> bool {
+    // Check every 4 KiB page rather than assuming that matching endpoints mean
+    // the full 64 KiB range is readable.
+    for offset in (0..DIFF_REGION_LEN).step_by(0x1000) {
+        if !pnp::is_memory_mapped(DIFF_REGION_BASE + offset as u32) {
+            return false;
         }
     }
+    true
 }
 
-pub fn wide_ctx_byte(index: usize, offset: usize) -> u8 {
+fn raw_le16(ptr: *const u8, offset: usize) -> u16 {
     unsafe {
-        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize && offset < CTX_WIDE_LEN {
-            WIDE_CTX[index][offset]
+        let b0 = core::ptr::read(ptr.add(offset)) as u16;
+        let b1 = if offset + 1 < DIFF_REGION_LEN {
+            core::ptr::read(ptr.add(offset + 1)) as u16
         } else {
             0
-        }
+        };
+        b0 | (b1 << 8)
     }
 }
 
-pub fn wide_near_byte(index: usize, offset: usize) -> u8 {
+fn raw_le32(ptr: *const u8, offset: usize) -> u32 {
     unsafe {
-        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize && offset < DIV_NEAR_LEN {
-            WIDE_NEAR[index][offset]
+        let mut value = 0u32;
+        for i in 0..4usize {
+            if offset + i < DIFF_REGION_LEN {
+                value |= (core::ptr::read(ptr.add(offset + i)) as u32) << (i * 8);
+            }
+        }
+        value
+    }
+}
+
+fn diff_probe_start() {
+    unsafe {
+        DIFF_META = DiffMeta {
+            region_base: DIFF_REGION_BASE,
+            region_len: DIFF_REGION_LEN as u32,
+            ..DiffMeta::default()
+        };
+        DIFF_ARMED = true;
+        DIFF_PENDING = false;
+    }
+}
+
+fn diff_probe_stop() {
+    unsafe {
+        DIFF_ARMED = false;
+        DIFF_PENDING = false;
+    }
+}
+
+fn diff_probe_clear() {
+    unsafe {
+        DIFF_META = DiffMeta {
+            region_base: DIFF_REGION_BASE,
+            region_len: DIFF_REGION_LEN as u32,
+            ..DiffMeta::default()
+        };
+        DIFF_ARMED = false;
+        DIFF_PENDING = false;
+    }
+}
+
+pub fn diff_meta() -> DiffMeta {
+    unsafe { DIFF_META }
+}
+
+pub fn diff_change_count() -> u32 {
+    unsafe { DIFF_META.stored_changes }
+}
+
+pub fn diff_total_changes() -> u32 {
+    unsafe { DIFF_META.total_changes }
+}
+
+pub fn diff_entry(index: usize) -> DiffEntry {
+    unsafe {
+        if index < DIFF_META.stored_changes.min(DIFF_MAX_CHANGES as u32) as usize {
+            DIFF_ENTRIES[index]
         } else {
-            0
+            DiffEntry::EMPTY
         }
     }
 }
 
-fn capture_wide_vblank(reader: &Gen2Reader, pc: u16, div: u8, host_tick: u64) {
-    let index = unsafe {
-        if !WIDE_LOGGING || WIDE_COUNT as usize >= WIDE_LOG_LEN {
-            WIDE_LOGGING = false;
+fn capture_diff_begin(pc: u16, div: u8, host_tick: u64) {
+    unsafe {
+        if !DIFF_ARMED || DIFF_PENDING || DIFF_META.completed != 0 {
             return;
         }
-        WIDE_COUNT as usize
-    };
+    }
 
-    let div_ptr = reader.div_host_ptr();
-    let near_base = div_ptr.saturating_sub(DIV_NEAR_BEFORE);
-    let ctx_valid = pnp::is_memory_mapped(CTX_WIDE_BASE)
-        && pnp::is_memory_mapped(CTX_WIDE_BASE + CTX_WIDE_LEN as u32 - 1);
-    let near_valid = div_ptr != 0
-        && pnp::is_memory_mapped(near_base)
-        && pnp::is_memory_mapped(near_base + DIV_NEAR_LEN as u32 - 1);
-
+    let valid = diff_region_mapped();
     unsafe {
-        let ctx_out = core::ptr::addr_of_mut!(WIDE_CTX)
-            .cast::<u8>()
-            .add(index * CTX_WIDE_LEN);
-        core::ptr::write_bytes(ctx_out, 0, CTX_WIDE_LEN);
-        if ctx_valid {
-            pnp::read_into_raw(CTX_WIDE_BASE, ctx_out, CTX_WIDE_LEN);
+        DIFF_META.region_base = DIFF_REGION_BASE;
+        DIFF_META.region_len = DIFF_REGION_LEN as u32;
+        DIFF_META.valid = valid as u8;
+        DIFF_META.start_pc = pc;
+        DIFF_META.start_advance = RNG_ADVANCE;
+        DIFF_META.start_div = div;
+        DIFF_META.start_tick = host_tick;
+        DIFF_META.total_changes = 0;
+        DIFF_META.stored_changes = 0;
+
+        if !valid {
+            DIFF_META.completed = 1;
+            DIFF_ARMED = false;
+            return;
         }
 
-        let near_out = core::ptr::addr_of_mut!(WIDE_NEAR)
-            .cast::<u8>()
-            .add(index * DIV_NEAR_LEN);
-        core::ptr::write_bytes(near_out, 0, DIV_NEAR_LEN);
-        if near_valid {
-            pnp::read_into_raw(near_base, near_out, DIV_NEAR_LEN);
+        let before = core::ptr::addr_of_mut!(DIFF_BEFORE).cast::<u8>();
+        pnp::read_into_raw(DIFF_REGION_BASE, before, DIFF_REGION_LEN);
+        DIFF_PENDING = true;
+    }
+}
+
+fn capture_diff_end(pc: u16, div: u8, host_tick: u64) {
+    unsafe {
+        if !DIFF_ARMED || !DIFF_PENDING || DIFF_META.completed != 0 {
+            return;
         }
 
-        WIDE_META[index] = WideMeta {
-            pc,
-            advance: RNG_ADVANCE,
-            div,
-            host_tick,
-            div_ptr,
-            ctx_base: CTX_WIDE_BASE,
-            ctx_valid: ctx_valid as u8,
-            near_base: if near_valid { near_base } else { 0 },
-            near_valid: near_valid as u8,
-        };
-        WIDE_COUNT = WIDE_COUNT.wrapping_add(1);
-        if WIDE_COUNT as usize >= WIDE_LOG_LEN {
-            WIDE_LOGGING = false;
+        let after_ptr = core::ptr::addr_of_mut!(DIFF_AFTER).cast::<u8>();
+        pnp::read_into_raw(DIFF_REGION_BASE, after_ptr, DIFF_REGION_LEN);
+        let before_ptr = core::ptr::addr_of!(DIFF_BEFORE).cast::<u8>();
+        let after_ptr_const = core::ptr::addr_of!(DIFF_AFTER).cast::<u8>();
+
+        let mut total = 0u32;
+        let mut stored = 0usize;
+        for offset in 0..DIFF_REGION_LEN {
+            let before = core::ptr::read(before_ptr.add(offset));
+            let after = core::ptr::read(after_ptr_const.add(offset));
+            if before == after {
+                continue;
+            }
+
+            total = total.wrapping_add(1);
+            if stored < DIFF_MAX_CHANGES {
+                DIFF_ENTRIES[stored] = DiffEntry {
+                    offset: offset as u16,
+                    before,
+                    after,
+                    before16: raw_le16(before_ptr, offset),
+                    after16: raw_le16(after_ptr_const, offset),
+                    before32: raw_le32(before_ptr, offset),
+                    after32: raw_le32(after_ptr_const, offset),
+                };
+                stored += 1;
+            }
         }
+
+        DIFF_META.end_pc = pc;
+        DIFF_META.end_advance = RNG_ADVANCE;
+        DIFF_META.end_div = div;
+        DIFF_META.end_tick = host_tick;
+        // RNG_ADVANCE increments immediately after the first VBlank read, so
+        // the second read of the same VBlank should observe start+1.
+        DIFF_META.pair_ok =
+            (RNG_ADVANCE == DIFF_META.start_advance.wrapping_add(1)) as u8;
+        DIFF_META.total_changes = total;
+        DIFF_META.stored_changes = stored as u32;
+        DIFF_META.completed = 1;
+        DIFF_PENDING = false;
+        DIFF_ARMED = false;
     }
 }
 
@@ -265,12 +371,12 @@ pub fn deep_log_start() {
         DEEP_COUNT = 0;
         DEEP_LOGGING = true;
     }
-    wide_log_start();
+    diff_probe_start();
 }
 
 pub fn deep_log_stop() {
     unsafe { DEEP_LOGGING = false };
-    wide_log_stop();
+    diff_probe_stop();
 }
 
 /// Clear stale deep samples as well as stopping capture.  Regular Trace saves
@@ -281,7 +387,7 @@ pub fn deep_log_clear() {
         DEEP_COUNT = 0;
         DEEP_LOGGING = false;
     }
-    wide_log_clear();
+    diff_probe_clear();
 }
 
 pub fn deep_log_count() -> u32 {
@@ -590,7 +696,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     const RNG_DIV_READ_2: [u16; 2] = [0x2bd, 0x2be];
     if RNG_DIV_READ_1.contains(&pc) {
         let div = reader.div();
-        capture_wide_vblank(&reader, pc, div, host_tick);
+        capture_diff_begin(pc, div, host_tick);
         unsafe { ADIV = div };
         unsafe { ACYCLES = CYCLE_COUNTER };
         unsafe { ATICKS = host_tick };
@@ -600,6 +706,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     }
     if RNG_DIV_READ_2.contains(&pc) {
         let div = reader.div();
+        capture_diff_end(pc, div, host_tick);
         unsafe { SDIV = div };
         unsafe { SCYCLES = CYCLE_COUNTER };
         unsafe { STICKS = host_tick };
@@ -616,7 +723,7 @@ pub fn init_crystal() {
     // Read the instruction before hook_game_branch potentially rewrites it.
     // If this is not an ARM BL (top byte EB), replace_arm_branch intentionally
     // leaves it untouched and returns 0; the pair is shown on Trace and saved
-    // with the wide samples.
+    // with the differential metadata.
     unsafe { CYC_HOOK_WORD = pnp::read::<u32>(0x1a8360) };
 
     if let Ok(crate::title::LoadedTitle::CrystalJp) = crate::title::loaded_title() {

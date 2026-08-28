@@ -1,0 +1,34 @@
+name: Suicune Deterministic v3.7 Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "suicune-deterministic-v37"
+
+jobs:
+  build-v37:
+    name: Patch and build deterministic Suicune v3.7
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Apply deterministic execute patch
+        run: python3 patch_suicune_deterministic_v37.py
+
+      - name: Verify patched source markers
+        run: |
+          grep -q "suicune_auto_resume_pending" 3gx/sources/main.c
+          grep -q "KEY_DUP | KEY_Y | KEY_X | KEY_L | KEY_R" 3gx/sources/main.c
+
+      - name: Build
+        run: make
+
+      - name: Upload v3.7 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-Deterministic-v37
+          retention-days: 7
+          path: out/default.3gx

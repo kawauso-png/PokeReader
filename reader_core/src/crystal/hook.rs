@@ -1,5 +1,5 @@
 use super::reader::Gen2Reader;
-use crate::utils;
+use crate::{pnp, utils};
 
 const DIV_INCREMENTS: [u8; 16] = [
     0x12, 0x12, 0x12, 0x13, 0x12, 0x12, 0x13, 0x12, 0x12, 0x13, 0x12, 0x12, 0x13, 0x12, 0x12, 0x13,
@@ -40,6 +40,150 @@ pub struct CallEntry {
     pub sub: u8,
     pub advance: u32,
     pub cycles: u32,
+}
+
+// Deep Suicune probe.  Unlike CALL_LOG, this only samples the first rDIV read
+// inside Random (02:2F60 on the Japanese VC).  That keeps the hot-path cost
+// low while preserving enough host/emulator state to identify the hidden
+// 3-call/4-call branch with only a few trials.
+//
+// The snapshots deliberately include raw emulator context bytes instead of
+// pretending that every field's meaning is already known.  In particular,
+// CRYSTAL_CPU_CTX_BASE contains the known emulated PC at offset 0x1c; nearby
+// bytes are strong candidates for the other LR35902 registers, including SP.
+// The complete HRAM snapshot then lets an offline analyzer recover the GB
+// return address once SP is identified.
+pub const DEEP_LOG_LEN: usize = 256;
+const CRYSTAL_CPU_CTX_BASE: u32 = 0x0022f5e0;
+const CRYSTAL_WRAM0_PTR: u32 = 0x0022f6c8;
+const CRYSTAL_HRAM_PTR: u32 = 0x0022f6d8;
+const CPU_CTX_LEN: usize = 64;
+const WRAM_SNAPSHOT_LEN: usize = 128; // D200-D27F
+const HRAM_SNAPSHOT_LEN: usize = 128; // FF80-FFFF
+const HOST_STACK_WORDS: usize = 8;
+
+#[derive(Clone, Copy)]
+pub struct DeepEntry {
+    pub pc: u16,
+    pub div: u16,
+    pub add: u8,
+    pub sub: u8,
+    pub advance: u32,
+    pub cycles: u32,
+    pub regs: [u32; 15],
+    pub host_stack: [u32; HOST_STACK_WORDS],
+    pub cpu_ctx: [u8; CPU_CTX_LEN],
+    pub wram_d200: [u8; WRAM_SNAPSHOT_LEN],
+    pub hram: [u8; HRAM_SNAPSHOT_LEN],
+}
+
+impl DeepEntry {
+    const EMPTY: Self = Self {
+        pc: 0,
+        div: 0,
+        add: 0,
+        sub: 0,
+        advance: 0,
+        cycles: 0,
+        regs: [0; 15],
+        host_stack: [0; HOST_STACK_WORDS],
+        cpu_ctx: [0; CPU_CTX_LEN],
+        wram_d200: [0; WRAM_SNAPSHOT_LEN],
+        hram: [0; HRAM_SNAPSHOT_LEN],
+    };
+}
+
+static mut DEEP_LOG: [DeepEntry; DEEP_LOG_LEN] = [DeepEntry::EMPTY; DEEP_LOG_LEN];
+static mut DEEP_WRITE: usize = 0;
+static mut DEEP_COUNT: u32 = 0;
+static mut DEEP_LOGGING: bool = false;
+
+pub fn deep_log_start() {
+    unsafe {
+        DEEP_WRITE = 0;
+        DEEP_COUNT = 0;
+        DEEP_LOGGING = true;
+    }
+}
+
+pub fn deep_log_stop() {
+    unsafe { DEEP_LOGGING = false };
+}
+
+pub fn deep_log_count() -> u32 {
+    unsafe { DEEP_COUNT }
+}
+
+pub fn deep_log_entry(index: usize) -> DeepEntry {
+    unsafe {
+        let total = DEEP_COUNT as usize;
+        let start = if total > DEEP_LOG_LEN { DEEP_WRITE } else { 0 };
+        DEEP_LOG[(start + index) % DEEP_LOG_LEN]
+    }
+}
+
+fn capture_deep_random(reader: &Gen2Reader, regs: &[u32], stack_pointer: *mut u32, pc: u16) {
+    // Only one snapshot per Random call.  2F68 is the second rDIV read of the
+    // same call and would nearly double the overhead without adding much.
+    if pc != 0x2f60 {
+        return;
+    }
+
+    unsafe {
+        if !DEEP_LOGGING {
+            return;
+        }
+    }
+
+    let mut saved_regs = [0u32; 15];
+    for (dst, src) in saved_regs.iter_mut().zip(regs.iter().take(15)) {
+        *dst = *src;
+    }
+
+    let mut saved_stack = [0u32; HOST_STACK_WORDS];
+    unsafe {
+        for (i, slot) in saved_stack.iter_mut().enumerate() {
+            *slot = core::ptr::read_volatile(stack_pointer.add(i));
+        }
+    }
+
+    // These are direct host-memory copies, not calls back through the GB memory
+    // dispatcher.  That avoids recursive hook traffic and keeps probe timing
+    // much lighter than reading 128 GB addresses one by one.
+    let cpu_ctx = pnp::read_array::<CPU_CTX_LEN>(CRYSTAL_CPU_CTX_BASE);
+
+    let mut wram_d200 = [0u8; WRAM_SNAPSHOT_LEN];
+    let wram0 = pnp::read::<u32>(CRYSTAL_WRAM0_PTR);
+    if pnp::is_memory_mapped(wram0) {
+        wram_d200 = pnp::read_array::<WRAM_SNAPSHOT_LEN>(wram0.wrapping_add(0x1200));
+    }
+
+    let mut hram = [0u8; HRAM_SNAPSHOT_LEN];
+    let hram_base = pnp::read::<u32>(CRYSTAL_HRAM_PTR);
+    if pnp::is_memory_mapped(hram_base) {
+        hram = pnp::read_array::<HRAM_SNAPSHOT_LEN>(hram_base);
+    }
+
+    let state = reader.rng_state();
+    let entry = DeepEntry {
+        pc,
+        div: reader.div() as u16,
+        add: (state >> 8) as u8,
+        sub: state as u8,
+        advance: rng_advance(),
+        cycles: cycle_counter(),
+        regs: saved_regs,
+        host_stack: saved_stack,
+        cpu_ctx,
+        wram_d200,
+        hram,
+    };
+
+    unsafe {
+        DEEP_LOG[DEEP_WRITE] = entry;
+        DEEP_WRITE = (DEEP_WRITE + 1) % DEEP_LOG_LEN;
+        DEEP_COUNT = DEEP_COUNT.wrapping_add(1);
+    }
 }
 
 static mut CALL_LOG: [CallEntry; CALL_LOG_LEN] = [CallEntry {
@@ -210,6 +354,8 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
 
     let reader = Gen2Reader::crystal();
     let pc = reader.pc_reg();
+
+    capture_deep_random(&reader, regs, _stack_pointer, pc);
 
     unsafe {
         if CALL_LOGGING {

@@ -122,6 +122,11 @@ pub fn trace_file_close() {
     unsafe { bindings::host_trace_file_close() }
 }
 
+/// Ask the C host to enter its existing freeze loop at the next screen hook.
+pub fn request_pause() {
+    unsafe { bindings::host_request_pause() }
+}
+
 /// Raw 3DS key bitfield for the current frame.
 pub fn current_keys() -> u32 {
     unsafe { bindings::get_current_keys() }

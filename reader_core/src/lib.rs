@@ -88,6 +88,13 @@ fn run_loaded_title_frame(title: &LoadedTitle) {
 }
 
 #[no_mangle]
+pub extern "C" fn arm_suicune_probe() {
+    if let Ok(LoadedTitle::CrystalJp) = loaded_title() {
+        crystal::arm_suicune_probe();
+    }
+}
+
+#[no_mangle]
 pub extern "C" fn run_frame() {
     match loaded_title() {
         Ok(title) => run_loaded_title_frame(title),

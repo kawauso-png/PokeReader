@@ -63,6 +63,16 @@ unsafe fn get_state() -> &'static mut PersistedState {
     Lazy::force_mut(&mut STATE)
 }
 
+
+/// Invoked directly from the C pause loop by Y+X.  This is intentionally not
+/// deferred to run_frame(): deferring would lose the exact Target state and
+/// only see Target+1 after resume.
+pub fn arm_suicune_probe() {
+    let reader = Gen2Reader::crystal();
+    let state = unsafe { get_state() };
+    state.trace.arm_suicune_probe(&reader);
+}
+
 pub fn run_frame() {
     pnp::set_print_max_len(22);
 

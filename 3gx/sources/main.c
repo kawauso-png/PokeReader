@@ -46,6 +46,14 @@ u32 host_trace_cmds(void)
     return (trace_stop_req & 0xffff) | ((trace_save_req & 0xffff) << 16);
 }
 
+// Rust calls this only after Suicune DV/route has been positively matched.
+// run_frame() executes on the top-screen present hook; setting the flag here
+// makes the following bottom-screen hook enter the existing pause loop.
+void host_request_pause(void)
+{
+    is_paused = true;
+}
+
 // ---- Trace CSV output ----------------------------------------------------
 // The trace itself never touches the filesystem. Once recording has stopped,
 // the reader streams the buffer here a chunk at a time.
@@ -150,7 +158,10 @@ u32 host_trace_file_write(const char *data, u32 len)
         return 0;
     }
 
-    if (R_FAILED(FSFILE_Write(trace_file, &written, trace_file_offset, data, len, FS_WRITE_FLUSH)))
+    // Do not flush every CSV row.  A Deep Probe can contain thousands of
+    // rows; flushing once on close is dramatically faster and happens only
+    // after the encounter result is already locked.
+    if (R_FAILED(FSFILE_Write(trace_file, &written, trace_file_offset, data, len, 0)))
     {
         return 0;
     }
@@ -163,6 +174,7 @@ void host_trace_file_close(void)
 {
     if (trace_file != 0)
     {
+        FSFILE_Flush(trace_file);
         FSFILE_Close(trace_file);
         trace_file = 0;
         fsExit();
@@ -227,7 +239,13 @@ void handle_freeze(bool isTopScreen)
             {
                 fixed_armed = !fixed_armed;
             }
-            // Y + START arms the Celebi trace without advancing a frame.
+            // Y + X arms Suicune Deep Probe at the exact frozen Target.
+            // No frame is allowed through, so X never reaches the VC as GB START.
+            if (just_pressed & KEY_X)
+            {
+                arm_suicune_probe();
+            }
+            // Y + START arms the legacy full trace without advancing a frame.
             if (just_pressed & KEY_START)
             {
                 trace_armed = !trace_armed;
@@ -243,8 +261,9 @@ void handle_freeze(bool isTopScreen)
             {
                 trace_save_req++;
             }
-            // Y + L starts the run once armed. X cannot be used: the VC maps it
-            // to the GB START button, so pressing it opens the in-game menu.
+            // Y + L starts the run once armed. X is reserved for probe arming; it
+            // must not be used as the Fixed A Frame execution trigger because the VC
+            // maps it to the GB START button when a frame is allowed through.
             // R is excluded so that the L -> R pause combo cannot start a run.
             if (fixed_armed && (just_pressed & KEY_L) && !(held & KEY_R))
             {

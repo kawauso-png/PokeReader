@@ -3,7 +3,8 @@ use core::fmt::Write;
 use super::game_lib::gb_mem;
 use super::hook::{
     add_div_tracker, adiv_cycles, call_log_count, call_log_entry, call_log_start, call_log_stop,
-    cycle_counter, measured_div, rng_advance, sdiv_cycles, sub_div_tracker,
+    cycle_counter, deep_log_count, deep_log_entry, deep_log_start, deep_log_stop, measured_div,
+    rng_advance, sdiv_cycles, sub_div_tracker,
 };
 use super::reader::Gen2Reader;
 use crate::pnp;
@@ -68,6 +69,29 @@ pub const FLAG_A_PRESSED: u8 = 1;
 pub const FLAG_WATCH_CHANGED: u8 = 2;
 pub const FLAG_CELEBI_SPECIES: u8 = 4;
 
+#[derive(Clone, Copy, Default)]
+pub struct ProbeTarget {
+    pub advance: u32,
+    pub state: u16,
+    pub div: u16,
+    pub adiv: u16,
+    pub sdiv: u16,
+    pub acyc: u32,
+    pub scyc: u32,
+    pub keys: u16,
+}
+
+#[derive(Clone, Copy, Default)]
+pub struct ProbeResult {
+    pub dv_advance: u32,
+    pub offset: u32,
+    pub route: u8,
+    pub raw_dv: u16,
+    pub first_call_index: u32,
+    pub final_call_index: u32,
+    pub clean_tail: bool,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TraceState {
     Off,
@@ -89,14 +113,17 @@ pub fn status_text(state: TraceState) -> &'static str {
 
 /// Small stack formatter so a CSV row can be built without allocating.
 struct LineBuf {
-    buf: [u8; 192],
+    // Deep-probe rows contain register snapshots plus three raw memory blobs.
+    // Saving only happens after the result is locked, so a 1 KiB stack buffer
+    // is preferable to allocations in the timing-sensitive hook.
+    buf: [u8; 1024],
     len: usize,
 }
 
 impl LineBuf {
     fn new() -> Self {
         Self {
-            buf: [0; 192],
+            buf: [0; 1024],
             len: 0,
         }
     }
@@ -139,6 +166,9 @@ pub struct Trace {
     last_save_req: u32,
     save_index: u32,
     save_result: Option<bool>,
+    probe_active: bool,
+    probe_target: ProbeTarget,
+    probe_result: Option<ProbeResult>,
     /// Row shown first in the on screen table.
     pub cursor: usize,
 }
@@ -163,6 +193,9 @@ impl Default for Trace {
             last_save_req: 0,
             save_index: 1,
             save_result: None,
+            probe_active: false,
+            probe_target: ProbeTarget::default(),
+            probe_result: None,
             cursor: 0,
         }
     }
@@ -186,6 +219,27 @@ impl Trace {
         self.watch_addr = addr;
     }
 
+    /// Called directly from the C pause loop by Y+X.  Because this runs while
+    /// the game is frozen, it captures the exact Target state instead of
+    /// reconstructing it from trace frame 0 (= Target+1).
+    pub fn arm_suicune_probe(&mut self, reader: &Gen2Reader) {
+        self.stop();
+        self.reset();
+        self.probe_target = ProbeTarget {
+            advance: rng_advance(),
+            state: reader.rng_state(),
+            div: measured_div(),
+            adiv: add_div_tracker().index().unwrap_or(0) as u16,
+            sdiv: sub_div_tracker().index().unwrap_or(0) as u16,
+            acyc: adiv_cycles(),
+            scyc: sdiv_cycles(),
+            keys: pnp::current_keys() as u16,
+        };
+        self.probe_result = None;
+        self.probe_active = true;
+        self.state = TraceState::Armed;
+    }
+
     fn entry(&self, index: usize) -> Option<&TraceEntry> {
         if index < self.len {
             self.entries.get(index)
@@ -198,6 +252,8 @@ impl Trace {
     /// because nothing moves while the game is paused.
     pub fn arm(&mut self) {
         self.reset();
+        self.probe_active = false;
+        deep_log_stop();
         self.state = TraceState::Armed;
     }
 
@@ -215,14 +271,103 @@ impl Trace {
         self.start_state = reader.rng_state();
         self.watch_last = gb_mem::read_u16(self.watch_addr);
         call_log_start();
+        if self.probe_active {
+            deep_log_start();
+        } else {
+            deep_log_stop();
+        }
         self.state = TraceState::Recording;
     }
 
     pub fn stop(&mut self) {
         if self.state == TraceState::Recording || self.state == TraceState::Armed {
             call_log_stop();
+            deep_log_stop();
+            self.probe_active = false;
             self.state = TraceState::Done;
         }
+    }
+
+    fn detect_suicune_result(&self, advance: u32, dv1: u8, dv2: u8) -> Option<ProbeResult> {
+        // The current Japanese-VC observations all lock the Suicune DV about
+        // 730 frames after Target.  The wider guard prevents an unrelated F5
+        // struct from accidentally terminating a probe while keeping the
+        // detector future-proof for small timing slips.
+        let offset = advance.wrapping_sub(self.probe_target.advance);
+        if !(680..=780).contains(&offset) {
+            return None;
+        }
+
+        let total = call_log_count() as usize;
+        let shown = total.min(super::hook::CALL_LOG_LEN);
+        if shown < 4 {
+            return None;
+        }
+
+        let is_vblank_a = |pc: u16| pc == 0x02b5 || pc == 0x02b6;
+        let is_random_a = |pc: u16| pc == 0x2f60;
+
+        // Find the VBlank-A read on this advance whose resulting Sub byte is
+        // the DV2 byte now visible in wEnemyMon.
+        let mut end = None;
+        for i in (0..shown).rev() {
+            let e = call_log_entry(i);
+            if e.advance < advance {
+                break;
+            }
+            if e.advance == advance && is_vblank_a(e.pc) && e.sub == dv2 {
+                end = Some(i);
+                break;
+            }
+        }
+        let end = end?;
+
+        // The immediately preceding VBlank-A delimits the stationary encounter
+        // generation burst.  Count first-rDIV Random reads between the two.
+        let mut start = 0usize;
+        for i in (0..end).rev() {
+            if is_vblank_a(call_log_entry(i).pc) {
+                start = i + 1;
+                break;
+            }
+        }
+
+        let mut route = 0u8;
+        let mut last_random = None;
+        for i in start..end {
+            let e = call_log_entry(i);
+            if is_random_a(e.pc) {
+                route = route.saturating_add(1);
+                last_random = Some((i, e));
+            }
+        }
+        if route != 3 && route != 4 {
+            return None;
+        }
+        let (last_random_index, last_random_entry) = last_random?;
+        if last_random_entry.sub != dv1 {
+            return None;
+        }
+
+        // Startup control keys are normally released within the first ~20
+        // frames.  Treat everything from rel 32 onward as the clean tail.
+        let clean_tail = self
+            .entries
+            .iter()
+            .take(self.len)
+            .enumerate()
+            .filter(|(i, _)| *i >= 32)
+            .all(|(_, e)| e.keys == 0);
+
+        Some(ProbeResult {
+            dv_advance: advance,
+            offset,
+            route,
+            raw_dv: ((dv1 as u16) << 8) | dv2 as u16,
+            first_call_index: (total - shown + start) as u32,
+            final_call_index: (total - shown + end.max(last_random_index)) as u32,
+            clean_tail,
+        })
     }
 
     /// Called once per frame. Copies numbers only, no allocation or IO.
@@ -271,6 +416,7 @@ impl Trace {
 
         if self.len >= MAX_FRAMES {
             call_log_stop();
+            deep_log_stop();
             self.state = TraceState::Done;
             return;
         }
@@ -316,6 +462,26 @@ impl Trace {
         };
 
         self.len += 1;
+
+        if self.probe_active && window[2] == SUICUNE_SPECIES {
+            if let Some(result) = self.detect_suicune_result(
+                self.entries[self.len - 1].advance,
+                window[8],
+                window[9],
+            ) {
+                self.probe_result = Some(result);
+                self.probe_active = false;
+                call_log_stop();
+                deep_log_stop();
+                self.state = TraceState::Done;
+
+                // DV and route are already locked.  From this point filesystem
+                // work cannot change the result, so save automatically and ask
+                // the C host to pause before the user can inject another key.
+                self.save();
+                pnp::request_pause();
+            }
+        }
     }
 
     /// Streams the buffer out as CSV. Only ever called after recording stops.
@@ -331,6 +497,44 @@ impl Trace {
         }
 
         let mut line = LineBuf::new();
+
+        // Probe summary comes first so a parser can classify a trial without
+        // reading thousands of frame/call rows.
+        if let Some(result) = self.probe_result {
+            let phase_a = self.probe_target.adiv & 15;
+            let phase_s = self.probe_target.sdiv & 15;
+            let _ = write!(
+                line,
+                "probe,target,target_state,target_div,target_adiv,target_sdiv,target_acyc,target_scyc,target_keys,phase_a,phase_s,dv_advance,offset,route,raw_dv,clean_tail,call_first,call_final,deep_samples\n"
+            );
+            pnp::trace_file_write(line.as_bytes());
+            line.clear();
+            let _ = write!(
+                line,
+                "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:04X},{},{},{},{},{},{:04X},{},{},{},{}\n\n",
+                self.probe_target.advance,
+                self.probe_target.state,
+                self.probe_target.div,
+                self.probe_target.adiv,
+                self.probe_target.sdiv,
+                self.probe_target.acyc,
+                self.probe_target.scyc,
+                self.probe_target.keys,
+                phase_a,
+                phase_s,
+                result.dv_advance,
+                result.offset,
+                result.route,
+                result.raw_dv,
+                result.clean_tail as u8,
+                result.first_call_index,
+                result.final_call_index,
+                deep_log_count()
+            );
+            pnp::trace_file_write(line.as_bytes());
+            line.clear();
+        }
+
         let _ = write!(
             line,
             "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
@@ -392,6 +596,54 @@ impl Trace {
             pnp::trace_file_write(line.as_bytes());
         }
 
+        // Third section: high-information samples from the first rDIV read
+        // of each Random call.  Memory blobs are hex strings so they remain a
+        // valid single CSV field without quoting.
+        line.clear();
+        let _ = write!(
+            line,
+            "\ndeep_index,pc,advance,add,sub,div,cycles,r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,lr,host_pc,stk0,stk1,stk2,stk3,stk4,stk5,stk6,stk7,cpu_ctx_22f5e0_64,wram_d200_d27f,hram_ff80_ffff\n"
+        );
+        pnp::trace_file_write(line.as_bytes());
+
+        let deep_total = deep_log_count() as usize;
+        let deep_shown = deep_total.min(super::hook::DEEP_LOG_LEN);
+        for i in 0..deep_shown {
+            let e = deep_log_entry(i);
+            line.clear();
+            let _ = write!(
+                line,
+                "{},{:04X},{},{:02X},{:02X},{:04X},{}",
+                deep_total - deep_shown + i,
+                e.pc,
+                e.advance,
+                e.add,
+                e.sub,
+                e.div,
+                e.cycles
+            );
+            for reg in e.regs.iter() {
+                let _ = write!(line, ",{:08X}", reg);
+            }
+            for word in e.host_stack.iter() {
+                let _ = write!(line, ",{:08X}", word);
+            }
+            let _ = write!(line, ",");
+            for byte in e.cpu_ctx.iter() {
+                let _ = write!(line, "{:02X}", byte);
+            }
+            let _ = write!(line, ",");
+            for byte in e.wram_d200.iter() {
+                let _ = write!(line, "{:02X}", byte);
+            }
+            let _ = write!(line, ",");
+            for byte in e.hram.iter() {
+                let _ = write!(line, "{:02X}", byte);
+            }
+            let _ = write!(line, "\n");
+            pnp::trace_file_write(line.as_bytes());
+        }
+
         pnp::trace_file_close();
         self.save_index += 1;
         self.save_result = Some(true);
@@ -432,7 +684,17 @@ impl Trace {
         pnp::println!("from st  {:04X}", self.start_state);
         pnp::println!("watch {:04X}", self.watch_addr);
         pnp::println!("changes {}", self.watch_changes);
-        pnp::println!("calls {}", call_log_count());
+        pnp::println!("calls {} deep {}", call_log_count(), deep_log_count());
+        if self.probe_active {
+            pnp::println!("Probe ARMED T{}", self.probe_target.advance);
+        } else if let Some(result) = self.probe_result {
+            pnp::println!(
+                "Probe +{} {}c {:04X}",
+                result.offset,
+                result.route,
+                result.raw_dv
+            );
+        }
         // If this stays at 0 the cycle-counter hook address is wrong for this
         // release and the acyc/scyc columns will be useless.
         pnp::println!("cyc {:08X}", cycle_counter());

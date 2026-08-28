@@ -17,6 +17,7 @@ u32 host_trace_request(void);
 u32 host_trace_file_open(u32 index);
 u32 host_trace_file_write(const char *data, u32 len);
 void host_trace_file_close(void);
+void host_request_pause(void);
 u32 host_trace_last_error(void);
 u32 host_trace_cmds(void);
 u32 host_trace_written_slot(void);

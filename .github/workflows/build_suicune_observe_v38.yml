@@ -21,12 +21,16 @@ jobs:
       - name: Apply v3.8 clean timing observer
         run: sh apply_suicune_observe_v38.sh
 
+      - name: Keep benchmark out of execution path
+        run: sh apply_suicune_observe_v38_post.sh
+
       - name: Verify v3.8 markers
         run: |
           grep -q "suicune_auto_resume_pending" 3gx/sources/main.c
           grep -q "SUICUNE_TICK_BENCH_N 4096" 3gx/sources/main.c
           grep -q "observe_version,fixed_arm_tick" 3gx/sources/main.c
           grep -q "suicune_obs_post_resume_hook_tick" 3gx/sources/main.c
+          grep -A3 "static void append_suicune_observe_csv(void)" 3gx/sources/main.c | grep -q "suicune_tick_bench_once();"
 
       - name: Build
         run: make

@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Apply deterministic execute patch
-        run: python3 patch_suicune_deterministic_v37.py
+        run: sh apply_suicune_deterministic_v37.sh
 
       - name: Verify patched source markers
         run: |

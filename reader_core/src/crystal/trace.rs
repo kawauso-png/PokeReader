@@ -125,6 +125,13 @@ pub fn status_text(state: TraceState) -> &'static str {
     }
 }
 
+/// Exact emulator divider phase in M-cycle units (4 T-cycles), modulo 16384.
+/// One legacy A-unit is 16 T-cycles = 4 of these units, so dividing by 4
+/// yields the absolute P phase used by the offline v3.6 analysis.
+fn direct_phase_m(div: u8, subtick: u8) -> u16 {
+    (((div as u16) << 6) | subtick as u16) & 0x3fff
+}
+
 /// Small stack formatter so a CSV row can be built without allocating.
 struct LineBuf {
     // Deep-probe rows contain register snapshots plus three raw memory blobs.
@@ -564,22 +571,26 @@ impl Trace {
         // complete, preserve the exact Y+X Target so a failed/mis-armed trial
         // can be diagnosed instead of looking like an ordinary legacy Trace.
         if self.probe_session {
+            // ADIV/SDIV tracker phases are kept for backwards comparison only.
+            // v3.6 uses the direct F604 phase instead: P4 is exact quarter-A
+            // phase (M-cycle units), while P=P4/4 is the old 16T unit and may have .25 steps.
             let phase_a = self.probe_target.adiv & 15;
             let phase_s = self.probe_target.sdiv & 15;
             let adiv_byte = (self.probe_target.div >> 8) as u8;
             let sdiv_byte = self.probe_target.div as u8;
-            let target_a12 = ((adiv_byte as u16) << 4) | ((self.probe_target.asub as u16) >> 2);
-            let target_s12 = ((sdiv_byte as u16) << 4) | ((self.probe_target.ssub as u16) >> 2);
+            let target_ap4 = direct_phase_m(adiv_byte, self.probe_target.asub);
+            let target_sp4 = direct_phase_m(sdiv_byte, self.probe_target.ssub);
+            let target_sub_bucket = self.probe_target.asub >> 3;
             let _ = write!(
                 line,
-                "probe,target,target_state,target_div,target_adiv,target_sdiv,target_acyc,target_scyc,target_asub,target_ssub,target_a12,target_s12,target_atick,target_stick,target_keys,phase_a,phase_s,result,dv_advance,offset,route,raw_dv,clean_tail,call_first,call_final,deep_samples\n"
+                "probe,target,target_state,target_div,target_adiv,target_sdiv,target_acyc,target_scyc,target_asub,target_ssub,target_asub_dec,target_ssub_dec,target_ap4,target_sp4,target_sub_bucket,target_atick,target_stick,target_keys,phase_a,phase_s,result,dv_advance,offset,route,raw_dv,clean_tail,call_first,call_final,deep_samples\n"
             );
             pnp::trace_file_write(line.as_bytes());
             line.clear();
             if let Some(result) = self.probe_result {
                 let _ = write!(
                     line,
-                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{:03X},{:03X},{},{},{:04X},{},{},OK,{},{},{},{:04X},{},{},{},{}\n\n",
+                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{},{},{:04X},{:04X},{},{},{},{:04X},{},{},OK,{},{},{},{:04X},{},{},{},{}\n\n",
                     self.probe_target.advance,
                     self.probe_target.state,
                     self.probe_target.div,
@@ -589,8 +600,11 @@ impl Trace {
                     self.probe_target.scyc,
                     self.probe_target.asub,
                     self.probe_target.ssub,
-                    target_a12,
-                    target_s12,
+                    self.probe_target.asub,
+                    self.probe_target.ssub,
+                    target_ap4,
+                    target_sp4,
+                    target_sub_bucket,
                     self.probe_target.atick,
                     self.probe_target.stick,
                     self.probe_target.keys,
@@ -608,7 +622,7 @@ impl Trace {
             } else {
                 let _ = write!(
                     line,
-                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{:03X},{:03X},{},{},{:04X},{},{},NO_RESULT,,,,,,,,{}\n\n",
+                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{},{},{:04X},{:04X},{},{},{},{:04X},{},{},NO_RESULT,,,,,,,,{}\n\n",
                     self.probe_target.advance,
                     self.probe_target.state,
                     self.probe_target.div,
@@ -618,8 +632,11 @@ impl Trace {
                     self.probe_target.scyc,
                     self.probe_target.asub,
                     self.probe_target.ssub,
-                    target_a12,
-                    target_s12,
+                    self.probe_target.asub,
+                    self.probe_target.ssub,
+                    target_ap4,
+                    target_sp4,
+                    target_sub_bucket,
                     self.probe_target.atick,
                     self.probe_target.stick,
                     self.probe_target.keys,
@@ -634,7 +651,7 @@ impl Trace {
 
         let _ = write!(
             line,
-            "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,asub,ssub,atick,stick,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
+            "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,asub,ssub,asub_dec,ssub_dec,ap4,sp4,atick,stick,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
         );
         pnp::trace_file_write(line.as_bytes());
 
@@ -643,7 +660,7 @@ impl Trace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{},{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{},{},{:04X},{},",
+                "{},{},{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{},{},{:04X},{:04X},{},{},{:04X},{},",
                 index,
                 entry.advance.wrapping_sub(self.start_advance),
                 entry.advance,
@@ -655,6 +672,10 @@ impl Trace {
                 entry.scyc,
                 entry.asub,
                 entry.ssub,
+                entry.asub,
+                entry.ssub,
+                direct_phase_m((entry.div >> 8) as u8, entry.asub),
+                direct_phase_m(entry.div as u8, entry.ssub),
                 entry.atick,
                 entry.stick,
                 entry.keys,
@@ -783,27 +804,43 @@ impl Trace {
             let mode = if self.state == TraceState::Armed { "ARM" } else { "REC" };
             pnp::println!("Probe {} T{}", mode, self.probe_target.advance);
             pnp::println!(
-                "Ph {}/{} D{}",
-                self.probe_target.adiv & 15,
-                self.probe_target.sdiv & 15,
+                "TSub {:02X}/{:02X} B{} D{}",
+                self.probe_target.asub,
+                self.probe_target.ssub,
+                self.probe_target.asub >> 3,
                 deep_log_count()
             );
             pnp::println!(
-                "Sub {:02X}/{:02X}",
-                self.probe_target.asub,
-                self.probe_target.ssub
+                "P4 {:04X}/{:04X}",
+                direct_phase_m((self.probe_target.div >> 8) as u8, self.probe_target.asub),
+                direct_phase_m(self.probe_target.div as u8, self.probe_target.ssub)
             );
         } else if let Some(result) = self.probe_result {
             pnp::println!("Probe OK +{} {}c", result.offset, result.route);
             pnp::println!("DV {:04X} D{}", result.raw_dv, deep_log_count());
-            pnp::println!("Sub {:02X}/{:02X}", adiv_subtick(), sdiv_subtick());
+            pnp::println!(
+                "TSub {:02X}/{:02X} B{}",
+                self.probe_target.asub,
+                self.probe_target.ssub,
+                self.probe_target.asub >> 3
+            );
         } else if self.probe_session {
             pnp::println!("Probe STOP T{}", self.probe_target.advance);
             pnp::println!("NO RESULT D{}", deep_log_count());
-            pnp::println!("Sub {:02X}/{:02X}", adiv_subtick(), sdiv_subtick());
+            pnp::println!(
+                "TSub {:02X}/{:02X} B{}",
+                self.probe_target.asub,
+                self.probe_target.ssub,
+                self.probe_target.asub >> 3
+            );
         } else {
             pnp::println!("Probe OFF");
-            pnp::println!("Deep 0");
+            pnp::println!(
+                "LiveSub {:02X}/{:02X} B{}",
+                adiv_subtick(),
+                sdiv_subtick(),
+                adiv_subtick() >> 3
+            );
         }
     }
 

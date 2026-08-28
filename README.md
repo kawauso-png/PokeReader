@@ -42,3 +42,10 @@ Thanks to these projects, teams, and individuals for being great resources:
 ## Suicune Deep Probe v3.5
 
 Japanese Crystal VC research build: direct F604 M-cycle subtick logging (`asub/ssub`) with the heavy v3.4 differential scan disabled during normal probes. See `SUICUNE_SUBTICK_V35.md`.
+
+## Suicune v3.6 direct phase collector
+
+For the Japanese VC Crystal Suicune experiment, see `SUICUNE_PHASE_V36.md`.
+The v3.6 collector keeps lightweight F604 logging, exposes exact `P4` phase,
+adds unambiguous decimal subtick columns and a live bucket display, and includes
+`analyze_suicune_phase_v36.py` for the Δ1-vs-target-subtick and repeatability tests.

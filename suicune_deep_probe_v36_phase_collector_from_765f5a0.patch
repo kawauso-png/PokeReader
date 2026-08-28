@@ -1,0 +1,660 @@
+diff --git a/README.md b/README.md
+index d5c24d6..e7ee8bd 100644
+--- a/README.md
++++ b/README.md
+@@ -42,3 +42,10 @@ Thanks to these projects, teams, and individuals for being great resources:
+ ## Suicune Deep Probe v3.5
+ 
+ Japanese Crystal VC research build: direct F604 M-cycle subtick logging (`asub/ssub`) with the heavy v3.4 differential scan disabled during normal probes. See `SUICUNE_SUBTICK_V35.md`.
++
++## Suicune v3.6 direct phase collector
++
++For the Japanese VC Crystal Suicune experiment, see `SUICUNE_PHASE_V36.md`.
++The v3.6 collector keeps lightweight F604 logging, exposes exact `P4` phase,
++adds unambiguous decimal subtick columns and a live bucket display, and includes
++`analyze_suicune_phase_v36.py` for the Δ1-vs-target-subtick and repeatability tests.
+diff --git a/SUICUNE_PHASE_V36.md b/SUICUNE_PHASE_V36.md
+new file mode 100644
+index 0000000..0a22e3d
+--- /dev/null
++++ b/SUICUNE_PHASE_V36.md
+@@ -0,0 +1,122 @@
++# Suicune Deep Probe v3.6 — Direct Phase Collector
++
++## 目的
++
++v3.5 で `0x0022F604` の値を各 rDIV read で直接記録できるようになった。
++0062 では、これを DIV byte と組み合わせた直接位相が停止1/停止2の実測と整合した。
++
++v3.6 は追加の広域ダンプを行わない。次の2実験に必要なデータ収集を軽量化・明確化する。
++
++1. `Δ1 = f(target_asub)` かを 8〜10 run で判定する。
++2. 同じ `target_asub` の2 run で、通常フレームの微小揺れ列が再現するかを判定する。
++
++## 重要な表記修正
++
++v3.5 の `target_a12 / target_s12` は「A」ではなく、直接読んだ絶対位相 `P` の整数部分だった。
++v3.6 では誤解を避けて `P4` として保存する。
++
++```
++P4_A = ((A_DIV << 6) | ASUB) mod 16384
++P4_S = ((S_DIV << 6) | SSUB) mod 16384
++P_A  = P4_A / 4
++P_S  = P4_S / 4
++```
++
++`P4` の1単位は1 M-cycle = 4 T-cycle = 0.25 A-unit。
++
++CSV の `asub` / `ssub` は16進表示なので、v3.6 は `asub_dec / ssub_dec` も同時に保存する。
++例えば `asub=16` は **0x16 = 22 decimal**。
++
++## CSV追加/変更
++
++Probe summary:
++
++- `target_asub`, `target_ssub` — hex
++- `target_asub_dec`, `target_ssub_dec` — decimal
++- `target_ap4`, `target_sp4` — exact direct phase in M-cycle units
++- `target_sub_bucket` — `target_asub >> 3`, B0〜B7
++- legacy `phase_a / phase_s` は比較用として残す
++
++Frame section:
++
++- `asub`, `ssub` — hex
++- `asub_dec`, `ssub_dec` — decimal
++- `ap4`, `sp4` — direct phase
++
++Call/Deep の `mcycle` は v3.5 同様に保持する。
++
++## 画面表示
++
++Probe OFF 中も RNG ページに現在の subtick を表示する。
++
++```
++LiveSub 16/21 B2
++```
++
++Y+X でARMした後は、固定されたTarget値を表示する。
++
++```
++TSub 16/21 B2 D0
++P4 10D6/10E1
++```
++
++これにより、B0〜B7へ散るようにTargetを選びやすくなる。
++
++## 実験1: Δ1 vs target_asub
++
++まず 8〜10本。
++目安として B0〜B7 を最低1本ずつ取る。
++同じTarget Advanceである必要はない。
++今回の目的は shiny hit ではなく位相関係の測定なので、任意のTargetでよい。
++
++Pause中に RNG 画面の `LiveSub` を見て、必要なら単フレーム進行でbucketを変えてから Y+X でARMする。
++
++通常の操作:
++
++```
++TargetでPause
++Y+X   Deep Probe ARM
++Y+B   Fixed A Frame ARM
++↑保持
++Y+L
++Y/Lだけ離す
++2F完了
++↑離す
++R
++hands off
++```
++
++## 実験2: 同一 target_asub 再現性
++
++8〜10本が集まったら、既に出た `target_asub` と完全一致する値をもう1本取る。
++Bucket一致ではなく exact byte 一致を優先する。
++
++## 解析
++
++```
++python3 analyze_suicune_phase_v36.py celebi_trace_0062.csv
++```
++
++複数:
++
++```
++python3 analyze_suicune_phase_v36.py trace1.csv trace2.csv ... --out phase_collection.csv
++```
++
++出力:
++
++- target_asub / bucket / P
++- 02B6→02BE pair gap 分布
++- repeated-advance stall の直接 `extra M`
++- stop1 の historical fit sign Δ1
++- stop2 の余剰位相
++- 通常フレームの micro jitter
++- 同一 target_asub run 間の jitter exact-match率
++- 集計CSV
++
++解析スクリプトでは通常遷移のうち `|step-1172| <= 10M` を micro-jitter core として別集計し、それを超えるイベント由来/構造的遷移を隠さず除外件数として表示する。
++
++## 0062の注意
++
++0062 summary の `target_asub=16` はCSV上16進なので **0x16 = decimal 22**。
++このhex/decimal曖昧さをv3.6で解消した。
+diff --git a/analyze_suicune_phase_v36.py b/analyze_suicune_phase_v36.py
+new file mode 100755
+index 0000000..389871c
+--- /dev/null
++++ b/analyze_suicune_phase_v36.py
+@@ -0,0 +1,343 @@
++#!/usr/bin/env python3
++"""Suicune direct-phase experiment analyzer (v3.6).
++
++Consumes one or more PokeReader trace CSVs from v3.5/v3.6.
++The direct phase is measured in M-cycle units (4 T-cycles):
++    P4 = (DIV_byte << 6) | F604
++One legacy A-unit is 4 M-cycles, so P = P4 / 4.
++
++The script intentionally keeps the raw physics separate from the old fitted
++ADIV/SDIV tracker values.  It extracts the two repeated-advance stalls,
++measures their excess phase directly, summarizes bounded normal-frame jitter,
++and compares runs with the same target_asub.
++"""
++
++import argparse
++import csv
++import math
++from collections import Counter, defaultdict
++from pathlib import Path
++
++MOD_M = 16384
++FRAME_M = 1172
++PAIR_M = 11
++MICRO_JITTER_LIMIT = 10
++
++
++def h(s):
++    return int(s, 16)
++
++
++def modstep(a, b):
++    return (b - a) % MOD_M
++
++
++def phase_m_from_parts(div_byte, subtick):
++    return ((div_byte << 6) | subtick) & 0x3FFF
++
++
++def fmt_quarter(m):
++    return f"{m / 4:.2f}"
++
++
++def read_sections(path):
++    lines = Path(path).read_text(errors="replace").splitlines()
++    probe = None
++    frames = []
++
++    if lines and lines[0].startswith("probe,") and len(lines) > 1:
++        probe = next(csv.DictReader(lines[:2]))
++
++    try:
++        start = next(i for i, line in enumerate(lines) if line.startswith("frame,rel_adv,"))
++    except StopIteration:
++        raise ValueError(f"{path}: frame section not found")
++    end = next((i for i in range(start + 1, len(lines)) if not lines[i].strip()), len(lines))
++    frames = list(csv.DictReader(lines[start:end]))
++    return probe, frames
++
++
++def target_phase(probe, side="a"):
++    div = h(probe["target_div"])
++    div_byte = (div >> 8) & 0xFF if side == "a" else div & 0xFF
++    sub = h(probe["target_asub" if side == "a" else "target_ssub"])
++    key = "target_ap4" if side == "a" else "target_sp4"
++    if key in probe and probe.get(key):
++        return h(probe[key])
++    return phase_m_from_parts(div_byte, sub)
++
++
++def frame_phase(row, side="a"):
++    key = "ap4" if side == "a" else "sp4"
++    if key in row and row.get(key):
++        return h(row[key])
++    div = h(row["div"])
++    div_byte = (div >> 8) & 0xFF if side == "a" else div & 0xFF
++    sub = h(row["asub" if side == "a" else "ssub"])
++    return phase_m_from_parts(div_byte, sub)
++
++
++def collapse_advances(frames):
++    groups = []
++    i = 0
++    while i < len(frames):
++        adv = int(frames[i]["advance"])
++        j = i + 1
++        while j < len(frames) and int(frames[j]["advance"]) == adv:
++            j += 1
++        groups.append({
++            "advance": adv,
++            "row": frames[i],
++            "repeat": j - i,
++            "first_index": i,
++            "last_index": j - 1,
++        })
++        i = j
++    return groups
++
++
++def stop_events(groups):
++    out = []
++    for left, right in zip(groups, groups[1:]):
++        if left["repeat"] <= 1:
++            continue
++        am0 = frame_phase(left["row"], "a")
++        am1 = frame_phase(right["row"], "a")
++        sm0 = frame_phase(left["row"], "s")
++        sm1 = frame_phase(right["row"], "s")
++        da = modstep(am0, am1)
++        ds = modstep(sm0, sm1)
++        extra_a = da - FRAME_M
++        extra_s = ds - FRAME_M
++        out.append({
++            "advance": left["advance"],
++            "repeat": left["repeat"],
++            "delta_m_a": da,
++            "delta_m_s": ds,
++            "extra_m_a": extra_a,
++            "extra_m_s": extra_s,
++            # Historical fit sign: positive extra time shifts fitted A negative.
++            "fit_delta_a": -extra_a / 4.0,
++            "fit_delta_s": -extra_s / 4.0,
++            "extra_a_mod4096": (extra_a / 4.0) % 4096,
++        })
++    return out
++
++
++def normal_jitter(groups, target):
++    raw = []
++    core = []
++    keyed_core = {}
++    cumulative = 0
++    cmin = 0
++    cmax = 0
++    for left, right in zip(groups, groups[1:]):
++        # Time spent on a repeated advance is the stall; analyze separately.
++        if left["repeat"] > 1:
++            continue
++        am0 = frame_phase(left["row"], "a")
++        am1 = frame_phase(right["row"], "a")
++        step = modstep(am0, am1)
++        jitter = step - FRAME_M
++        rel = left["advance"] - target
++        raw.append((rel, jitter))
++        if abs(jitter) <= MICRO_JITTER_LIMIT:
++            core.append((rel, jitter))
++            keyed_core[rel] = jitter
++            cumulative += jitter
++            cmin = min(cmin, cumulative)
++            cmax = max(cmax, cumulative)
++    return {
++        "raw": raw,
++        "core": core,
++        "keyed_core": keyed_core,
++        "cum_min": cmin,
++        "cum_max": cmax,
++        "cum_final": cumulative,
++    }
++
++
++def pair_gaps(frames):
++    vals = []
++    for row in frames:
++        vals.append(modstep(frame_phase(row, "a"), frame_phase(row, "s")))
++    return vals
++
++
++def analyze_one(path):
++    probe, frames = read_sections(path)
++    if not probe:
++        raise ValueError(f"{path}: no Suicune probe summary; arm with Y+X first")
++    target = int(probe["target"])
++    target_asub = h(probe["target_asub"])
++    target_ssub = h(probe["target_ssub"])
++    groups = collapse_advances(frames)
++    stops = stop_events(groups)
++    jitter = normal_jitter(groups, target)
++    gaps = pair_gaps(frames)
++
++    result = {
++        "path": str(path),
++        "name": Path(path).name,
++        "target": target,
++        "target_asub": target_asub,
++        "target_ssub": target_ssub,
++        "bucket": target_asub >> 3,
++        "target_ap4": target_phase(probe, "a"),
++        "target_sp4": target_phase(probe, "s"),
++        "offset": int(probe["offset"]) if probe.get("offset") else None,
++        "route": int(probe["route"]) if probe.get("route") else None,
++        "raw_dv": probe.get("raw_dv", ""),
++        "frames": len(frames),
++        "unique_advances": len(groups),
++        "stops": stops,
++        "jitter": jitter,
++        "pair_counts": Counter(gaps),
++    }
++    return result
++
++
++def print_one(r):
++    print(f"== {r['name']} ==")
++    print(
++        f"target={r['target']}  target_asub=0x{r['target_asub']:02X} ({r['target_asub']}) "
++        f"bucket=B{r['bucket']}  P_A={fmt_quarter(r['target_ap4'])}  "
++        f"offset={r['offset']} route={r['route']} DV={r['raw_dv']}"
++    )
++    print("pair gap M:", r["pair_counts"].most_common(8))
++    print(f"pair==11: {r['pair_counts'][PAIR_M]}/{sum(r['pair_counts'].values())}")
++    for i, stop in enumerate(r["stops"], 1):
++        label = "stop1 / Δ1" if i == 1 else "stop2 / Δ2" if i == 2 else f"stop{i}"
++        print(
++            f"{label}: adv={stop['advance']} repeat={stop['repeat']} "
++            f"step={stop['delta_m_a']}M extra={stop['extra_m_a']}M "
++            f"fit-sign Δ={stop['fit_delta_a']:.2f} A "
++            f"extra mod4096={stop['extra_a_mod4096']:.2f} A"
++        )
++    raw = r["jitter"]["raw"]
++    core = r["jitter"]["core"]
++    print(
++        f"normal transitions: raw={len(raw)}  micro(|j|<={MICRO_JITTER_LIMIT})={len(core)}  "
++        f"excluded structural/outlier={len(raw)-len(core)}"
++    )
++    if core:
++        vals = [x[1] for x in core]
++        print("micro jitter M:", Counter(vals).most_common(15))
++        print(
++            "micro cumulative M: "
++            f"min={r['jitter']['cum_min']} max={r['jitter']['cum_max']} final={r['jitter']['cum_final']}"
++        )
++    print()
++
++
++def collection_rows(results):
++    rows = []
++    for r in results:
++        s1 = r["stops"][0] if len(r["stops"]) >= 1 else None
++        s2 = r["stops"][1] if len(r["stops"]) >= 2 else None
++        rows.append({
++            "file": r["name"],
++            "target": r["target"],
++            "target_asub": r["target_asub"],
++            "target_asub_hex": f"{r['target_asub']:02X}",
++            "bucket": r["bucket"],
++            "target_ssub": r["target_ssub"],
++            "target_ap4": r["target_ap4"],
++            "target_p_a": r["target_ap4"] / 4.0,
++            "offset": r["offset"],
++            "route": r["route"],
++            "raw_dv": r["raw_dv"],
++            "delta1_extra_m": s1["extra_m_a"] if s1 else "",
++            "delta1_fit_a": s1["fit_delta_a"] if s1 else "",
++            "delta2_extra_m": s2["extra_m_a"] if s2 else "",
++            "delta2_mod_a": s2["extra_a_mod4096"] if s2 else "",
++            "micro_cum_min_m": r["jitter"]["cum_min"],
++            "micro_cum_max_m": r["jitter"]["cum_max"],
++            "micro_cum_final_m": r["jitter"]["cum_final"],
++        })
++    return rows
++
++
++def write_collection(path, rows):
++    fields = list(rows[0].keys())
++    with open(path, "w", newline="") as f:
++        w = csv.DictWriter(f, fieldnames=fields)
++        w.writeheader()
++        w.writerows(rows)
++
++
++def compare_same_asub(results):
++    by = defaultdict(list)
++    for r in results:
++        by[r["target_asub"]].append(r)
++    found = False
++    for asub, rs in sorted(by.items()):
++        if len(rs) < 2:
++            continue
++        found = True
++        print(f"== deterministic comparison: target_asub=0x{asub:02X} ==")
++        for i in range(len(rs)):
++            for j in range(i + 1, len(rs)):
++                a = rs[i]["jitter"]["keyed_core"]
++                b = rs[j]["jitter"]["keyed_core"]
++                common = sorted(set(a) & set(b))
++                same = sum(a[k] == b[k] for k in common)
++                pct = (100.0 * same / len(common)) if common else 0.0
++                print(
++                    f"{rs[i]['name']} vs {rs[j]['name']}: "
++                    f"micro jitter exact {same}/{len(common)} = {pct:.2f}%"
++                )
++                mismatches = [(k, a[k], b[k]) for k in common if a[k] != b[k]]
++                if mismatches:
++                    print("  first mismatches:", mismatches[:12])
++        print()
++    if not found and len(results) >= 2:
++        print("No exact target_asub duplicate yet. Collect a second run with the same live Sub value.\n")
++
++
++def print_collection(results):
++    if len(results) < 2:
++        return
++    print("== Δ1 collection (sort by target_asub) ==")
++    print("file,target_asub,bucket,delta1_extra_m,delta1_fit_A,offset,route")
++    for r in sorted(results, key=lambda x: (x["target_asub"], x["name"])):
++        s1 = r["stops"][0] if r["stops"] else None
++        print(
++            f"{r['name']},0x{r['target_asub']:02X},B{r['bucket']},"
++            f"{s1['extra_m_a'] if s1 else ''},"
++            f"{s1['fit_delta_a'] if s1 else ''},"
++            f"{r['offset']},{r['route']}"
++        )
++    print()
++
++
++def main():
++    ap = argparse.ArgumentParser()
++    ap.add_argument("traces", nargs="+", help="v3.5/v3.6 trace CSVs")
++    ap.add_argument("--out", help="write collection summary CSV")
++    args = ap.parse_args()
++
++    results = []
++    for path in args.traces:
++        try:
++            r = analyze_one(path)
++        except Exception as e:
++            print(f"ERROR {path}: {e}")
++            continue
++        results.append(r)
++        print_one(r)
++
++    if not results:
++        raise SystemExit(2)
++
++    print_collection(results)
++    compare_same_asub(results)
++
++    if args.out:
++        rows = collection_rows(results)
++        write_collection(args.out, rows)
++        print(f"wrote {args.out}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/reader_core/src/crystal/trace.rs b/reader_core/src/crystal/trace.rs
+index 8dcaf8c..288219a 100644
+--- a/reader_core/src/crystal/trace.rs
++++ b/reader_core/src/crystal/trace.rs
+@@ -125,6 +125,13 @@ pub fn status_text(state: TraceState) -> &'static str {
+     }
+ }
+ 
++/// Exact emulator divider phase in M-cycle units (4 T-cycles), modulo 16384.
++/// One legacy A-unit is 16 T-cycles = 4 of these units, so dividing by 4
++/// yields the absolute P phase used by the offline v3.6 analysis.
++fn direct_phase_m(div: u8, subtick: u8) -> u16 {
++    (((div as u16) << 6) | subtick as u16) & 0x3fff
++}
++
+ /// Small stack formatter so a CSV row can be built without allocating.
+ struct LineBuf {
+     // Deep-probe rows contain register snapshots plus three raw memory blobs.
+@@ -564,22 +571,26 @@ impl Trace {
+         // complete, preserve the exact Y+X Target so a failed/mis-armed trial
+         // can be diagnosed instead of looking like an ordinary legacy Trace.
+         if self.probe_session {
++            // ADIV/SDIV tracker phases are kept for backwards comparison only.
++            // v3.6 uses the direct F604 phase instead: P4 is exact quarter-A
++            // phase (M-cycle units), while P=P4/4 is the old 16T unit and may have .25 steps.
+             let phase_a = self.probe_target.adiv & 15;
+             let phase_s = self.probe_target.sdiv & 15;
+             let adiv_byte = (self.probe_target.div >> 8) as u8;
+             let sdiv_byte = self.probe_target.div as u8;
+-            let target_a12 = ((adiv_byte as u16) << 4) | ((self.probe_target.asub as u16) >> 2);
+-            let target_s12 = ((sdiv_byte as u16) << 4) | ((self.probe_target.ssub as u16) >> 2);
++            let target_ap4 = direct_phase_m(adiv_byte, self.probe_target.asub);
++            let target_sp4 = direct_phase_m(sdiv_byte, self.probe_target.ssub);
++            let target_sub_bucket = self.probe_target.asub >> 3;
+             let _ = write!(
+                 line,
+-                "probe,target,target_state,target_div,target_adiv,target_sdiv,target_acyc,target_scyc,target_asub,target_ssub,target_a12,target_s12,target_atick,target_stick,target_keys,phase_a,phase_s,result,dv_advance,offset,route,raw_dv,clean_tail,call_first,call_final,deep_samples\n"
++                "probe,target,target_state,target_div,target_adiv,target_sdiv,target_acyc,target_scyc,target_asub,target_ssub,target_asub_dec,target_ssub_dec,target_ap4,target_sp4,target_sub_bucket,target_atick,target_stick,target_keys,phase_a,phase_s,result,dv_advance,offset,route,raw_dv,clean_tail,call_first,call_final,deep_samples\n"
+             );
+             pnp::trace_file_write(line.as_bytes());
+             line.clear();
+             if let Some(result) = self.probe_result {
+                 let _ = write!(
+                     line,
+-                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{:03X},{:03X},{},{},{:04X},{},{},OK,{},{},{},{:04X},{},{},{},{}\n\n",
++                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{},{},{:04X},{:04X},{},{},{},{:04X},{},{},OK,{},{},{},{:04X},{},{},{},{}\n\n",
+                     self.probe_target.advance,
+                     self.probe_target.state,
+                     self.probe_target.div,
+@@ -589,8 +600,11 @@ impl Trace {
+                     self.probe_target.scyc,
+                     self.probe_target.asub,
+                     self.probe_target.ssub,
+-                    target_a12,
+-                    target_s12,
++                    self.probe_target.asub,
++                    self.probe_target.ssub,
++                    target_ap4,
++                    target_sp4,
++                    target_sub_bucket,
+                     self.probe_target.atick,
+                     self.probe_target.stick,
+                     self.probe_target.keys,
+@@ -608,7 +622,7 @@ impl Trace {
+             } else {
+                 let _ = write!(
+                     line,
+-                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{:03X},{:03X},{},{},{:04X},{},{},NO_RESULT,,,,,,,,{}\n\n",
++                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{},{},{:04X},{:04X},{},{},{},{:04X},{},{},NO_RESULT,,,,,,,,{}\n\n",
+                     self.probe_target.advance,
+                     self.probe_target.state,
+                     self.probe_target.div,
+@@ -618,8 +632,11 @@ impl Trace {
+                     self.probe_target.scyc,
+                     self.probe_target.asub,
+                     self.probe_target.ssub,
+-                    target_a12,
+-                    target_s12,
++                    self.probe_target.asub,
++                    self.probe_target.ssub,
++                    target_ap4,
++                    target_sp4,
++                    target_sub_bucket,
+                     self.probe_target.atick,
+                     self.probe_target.stick,
+                     self.probe_target.keys,
+@@ -634,7 +651,7 @@ impl Trace {
+ 
+         let _ = write!(
+             line,
+-            "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,asub,ssub,atick,stick,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
++            "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,asub,ssub,asub_dec,ssub_dec,ap4,sp4,atick,stick,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
+         );
+         pnp::trace_file_write(line.as_bytes());
+ 
+@@ -643,7 +660,7 @@ impl Trace {
+             line.clear();
+             let _ = write!(
+                 line,
+-                "{},{},{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{},{},{:04X},{},",
++                "{},{},{},{:04X},{:04X},{},{},{},{},{:02X},{:02X},{},{},{:04X},{:04X},{},{},{:04X},{},",
+                 index,
+                 entry.advance.wrapping_sub(self.start_advance),
+                 entry.advance,
+@@ -655,6 +672,10 @@ impl Trace {
+                 entry.scyc,
+                 entry.asub,
+                 entry.ssub,
++                entry.asub,
++                entry.ssub,
++                direct_phase_m((entry.div >> 8) as u8, entry.asub),
++                direct_phase_m(entry.div as u8, entry.ssub),
+                 entry.atick,
+                 entry.stick,
+                 entry.keys,
+@@ -783,27 +804,43 @@ impl Trace {
+             let mode = if self.state == TraceState::Armed { "ARM" } else { "REC" };
+             pnp::println!("Probe {} T{}", mode, self.probe_target.advance);
+             pnp::println!(
+-                "Ph {}/{} D{}",
+-                self.probe_target.adiv & 15,
+-                self.probe_target.sdiv & 15,
++                "TSub {:02X}/{:02X} B{} D{}",
++                self.probe_target.asub,
++                self.probe_target.ssub,
++                self.probe_target.asub >> 3,
+                 deep_log_count()
+             );
+             pnp::println!(
+-                "Sub {:02X}/{:02X}",
+-                self.probe_target.asub,
+-                self.probe_target.ssub
++                "P4 {:04X}/{:04X}",
++                direct_phase_m((self.probe_target.div >> 8) as u8, self.probe_target.asub),
++                direct_phase_m(self.probe_target.div as u8, self.probe_target.ssub)
+             );
+         } else if let Some(result) = self.probe_result {
+             pnp::println!("Probe OK +{} {}c", result.offset, result.route);
+             pnp::println!("DV {:04X} D{}", result.raw_dv, deep_log_count());
+-            pnp::println!("Sub {:02X}/{:02X}", adiv_subtick(), sdiv_subtick());
++            pnp::println!(
++                "TSub {:02X}/{:02X} B{}",
++                self.probe_target.asub,
++                self.probe_target.ssub,
++                self.probe_target.asub >> 3
++            );
+         } else if self.probe_session {
+             pnp::println!("Probe STOP T{}", self.probe_target.advance);
+             pnp::println!("NO RESULT D{}", deep_log_count());
+-            pnp::println!("Sub {:02X}/{:02X}", adiv_subtick(), sdiv_subtick());
++            pnp::println!(
++                "TSub {:02X}/{:02X} B{}",
++                self.probe_target.asub,
++                self.probe_target.ssub,
++                self.probe_target.asub >> 3
++            );
+         } else {
+             pnp::println!("Probe OFF");
+-            pnp::println!("Deep 0");
++            pnp::println!(
++                "LiveSub {:02X}/{:02X} B{}",
++                adiv_subtick(),
++                sdiv_subtick(),
++                adiv_subtick() >> 3
++            );
+         }
+     }
+ 

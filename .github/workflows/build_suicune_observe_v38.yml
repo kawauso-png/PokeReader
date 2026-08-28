@@ -1,0 +1,39 @@
+name: Suicune Observe v3.8 Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "suicune-observe-v38"
+
+jobs:
+  build-v38:
+    name: Patch and build Suicune Observe v3.8
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Apply deterministic v3.7 execute patch
+        run: sh apply_suicune_deterministic_v37.sh
+
+      - name: Apply v3.8 clean timing observer
+        run: sh apply_suicune_observe_v38.sh
+
+      - name: Verify v3.8 markers
+        run: |
+          grep -q "suicune_auto_resume_pending" 3gx/sources/main.c
+          grep -q "SUICUNE_TICK_BENCH_N 4096" 3gx/sources/main.c
+          grep -q "observe_version,fixed_arm_tick" 3gx/sources/main.c
+          grep -q "suicune_obs_post_resume_hook_tick" 3gx/sources/main.c
+
+      - name: Build
+        run: make
+
+      - name: Upload v3.8 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-Observe-v38
+          retention-days: 7
+          path: out/default.3gx

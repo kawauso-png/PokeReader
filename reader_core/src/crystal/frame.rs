@@ -1,6 +1,6 @@
 use super::{
     draw::{draw_header, draw_pkx, draw_research, draw_rng},
-    hook::{deep_log_count, measured_div, reset_rng_advance, rng_advance},
+    hook::{measured_div, reset_rng_advance},
     reader::Gen2Reader,
 };
 use crate::{
@@ -103,49 +103,7 @@ pub fn run_frame() {
     match state.view {
         CrystalView::Rng => {
             draw_rng(&reader);
-
-            let fixed = pnp::fixed_a_frame();
-            let fixed_state = if fixed.running {
-                "RUN"
-            } else if fixed.armed {
-                "ARM"
-            } else {
-                "OFF"
-            };
-
-            let input = if fixed.physical_up {
-                "UP"
-            } else if fixed.physical_a {
-                "A"
-            } else {
-                "-"
-            };
-
-            pnp::println!("Fix {} {} {}", fixed.frames, fixed_state, input);
-
-            let (status, start, len) = state.trace.status_line();
-            let target = if status == "ARMED" {
-                rng_advance()
-            } else {
-                start.saturating_sub(1)
-            };
-
-            let (save, _) = state.trace.save_status();
-
-            if status == "ARMED" {
-                pnp::println!("Probe ARM T{}", target);
-            } else if status == "REC" {
-                pnp::println!("Probe REC T{}", target);
-            } else if status == "DONE" && save == "OK" {
-                pnp::println!("Probe OK T{}", target);
-            } else if status == "DONE" {
-                pnp::println!("Probe DONE T{}", target);
-            } else {
-                pnp::println!("Probe OFF");
-            }
-
-            pnp::println!("Deep {} f{}", deep_log_count(), len);
-
+            state.trace.draw_rng_status();
             let (status, start, len) = state.trace.status_line();
             pnp::println!("Trace {} {} f{}", status, start, len);
             let (save, code) = state.trace.save_status();

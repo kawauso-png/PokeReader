@@ -200,7 +200,7 @@ u32 host_fixed_state(void)
 {
     u32 physical_a = (get_current_keys() & KEY_A) != 0;
     u32 physical_up = (get_current_keys() & KEY_DUP) != 0;
-    return (fixed_a_frames & 0xff) | ((fixed_last_run & 0xff) << 8) | ((u32)fixed_armed << 16) | (((fixed_frames_remaining > 0) || fixed_run_pending) << 17) | (physical_a << 18) | (physical_up << 19);
+    return (fixed_a_frames & 0xff) | ((fixed_last_run & 0xff) << 8) | ((u32)fixed_armed << 16) | ((fixed_frames_remaining > 0) << 17) | (physical_a << 18) | (physical_up << 19) | ((u32)fixed_run_pending << 20);
 }
 
 void handle_freeze(bool isTopScreen)

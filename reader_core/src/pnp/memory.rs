@@ -19,6 +19,15 @@ pub fn read_array<const SIZE: usize>(addr: u32) -> [u8; SIZE] {
     out
 }
 
+/// Copy host-process memory directly into an existing raw buffer.
+///
+/// This is used by the short-lived Suicune DIV wide probe so the 1 KiB
+/// emulator-context snapshot can live in static storage instead of being
+/// allocated on the timing-sensitive hook stack.
+pub unsafe fn read_into_raw(addr: u32, out: *mut u8, size: usize) {
+    unsafe { bindings::host_read_mem(addr, size as u32, out as u32) };
+}
+
 pub fn read_vec(addr: u32, size: u32) -> Vec<u8> {
     let mut out = vec![0; size as usize];
     unsafe {

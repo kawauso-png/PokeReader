@@ -78,6 +78,7 @@ pub struct FixedAFrame {
     pub last_run: u8,
     pub armed: bool,
     pub running: bool,
+    pub pending: bool,
     pub physical_a: bool,
     pub physical_up: bool,
 }
@@ -92,6 +93,7 @@ pub fn fixed_a_frame() -> FixedAFrame {
         running: (bits & (1 << 17)) != 0,
         physical_a: (bits & (1 << 18)) != 0,
         physical_up: (bits & (1 << 19)) != 0,
+        pending: (bits & (1 << 20)) != 0,
     }
 }
 

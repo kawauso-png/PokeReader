@@ -67,8 +67,17 @@ impl Gen2Reader {
         Self { addrs }
     }
 
+    /// Host-process pointer to the byte that backs the emulated rDIV register.
+    /// The Japanese and international Crystal builds currently share the same
+    /// pointer slot (0x22F794).  Exposing the resolved pointer lets the short
+    /// DIV-wide probe inspect its immediate neighbourhood without duplicating
+    /// emulator-layout knowledge in the hook.
+    pub fn div_host_ptr(&self) -> u32 {
+        pnp::read::<u32>(self.addrs.div_ptr)
+    }
+
     pub fn div(&self) -> u8 {
-        pnp::read(pnp::read::<u32>(self.addrs.div_ptr))
+        pnp::read(self.div_host_ptr())
     }
 
     pub fn pc_reg(&self) -> u16 {

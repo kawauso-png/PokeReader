@@ -1,0 +1,1486 @@
+diff --git a/3gx/includes/pnp.h b/3gx/includes/pnp.h
+index b12fc4e..78718cf 100644
+--- a/3gx/includes/pnp.h
++++ b/3gx/includes/pnp.h
+@@ -26,6 +26,7 @@ void host_set_print_max_len(u32 max_len);
+ u64 host_get_game_title_id();
+ void set_game_start_ms(u64 time);
+ u64 host_game_start_ms();
++u64 host_system_tick();
+ void set_trampoline_addr(u32 trampoline);
+ u32 get_trampoline_addr();
+ void set_route_hook_addr(u32 route_hook);
+diff --git a/3gx/sources/main.c b/3gx/sources/main.c
+index 76e836b..4374305 100644
+--- a/3gx/sources/main.c
++++ b/3gx/sources/main.c
+@@ -200,7 +200,7 @@ u32 host_fixed_state(void)
+ {
+     u32 physical_a = (get_current_keys() & KEY_A) != 0;
+     u32 physical_up = (get_current_keys() & KEY_DUP) != 0;
+-    return (fixed_a_frames & 0xff) | ((fixed_last_run & 0xff) << 8) | ((u32)fixed_armed << 16) | (((fixed_frames_remaining > 0) || fixed_run_pending) << 17) | (physical_a << 18) | (physical_up << 19);
++    return (fixed_a_frames & 0xff) | ((fixed_last_run & 0xff) << 8) | ((u32)fixed_armed << 16) | ((fixed_frames_remaining > 0) << 17) | (physical_a << 18) | (physical_up << 19) | ((u32)fixed_run_pending << 20);
+ }
+ 
+ void handle_freeze(bool isTopScreen)
+diff --git a/3gx/sources/pnp.c b/3gx/sources/pnp.c
+index 4d1dd40..a5a17f0 100644
+--- a/3gx/sources/pnp.c
++++ b/3gx/sources/pnp.c
+@@ -117,6 +117,15 @@ u64 host_game_start_ms()
+   return game_start_ms;
+ }
+ 
++// High-resolution monotonic ARM11 system tick.  Unlike osGetTime() this is
++// fine-grained enough to distinguish rDIV reads within a single presented VC
++// frame.  It is host time, not a Game Boy CPU-cycle count; Deep Probe logs it
++// separately so we never confuse the two clocks.
++u64 host_system_tick()
++{
++  return svcGetSystemTick();
++}
++
+ u32 trampoline_addr = 0;
+ u32 route_hook_addr = 0;
+ 
+diff --git a/SUICUNE_DIV_WIDE.md b/SUICUNE_DIV_WIDE.md
+new file mode 100644
+index 0000000..82ef40c
+--- /dev/null
++++ b/SUICUNE_DIV_WIDE.md
+@@ -0,0 +1,59 @@
++# Suicune Deep Probe v3.2 — DIV wide capture
++
++This diagnostic build keeps the v3.1 input-release gate, delayed DV detector,
++probe summary, and host-tick logging, then adds a short-lived DIV-state capture.
++
++## What is captured
++
++For the first eight VBlank-A rDIV reads after a Y+X Suicune probe starts:
++
++- `0x22F400..0x22F7FF` (1024 bytes) of emulator context
++- the resolved host rDIV byte pointer already used by `Gen2Reader`
++- 512 bytes around that pointer (`ptr - 0x100 .. ptr + 0xFF`)
++- visible rDIV, RNG advance, PC, and ARM11 host tick
++- the original instruction at the legacy cycle-hook site (`0x1A8360`)
++- the hook macro's resolved return address
++
++Only eight wide samples are collected.  After that the wide capture turns itself
++off; normal Deep/Call logging continues.
++
++## On-screen confirmation
++
++On RNG:
++
++- `Ph a/s Dn Wm` — `W` should reach 8
++
++On Trace:
++
++- `calls ... d... w8`
++- `cyc XXXXXXXX`
++- `CH WWWWWWWW RRRRRRRR`
++
++If the top byte of `CH`'s first word is not `EB` and `R` is zero, the existing
++`update_cycle_counter = 0x1A8360` hook is not a valid BL site in this runtime.
++No alternate hook address is guessed or patched by v3.2.
++
++## CSV
++
++A final section is appended:
++
++`wide_index,pc,advance,div,host_tick,div_ptr,ctx_base,ctx_valid,ctx_bytes,near_base,near_valid,near_bytes,cyc_hook_word,cyc_hook_ret`
++
++The 1 KiB/512 B blobs are streamed while saving; they do not use a >2 KiB stack
++formatter.
++
++## Offline search
++
++Run:
++
++```bash
++python3 analyze_div_wide.py celebi_trace_XXXX.csv
++```
++
++The analyzer searches for a 16-bit counter whose high byte equals the observed
++DIV and whose full value advances by `0x1250` per RNG advance (70224 mod 65536),
++with a relaxed `+0x50` low-byte fallback and nearby split-field search.
++
++One successful v3.2 CSV with `W8` is enough for the first pass.  Once the low
++byte address is uniquely identified, the next build can replace diagnostic wide
++capture with lightweight per-VBlank `asub/ssub` recording.
+diff --git a/analyze_div_wide.py b/analyze_div_wide.py
+new file mode 100755
+index 0000000..bda38a4
+--- /dev/null
++++ b/analyze_div_wide.py
+@@ -0,0 +1,215 @@
++#!/usr/bin/env python3
++"""Locate candidate internal DIV-counter bytes from a Deep Probe v3.2 CSV.
++
++The CSV is a concatenation of several tables.  v3.2 appends a `wide_index,...`
++section containing eight first-VBlank samples.  This script searches both the
++1 KiB emulator-context window and the 512-byte neighbourhood around the host
++rDIV byte pointer for a 16-bit value whose high byte equals the observed DIV
++and whose frame-to-frame delta matches 0x1250 per RNG advance.
++
++Usage:
++    python3 analyze_div_wide.py celebi_trace_XXXX.csv
++"""
++from __future__ import annotations
++
++import csv
++import sys
++from dataclasses import dataclass
++from pathlib import Path
++from typing import Iterable
++
++
++@dataclass
++class Sample:
++    index: int
++    pc: int
++    advance: int
++    div: int
++    host_tick: int
++    div_ptr: int
++    ctx_base: int
++    ctx_valid: bool
++    ctx: bytes
++    near_base: int
++    near_valid: bool
++    near: bytes
++    cyc_hook_word: int
++    cyc_hook_ret: int
++
++
++def _parse_hex_int(s: str) -> int:
++    s = s.strip()
++    if not s:
++        return 0
++    return int(s, 16)
++
++
++def load_wide(path: Path) -> list[Sample]:
++    lines = path.read_text(errors="replace").splitlines()
++    header_idx = next((i for i, line in enumerate(lines) if line.startswith("wide_index,")), None)
++    if header_idx is None:
++        raise SystemExit("wide section not found: build/run Deep Probe v3.2 first")
++
++    reader = csv.DictReader(lines[header_idx:])
++    out: list[Sample] = []
++    for row in reader:
++        if not row.get("wide_index"):
++            break
++        try:
++            ctx = bytes.fromhex(row.get("ctx_bytes", ""))
++            near = bytes.fromhex(row.get("near_bytes", ""))
++            out.append(
++                Sample(
++                    index=int(row["wide_index"]),
++                    pc=_parse_hex_int(row["pc"]),
++                    advance=int(row["advance"]),
++                    div=_parse_hex_int(row["div"]),
++                    host_tick=int(row.get("host_tick") or 0),
++                    div_ptr=_parse_hex_int(row.get("div_ptr") or "0"),
++                    ctx_base=_parse_hex_int(row.get("ctx_base") or "0"),
++                    ctx_valid=(row.get("ctx_valid") == "1"),
++                    ctx=ctx,
++                    near_base=_parse_hex_int(row.get("near_base") or "0"),
++                    near_valid=(row.get("near_valid") == "1"),
++                    near=near,
++                    cyc_hook_word=_parse_hex_int(row.get("cyc_hook_word") or "0"),
++                    cyc_hook_ret=_parse_hex_int(row.get("cyc_hook_ret") or "0"),
++                )
++            )
++        except (KeyError, ValueError) as exc:
++            raise SystemExit(f"bad wide row {row!r}: {exc}") from exc
++    return out
++
++
++def expected_delta(a: Sample, b: Sample) -> int:
++    # One Crystal frame advances the internal 16-bit divider by 70224 cycles.
++    # 70224 mod 65536 = 0x1250.  Use advance distance so skipped samples still
++    # compare correctly.
++    d = (b.advance - a.advance) & 0xFFFFFFFF
++    return (0x1250 * d) & 0xFFFF
++
++
++def all_deltas_match(values: list[int], samples: list[Sample]) -> bool:
++    return all(((values[i + 1] - values[i]) & 0xFFFF) == expected_delta(samples[i], samples[i + 1])
++               for i in range(len(values) - 1))
++
++
++def low_deltas_match(values: list[int], samples: list[Sample]) -> bool:
++    return all(((values[i + 1] - values[i]) & 0xFF) == (expected_delta(samples[i], samples[i + 1]) & 0xFF)
++               for i in range(len(values) - 1))
++
++
++def search_window(name: str, samples: list[Sample], base: int, blobs: list[bytes]) -> None:
++    if not blobs or any(not b for b in blobs):
++        print(f"[{name}] no valid bytes")
++        return
++    n = min(map(len, blobs))
++    exact: list[tuple[str, int, int, int]] = []
++    relaxed: list[tuple[str, int, int, int]] = []
++
++    for off in range(n - 1):
++        # Little-endian: low byte at off, visible DIV/high byte at off+1.
++        if all(blobs[i][off + 1] == samples[i].div for i in range(len(samples))):
++            vals = [b[off] | (b[off + 1] << 8) for b in blobs]
++            item = ("LE", off, base + off, base + off + 1)
++            if all_deltas_match(vals, samples):
++                exact.append(item)
++            elif low_deltas_match([b[off] for b in blobs], samples):
++                relaxed.append(item)
++
++        # Big-endian storage possibility: visible DIV at off, low byte off+1.
++        if all(blobs[i][off] == samples[i].div for i in range(len(samples))):
++            vals = [(b[off] << 8) | b[off + 1] for b in blobs]
++            item = ("BE", off, base + off + 1, base + off)
++            if all_deltas_match(vals, samples):
++                exact.append(item)
++            elif low_deltas_match([b[off + 1] for b in blobs], samples):
++                relaxed.append(item)
++
++    print(f"\n[{name}] base=0x{base:08X} len={n}")
++    if exact:
++        print("exact 16-bit candidates (expected delta 0x1250 per advance):")
++        for endian, off, low_addr, div_addr in exact:
++            print(
++                f"  {endian} off=0x{off:03X} counter_low=0x{low_addr:08X} "
++                f"div/high=0x{div_addr:08X}"
++            )
++    else:
++        print("exact 16-bit candidates: none")
++
++    if relaxed:
++        print("low-byte-only candidates (+0x50 per advance, relaxed):")
++        for endian, off, low_addr, div_addr in relaxed[:32]:
++            print(
++                f"  {endian} off=0x{off:03X} low=0x{low_addr:08X} div=0x{div_addr:08X}"
++            )
++        if len(relaxed) > 32:
++            print(f"  ... {len(relaxed) - 32} more")
++
++    # Split-field fallback: a DIV mirror at one byte and a nearby byte whose
++    # low-8 progression is correct, even if the emulator does not store a u16.
++    div_offsets = [off for off in range(n) if all(blobs[i][off] == samples[i].div for i in range(len(samples)))]
++    low_offsets = []
++    for off in range(n):
++        vals = [b[off] for b in blobs]
++        if low_deltas_match(vals, samples):
++            low_offsets.append(off)
++
++    split = []
++    for d in div_offsets:
++        for lo in low_offsets:
++            dist = abs(lo - d)
++            if dist <= 16 and lo != d:
++                split.append((dist, d, lo))
++    split.sort()
++    if split:
++        print("nearby split-field candidates (distance <= 16 bytes):")
++        for dist, d, lo in split[:24]:
++            print(
++                f"  dist={dist:2d} div=0x{base+d:08X} low=0x{base+lo:08X}"
++            )
++
++
++def main() -> None:
++    if len(sys.argv) != 2:
++        raise SystemExit("usage: analyze_div_wide.py celebi_trace_XXXX.csv")
++    path = Path(sys.argv[1])
++    samples = load_wide(path)
++    if len(samples) < 3:
++        raise SystemExit(f"need at least 3 wide samples, got {len(samples)}")
++
++    print(f"samples: {len(samples)}")
++    for s in samples:
++        print(
++            f"  #{s.index} pc={s.pc:04X} adv={s.advance} div={s.div:02X} "
++            f"div_ptr=0x{s.div_ptr:08X} tick={s.host_tick}"
++        )
++
++    w = samples[0].cyc_hook_word
++    r = samples[0].cyc_hook_ret
++    print(f"\ncycle hook: word=0x{w:08X} ret=0x{r:08X} top=0x{w>>24:02X}")
++    if (w >> 24) != 0xEB:
++        print("  diagnosis: 0x1A8360 is not an ARM BL at runtime; legacy cycle hook was not patched")
++    elif r == 0:
++        print("  diagnosis: BL-looking word but hook return is zero; investigate hook setup")
++    else:
++        print("  diagnosis: hook site patched/resolved; zero cycle count would mean the call path did not fire")
++
++    ctx_samples = [s for s in samples if s.ctx_valid and s.ctx]
++    if len(ctx_samples) == len(samples):
++        search_window("context", samples, samples[0].ctx_base, [s.ctx for s in samples])
++    else:
++        print("\n[context] one or more snapshots invalid")
++
++    near_samples = [s for s in samples if s.near_valid and s.near]
++    same_near_base = len({s.near_base for s in samples if s.near_valid}) == 1
++    if len(near_samples) == len(samples) and same_near_base:
++        search_window("div-pointer-neighbourhood", samples, samples[0].near_base, [s.near for s in samples])
++        ptr_off = samples[0].div_ptr - samples[0].near_base
++        print(f"\nknown rDIV host pointer sits at near offset 0x{ptr_off:X}")
++    else:
++        print("\n[div-pointer-neighbourhood] invalid or base changed between samples")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/reader_core/src/crystal/frame.rs b/reader_core/src/crystal/frame.rs
+index 0e827fc..a128499 100644
+--- a/reader_core/src/crystal/frame.rs
++++ b/reader_core/src/crystal/frame.rs
+@@ -1,6 +1,6 @@
+ use super::{
+     draw::{draw_header, draw_pkx, draw_research, draw_rng},
+-    hook::{deep_log_count, measured_div, reset_rng_advance, rng_advance},
++    hook::{measured_div, reset_rng_advance},
+     reader::Gen2Reader,
+ };
+ use crate::{
+@@ -103,49 +103,7 @@ pub fn run_frame() {
+     match state.view {
+         CrystalView::Rng => {
+             draw_rng(&reader);
+-
+-            let fixed = pnp::fixed_a_frame();
+-            let fixed_state = if fixed.running {
+-                "RUN"
+-            } else if fixed.armed {
+-                "ARM"
+-            } else {
+-                "OFF"
+-            };
+-
+-            let input = if fixed.physical_up {
+-                "UP"
+-            } else if fixed.physical_a {
+-                "A"
+-            } else {
+-                "-"
+-            };
+-
+-            pnp::println!("Fix {} {} {}", fixed.frames, fixed_state, input);
+-
+-            let (status, start, len) = state.trace.status_line();
+-            let target = if status == "ARMED" {
+-                rng_advance()
+-            } else {
+-                start.saturating_sub(1)
+-            };
+-
+-            let (save, _) = state.trace.save_status();
+-
+-            if status == "ARMED" {
+-                pnp::println!("Probe ARM T{}", target);
+-            } else if status == "REC" {
+-                pnp::println!("Probe REC T{}", target);
+-            } else if status == "DONE" && save == "OK" {
+-                pnp::println!("Probe OK T{}", target);
+-            } else if status == "DONE" {
+-                pnp::println!("Probe DONE T{}", target);
+-            } else {
+-                pnp::println!("Probe OFF");
+-            }
+-
+-            pnp::println!("Deep {} f{}", deep_log_count(), len);
+-
++            state.trace.draw_rng_status();
+             let (status, start, len) = state.trace.status_line();
+             pnp::println!("Trace {} {} f{}", status, start, len);
+             let (save, code) = state.trace.save_status();
+diff --git a/reader_core/src/crystal/hook.rs b/reader_core/src/crystal/hook.rs
+index 0e1ca91..5d4f912 100644
+--- a/reader_core/src/crystal/hook.rs
++++ b/reader_core/src/crystal/hook.rs
+@@ -16,6 +16,18 @@ static mut CYCLE_COUNTER: u32 = 0;
+ // sub-tick position that the DIV byte alone cannot show.
+ static mut ACYCLES: u32 = 0;
+ static mut SCYCLES: u32 = 0;
++// High-resolution host tick at the same two VBlank rDIV reads.  The legacy
++// cycle hook is currently zero on JP VC, so these provide a safe timing
++// fallback without guessing and patching an unverified emulator code address.
++static mut ATICKS: u64 = 0;
++static mut STICKS: u64 = 0;
++
++// Diagnostics for the legacy cycle hook.  On JP VC the accumulated counter
++// has stayed at zero.  Recording both the original instruction word and the
++// hook macro's resolved return address tells us whether 0x1A8360 was actually
++// a BL call site without trying risky alternate addresses.
++static mut CYC_HOOK_WORD: u32 = 0;
++static mut CYC_HOOK_RET: u32 = 0;
+ 
+ // Diagnostics for the Japanese release: is the hook firing at all, and what
+ // program counter does it see when the game reads the DIV register?
+@@ -40,6 +52,7 @@ pub struct CallEntry {
+     pub sub: u8,
+     pub advance: u32,
+     pub cycles: u32,
++    pub host_tick: u64,
+ }
+ 
+ // Deep Suicune probe.  Unlike CALL_LOG, this only samples the first rDIV read
+@@ -62,6 +75,152 @@ const WRAM_SNAPSHOT_LEN: usize = 128; // D200-D27F
+ const HRAM_SNAPSHOT_LEN: usize = 128; // FF80-FFFF
+ const HOST_STACK_WORDS: usize = 8;
+ 
++// Short-lived wide snapshot used only to locate the emulator's internal
++// 16-bit DIV counter.  Eight first-VBlank samples are enough to correlate the
++// visible DIV byte with the missing low byte while keeping probe overhead
++// bounded.  The 1 KiB context window covers 0x22F400..0x22F7FF, including the
++// known emulator-side pointers around 0x22F6xx/0x22F794.  A second 512-byte
++// window is centered around the host byte pointer that Gen2Reader already uses
++// to read rDIV.
++pub const WIDE_LOG_LEN: usize = 8;
++pub const CTX_WIDE_BASE: u32 = 0x0022f400;
++pub const CTX_WIDE_LEN: usize = 1024;
++pub const DIV_NEAR_LEN: usize = 512;
++const DIV_NEAR_BEFORE: u32 = 0x100;
++
++#[derive(Clone, Copy, Default)]
++pub struct WideMeta {
++    pub pc: u16,
++    pub advance: u32,
++    pub div: u8,
++    pub host_tick: u64,
++    pub div_ptr: u32,
++    pub ctx_base: u32,
++    pub ctx_valid: u8,
++    pub near_base: u32,
++    pub near_valid: u8,
++}
++
++static mut WIDE_META: [WideMeta; WIDE_LOG_LEN] = [WideMeta {
++    pc: 0,
++    advance: 0,
++    div: 0,
++    host_tick: 0,
++    div_ptr: 0,
++    ctx_base: CTX_WIDE_BASE,
++    ctx_valid: 0,
++    near_base: 0,
++    near_valid: 0,
++}; WIDE_LOG_LEN];
++static mut WIDE_CTX: [[u8; CTX_WIDE_LEN]; WIDE_LOG_LEN] = [[0; CTX_WIDE_LEN]; WIDE_LOG_LEN];
++static mut WIDE_NEAR: [[u8; DIV_NEAR_LEN]; WIDE_LOG_LEN] = [[0; DIV_NEAR_LEN]; WIDE_LOG_LEN];
++static mut WIDE_COUNT: u32 = 0;
++static mut WIDE_LOGGING: bool = false;
++
++fn wide_log_start() {
++    unsafe {
++        WIDE_COUNT = 0;
++        WIDE_LOGGING = true;
++    }
++}
++
++fn wide_log_stop() {
++    unsafe { WIDE_LOGGING = false };
++}
++
++fn wide_log_clear() {
++    unsafe {
++        WIDE_COUNT = 0;
++        WIDE_LOGGING = false;
++    }
++}
++
++pub fn wide_log_count() -> u32 {
++    unsafe { WIDE_COUNT.min(WIDE_LOG_LEN as u32) }
++}
++
++pub fn wide_log_meta(index: usize) -> WideMeta {
++    unsafe {
++        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize {
++            WIDE_META[index]
++        } else {
++            WideMeta::default()
++        }
++    }
++}
++
++pub fn wide_ctx_byte(index: usize, offset: usize) -> u8 {
++    unsafe {
++        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize && offset < CTX_WIDE_LEN {
++            WIDE_CTX[index][offset]
++        } else {
++            0
++        }
++    }
++}
++
++pub fn wide_near_byte(index: usize, offset: usize) -> u8 {
++    unsafe {
++        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize && offset < DIV_NEAR_LEN {
++            WIDE_NEAR[index][offset]
++        } else {
++            0
++        }
++    }
++}
++
++fn capture_wide_vblank(reader: &Gen2Reader, pc: u16, div: u8, host_tick: u64) {
++    let index = unsafe {
++        if !WIDE_LOGGING || WIDE_COUNT as usize >= WIDE_LOG_LEN {
++            WIDE_LOGGING = false;
++            return;
++        }
++        WIDE_COUNT as usize
++    };
++
++    let div_ptr = reader.div_host_ptr();
++    let near_base = div_ptr.saturating_sub(DIV_NEAR_BEFORE);
++    let ctx_valid = pnp::is_memory_mapped(CTX_WIDE_BASE)
++        && pnp::is_memory_mapped(CTX_WIDE_BASE + CTX_WIDE_LEN as u32 - 1);
++    let near_valid = div_ptr != 0
++        && pnp::is_memory_mapped(near_base)
++        && pnp::is_memory_mapped(near_base + DIV_NEAR_LEN as u32 - 1);
++
++    unsafe {
++        let ctx_out = core::ptr::addr_of_mut!(WIDE_CTX)
++            .cast::<u8>()
++            .add(index * CTX_WIDE_LEN);
++        core::ptr::write_bytes(ctx_out, 0, CTX_WIDE_LEN);
++        if ctx_valid {
++            pnp::read_into_raw(CTX_WIDE_BASE, ctx_out, CTX_WIDE_LEN);
++        }
++
++        let near_out = core::ptr::addr_of_mut!(WIDE_NEAR)
++            .cast::<u8>()
++            .add(index * DIV_NEAR_LEN);
++        core::ptr::write_bytes(near_out, 0, DIV_NEAR_LEN);
++        if near_valid {
++            pnp::read_into_raw(near_base, near_out, DIV_NEAR_LEN);
++        }
++
++        WIDE_META[index] = WideMeta {
++            pc,
++            advance: RNG_ADVANCE,
++            div,
++            host_tick,
++            div_ptr,
++            ctx_base: CTX_WIDE_BASE,
++            ctx_valid: ctx_valid as u8,
++            near_base: if near_valid { near_base } else { 0 },
++            near_valid: near_valid as u8,
++        };
++        WIDE_COUNT = WIDE_COUNT.wrapping_add(1);
++        if WIDE_COUNT as usize >= WIDE_LOG_LEN {
++            WIDE_LOGGING = false;
++        }
++    }
++}
++
+ #[derive(Clone, Copy)]
+ pub struct DeepEntry {
+     pub pc: u16,
+@@ -70,6 +229,7 @@ pub struct DeepEntry {
+     pub sub: u8,
+     pub advance: u32,
+     pub cycles: u32,
++    pub host_tick: u64,
+     pub regs: [u32; 15],
+     pub host_stack: [u32; HOST_STACK_WORDS],
+     pub cpu_ctx: [u8; CPU_CTX_LEN],
+@@ -85,6 +245,7 @@ impl DeepEntry {
+         sub: 0,
+         advance: 0,
+         cycles: 0,
++        host_tick: 0,
+         regs: [0; 15],
+         host_stack: [0; HOST_STACK_WORDS],
+         cpu_ctx: [0; CPU_CTX_LEN],
+@@ -104,10 +265,23 @@ pub fn deep_log_start() {
+         DEEP_COUNT = 0;
+         DEEP_LOGGING = true;
+     }
++    wide_log_start();
+ }
+ 
+ pub fn deep_log_stop() {
+     unsafe { DEEP_LOGGING = false };
++    wide_log_stop();
++}
++
++/// Clear stale deep samples as well as stopping capture.  Regular Trace saves
++/// must never inherit Deep rows from a previous Suicune probe.
++pub fn deep_log_clear() {
++    unsafe {
++        DEEP_WRITE = 0;
++        DEEP_COUNT = 0;
++        DEEP_LOGGING = false;
++    }
++    wide_log_clear();
+ }
+ 
+ pub fn deep_log_count() -> u32 {
+@@ -122,7 +296,13 @@ pub fn deep_log_entry(index: usize) -> DeepEntry {
+     }
+ }
+ 
+-fn capture_deep_random(reader: &Gen2Reader, regs: &[u32], stack_pointer: *mut u32, pc: u16) {
++fn capture_deep_random(
++    reader: &Gen2Reader,
++    regs: &[u32],
++    stack_pointer: *mut u32,
++    pc: u16,
++    host_tick: u64,
++) {
+     // Only one snapshot per Random call.  2F68 is the second rDIV read of the
+     // same call and would nearly double the overhead without adding much.
+     if pc != 0x2f60 {
+@@ -172,6 +352,7 @@ fn capture_deep_random(reader: &Gen2Reader, regs: &[u32], stack_pointer: *mut u3
+         sub: state as u8,
+         advance: rng_advance(),
+         cycles: cycle_counter(),
++        host_tick,
+         regs: saved_regs,
+         host_stack: saved_stack,
+         cpu_ctx,
+@@ -193,6 +374,7 @@ static mut CALL_LOG: [CallEntry; CALL_LOG_LEN] = [CallEntry {
+     sub: 0,
+     advance: 0,
+     cycles: 0,
++    host_tick: 0,
+ }; CALL_LOG_LEN];
+ static mut CALL_WRITE: usize = 0;
+ static mut CALL_COUNT: u32 = 0;
+@@ -218,7 +400,6 @@ pub fn call_log_count() -> u32 {
+ pub fn call_log_entry(index: usize) -> CallEntry {
+     unsafe {
+         let total = CALL_COUNT as usize;
+-        let len = total.min(CALL_LOG_LEN);
+         let start = if total > CALL_LOG_LEN {
+             CALL_WRITE
+         } else {
+@@ -258,12 +439,30 @@ pub fn sdiv_cycles() -> u32 {
+     unsafe { SCYCLES }
+ }
+ 
++/// High-resolution host tick at the first VBlank rDIV read.
++pub fn adiv_tick() -> u64 {
++    unsafe { ATICKS }
++}
++
++/// High-resolution host tick at the second VBlank rDIV read.
++pub fn sdiv_tick() -> u64 {
++    unsafe { STICKS }
++}
++
+ /// Raw accumulated cycle counter. Stays at zero if the counter hook never
+ /// fires, which is how to tell that its address is wrong for this release.
+ pub fn cycle_counter() -> u32 {
+     unsafe { CYCLE_COUNTER }
+ }
+ 
++pub fn cyc_hook_word() -> u32 {
++    unsafe { CYC_HOOK_WORD }
++}
++
++pub fn cyc_hook_ret() -> u32 {
++    unsafe { CYC_HOOK_RET }
++}
++
+ pub fn rng_advance() -> u32 {
+     unsafe { RNG_ADVANCE }
+ }
+@@ -354,8 +553,11 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
+ 
+     let reader = Gen2Reader::crystal();
+     let pc = reader.pc_reg();
++    // Sample once and reuse the value for every record produced by this rDIV
++    // hook.  This keeps the hot-path overhead deterministic.
++    let host_tick = pnp::system_tick();
+ 
+-    capture_deep_random(&reader, regs, _stack_pointer, pc);
++    capture_deep_random(&reader, regs, _stack_pointer, pc, host_tick);
+ 
+     unsafe {
+         if CALL_LOGGING {
+@@ -367,6 +569,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
+                 sub: state as u8,
+                 advance: RNG_ADVANCE,
+                 cycles: CYCLE_COUNTER,
++                host_tick,
+             };
+             CALL_WRITE = (CALL_WRITE + 1) % CALL_LOG_LEN;
+             CALL_COUNT = CALL_COUNT.wrapping_add(1);
+@@ -387,8 +590,10 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
+     const RNG_DIV_READ_2: [u16; 2] = [0x2bd, 0x2be];
+     if RNG_DIV_READ_1.contains(&pc) {
+         let div = reader.div();
++        capture_wide_vblank(&reader, pc, div, host_tick);
+         unsafe { ADIV = div };
+         unsafe { ACYCLES = CYCLE_COUNTER };
++        unsafe { ATICKS = host_tick };
+ 
+         unsafe { ADD_DIV_TRACKER.update(div) };
+         unsafe { RNG_ADVANCE = RNG_ADVANCE.wrapping_add(1) };
+@@ -397,6 +602,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
+         let div = reader.div();
+         unsafe { SDIV = div };
+         unsafe { SCYCLES = CYCLE_COUNTER };
++        unsafe { STICKS = host_tick };
+         unsafe { SUB_DIV_TRACKER.update(div) };
+     }
+ }
+@@ -407,6 +613,12 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
+ static mut GB_READ_MEM_HOOK: u32 = 0x1af17c;
+ 
+ pub fn init_crystal() {
++    // Read the instruction before hook_game_branch potentially rewrites it.
++    // If this is not an ARM BL (top byte EB), replace_arm_branch intentionally
++    // leaves it untouched and returns 0; the pair is shown on Trace and saved
++    // with the wide samples.
++    unsafe { CYC_HOOK_WORD = pnp::read::<u32>(0x1a8360) };
++
+     if let Ok(crate::title::LoadedTitle::CrystalJp) = crate::title::loaded_title() {
+         unsafe { GB_READ_MEM_HOOK = 0x1af11c };
+     }
+@@ -416,4 +628,6 @@ pub fn init_crystal() {
+         update_cycle_counter = 0x1a8360,
+         gb_read_mem = GB_READ_MEM_HOOK,
+     );
++
++    unsafe { CYC_HOOK_RET = update_cycle_counter::return_addr };
+ }
+diff --git a/reader_core/src/crystal/reader.rs b/reader_core/src/crystal/reader.rs
+index bf93929..0222d63 100644
+--- a/reader_core/src/crystal/reader.rs
++++ b/reader_core/src/crystal/reader.rs
+@@ -67,8 +67,17 @@ impl Gen2Reader {
+         Self { addrs }
+     }
+ 
++    /// Host-process pointer to the byte that backs the emulated rDIV register.
++    /// The Japanese and international Crystal builds currently share the same
++    /// pointer slot (0x22F794).  Exposing the resolved pointer lets the short
++    /// DIV-wide probe inspect its immediate neighbourhood without duplicating
++    /// emulator-layout knowledge in the hook.
++    pub fn div_host_ptr(&self) -> u32 {
++        pnp::read::<u32>(self.addrs.div_ptr)
++    }
++
+     pub fn div(&self) -> u8 {
+-        pnp::read(pnp::read::<u32>(self.addrs.div_ptr))
++        pnp::read(self.div_host_ptr())
+     }
+ 
+     pub fn pc_reg(&self) -> u16 {
+diff --git a/reader_core/src/crystal/trace.rs b/reader_core/src/crystal/trace.rs
+index 77866e4..79d59cb 100644
+--- a/reader_core/src/crystal/trace.rs
++++ b/reader_core/src/crystal/trace.rs
+@@ -2,14 +2,16 @@ use core::fmt::Write;
+ 
+ use super::game_lib::gb_mem;
+ use super::hook::{
+-    add_div_tracker, adiv_cycles, call_log_count, call_log_entry, call_log_start, call_log_stop,
+-    cycle_counter, deep_log_count, deep_log_entry, deep_log_start, deep_log_stop, measured_div,
+-    rng_advance, sdiv_cycles, sub_div_tracker,
++    add_div_tracker, adiv_cycles, adiv_tick, call_log_count, call_log_entry, call_log_start,
++    call_log_stop, cyc_hook_ret, cyc_hook_word, cycle_counter, deep_log_clear, deep_log_count,
++    deep_log_entry, deep_log_start, deep_log_stop, measured_div, rng_advance, sdiv_cycles,
++    sdiv_tick, sub_div_tracker, wide_ctx_byte, wide_log_count, wide_log_meta, wide_near_byte,
++    CTX_WIDE_LEN, DIV_NEAR_LEN, WIDE_LOG_LEN,
+ };
+ use super::reader::Gen2Reader;
+ use crate::pnp;
+ 
+-/// Frames kept in RAM. At 36 bytes an entry this is about 288 KB. The buffer
++/// Frames kept in RAM. Entries also include two 64-bit host ticks for timing. The buffer
+ /// lives in .bss (see TRACE_ENTRIES) rather than inside the Trace struct, so
+ /// growing it does not put a quarter of a megabyte on the stack when the
+ /// persisted state is first built.
+@@ -44,6 +46,8 @@ pub struct TraceEntry {
+     /// which is what the +/-1 phase slips turn on.
+     pub acyc: u32,
+     pub scyc: u32,
++    pub atick: u64,
++    pub stick: u64,
+ }
+ 
+ impl TraceEntry {
+@@ -58,6 +62,8 @@ impl TraceEntry {
+         window: [0; WINDOW_LEN],
+         acyc: 0,
+         scyc: 0,
++        atick: 0,
++        stick: 0,
+     };
+ }
+ 
+@@ -78,6 +84,8 @@ pub struct ProbeTarget {
+     pub sdiv: u16,
+     pub acyc: u32,
+     pub scyc: u32,
++    pub atick: u64,
++    pub stick: u64,
+     pub keys: u16,
+ }
+ 
+@@ -167,6 +175,9 @@ pub struct Trace {
+     save_index: u32,
+     save_result: Option<bool>,
+     probe_active: bool,
++    /// True from Y+X until a non-probe Trace explicitly replaces this session.
++    /// Kept after stop/result so manual saves can still report which Target was armed.
++    probe_session: bool,
+     probe_target: ProbeTarget,
+     probe_result: Option<ProbeResult>,
+     /// Row shown first in the on screen table.
+@@ -194,6 +205,7 @@ impl Default for Trace {
+             save_index: 1,
+             save_result: None,
+             probe_active: false,
++            probe_session: false,
+             probe_target: ProbeTarget::default(),
+             probe_result: None,
+             cursor: 0,
+@@ -225,6 +237,17 @@ impl Trace {
+     pub fn arm_suicune_probe(&mut self, reader: &Gen2Reader) {
+         self.stop();
+         self.reset();
++        // Y+X is handled directly by the C pause loop, so synchronize all
++        // queued host counters here.  Otherwise an old Y+START/Y+SELECT/Y+A
++        // request can be observed on the first resumed frame and silently
++        // cancel a freshly armed probe.
++        let (arm_id, _) = pnp::trace_request();
++        let (stop_req, save_req) = pnp::trace_cmds();
++        self.last_arm_id = arm_id;
++        self.last_stop_req = stop_req;
++        self.last_save_req = save_req;
++        self.last_run_id = pnp::fixed_run_id();
++        deep_log_clear();
+         self.probe_target = ProbeTarget {
+             advance: rng_advance(),
+             state: reader.rng_state(),
+@@ -233,10 +256,13 @@ impl Trace {
+             sdiv: sub_div_tracker().index().unwrap_or(0) as u16,
+             acyc: adiv_cycles(),
+             scyc: sdiv_cycles(),
++            atick: adiv_tick(),
++            stick: sdiv_tick(),
+             keys: pnp::current_keys() as u16,
+         };
+         self.probe_result = None;
+         self.probe_active = true;
++        self.probe_session = true;
+         self.state = TraceState::Armed;
+     }
+ 
+@@ -253,7 +279,9 @@ impl Trace {
+     pub fn arm(&mut self) {
+         self.reset();
+         self.probe_active = false;
+-        deep_log_stop();
++        self.probe_session = false;
++        self.probe_result = None;
++        deep_log_clear();
+         self.state = TraceState::Armed;
+     }
+ 
+@@ -274,7 +302,9 @@ impl Trace {
+         if self.probe_active {
+             deep_log_start();
+         } else {
+-            deep_log_stop();
++            // A legacy Trace must start with an empty Deep section; otherwise
++            // it can accidentally save samples from the previous probe.
++            deep_log_clear();
+         }
+         self.state = TraceState::Recording;
+     }
+@@ -288,16 +318,20 @@ impl Trace {
+         }
+     }
+ 
+-    fn detect_suicune_result(&self, advance: u32, dv1: u8, dv2: u8) -> Option<ProbeResult> {
+-        // The current Japanese-VC observations all lock the Suicune DV about
+-        // 730 frames after Target.  The wider guard prevents an unrelated F5
+-        // struct from accidentally terminating a probe while keeping the
+-        // detector future-proof for small timing slips.
+-        let offset = advance.wrapping_sub(self.probe_target.advance);
+-        if !(680..=780).contains(&offset) {
+-            return None;
+-        }
+-
++    fn detect_suicune_result(
++        &self,
++        observed_advance: u32,
++        dv1: u8,
++        dv2: u8,
++    ) -> Option<ProbeResult> {
++        // The frame sampler and the rDIV hook do not necessarily run in the
++        // same order within a presented VC frame.  A DV can therefore already
++        // be visible in D23D/E while the final 2F60/02B6 entries for that same
++        // advance are not yet in CALL_LOG.  Retry the visible DV against the
++        // current and two immediately preceding advances.  This fixes the
++        // live-probe failure seen in 0054, where the full Random burst exists
++        // in the saved call section but was not available at the first frame
++        // on which the DV bytes became visible.
+         let total = call_log_count() as usize;
+         let shown = total.min(super::hook::CALL_LOG_LEN);
+         if shown < 4 {
+@@ -307,67 +341,79 @@ impl Trace {
+         let is_vblank_a = |pc: u16| pc == 0x02b5 || pc == 0x02b6;
+         let is_random_a = |pc: u16| pc == 0x2f60;
+ 
+-        // Find the VBlank-A read on this advance whose resulting Sub byte is
+-        // the DV2 byte now visible in wEnemyMon.
+-        let mut end = None;
+-        for i in (0..shown).rev() {
+-            let e = call_log_entry(i);
+-            if e.advance < advance {
+-                break;
+-            }
+-            if e.advance == advance && is_vblank_a(e.pc) && e.sub == dv2 {
+-                end = Some(i);
+-                break;
++        for lag in 0..=2u32 {
++            let advance = observed_advance.wrapping_sub(lag);
++            let offset = advance.wrapping_sub(self.probe_target.advance);
++            if !(680..=780).contains(&offset) {
++                continue;
+             }
+-        }
+-        let end = end?;
+ 
+-        // The immediately preceding VBlank-A delimits the stationary encounter
+-        // generation burst.  Count first-rDIV Random reads between the two.
+-        let mut start = 0usize;
+-        for i in (0..end).rev() {
+-            if is_vblank_a(call_log_entry(i).pc) {
+-                start = i + 1;
+-                break;
++            // Find the VBlank-A read on this candidate advance whose resulting
++            // Sub byte is the DV2 byte now visible in wEnemyMon.
++            let mut end = None;
++            for i in (0..shown).rev() {
++                let e = call_log_entry(i);
++                if e.advance < advance {
++                    break;
++                }
++                if e.advance == advance && is_vblank_a(e.pc) && e.sub == dv2 {
++                    end = Some(i);
++                    break;
++                }
++            }
++            let Some(end) = end else { continue };
++
++            // The immediately preceding VBlank-A delimits the stationary
++            // encounter generation burst. Count first-rDIV Random reads.
++            let mut start = 0usize;
++            for i in (0..end).rev() {
++                if is_vblank_a(call_log_entry(i).pc) {
++                    start = i + 1;
++                    break;
++                }
+             }
+-        }
+ 
+-        let mut route = 0u8;
+-        let mut last_random = None;
+-        for i in start..end {
+-            let e = call_log_entry(i);
+-            if is_random_a(e.pc) {
+-                route = route.saturating_add(1);
+-                last_random = Some((i, e));
++            let mut route = 0u8;
++            let mut last_random = None;
++            for i in start..end {
++                let e = call_log_entry(i);
++                if is_random_a(e.pc) {
++                    route = route.saturating_add(1);
++                    last_random = Some((i, e));
++                }
++            }
++            if route != 3 && route != 4 {
++                continue;
++            }
++            let Some((last_random_index, last_random_entry)) = last_random else {
++                continue;
++            };
++            if last_random_entry.sub != dv1 {
++                continue;
+             }
+-        }
+-        if route != 3 && route != 4 {
+-            return None;
+-        }
+-        let (last_random_index, last_random_entry) = last_random?;
+-        if last_random_entry.sub != dv1 {
+-            return None;
+-        }
+ 
+-        // Startup control keys are normally released within the first ~20
+-        // frames.  Treat everything from rel 32 onward as the clean tail.
+-        let clean_tail = self
+-            .entries
+-            .iter()
+-            .take(self.len)
+-            .enumerate()
+-            .filter(|(i, _)| *i >= 32)
+-            .all(|(_, e)| e.keys == 0);
+-
+-        Some(ProbeResult {
+-            dv_advance: advance,
+-            offset,
+-            route,
+-            raw_dv: ((dv1 as u16) << 8) | dv2 as u16,
+-            first_call_index: (total - shown + start) as u32,
+-            final_call_index: (total - shown + end.max(last_random_index)) as u32,
+-            clean_tail,
+-        })
++            // Startup control keys are normally released within the first ~20
++            // frames. Treat everything from rel 32 onward as the clean tail.
++            let clean_tail = self
++                .entries
++                .iter()
++                .take(self.len)
++                .enumerate()
++                .filter(|(i, _)| *i >= 32)
++                .all(|(_, e)| e.keys == 0);
++
++            return Some(ProbeResult {
++                dv_advance: advance,
++                offset,
++                route,
++                raw_dv: ((dv1 as u16) << 8) | dv2 as u16,
++                first_call_index: (total - shown + start) as u32,
++                final_call_index: (total - shown + end.max(last_random_index)) as u32,
++                clean_tail,
++            });
++        }
++
++        None
+     }
+ 
+     /// Called once per frame. Copies numbers only, no allocation or IO.
+@@ -402,6 +448,10 @@ impl Trace {
+         if run_id != self.last_run_id {
+             self.last_run_id = run_id;
+             if self.state == TraceState::Off || self.state == TraceState::Done {
++                // A new Fixed run without a fresh Y+X is a legacy trace, not a
++                // continuation of the previous probe result.
++                self.probe_session = false;
++                self.probe_result = None;
+                 self.start(reader);
+             }
+         }
+@@ -459,6 +509,8 @@ impl Trace {
+             window,
+             acyc: adiv_cycles(),
+             scyc: sdiv_cycles(),
++            atick: adiv_tick(),
++            stick: sdiv_tick(),
+         };
+ 
+         self.len += 1;
+@@ -498,46 +550,69 @@ impl Trace {
+ 
+         let mut line = LineBuf::new();
+ 
+-        // Probe summary comes first so a parser can classify a trial without
+-        // reading thousands of frame/call rows.
+-        if let Some(result) = self.probe_result {
++        // Probe metadata comes first.  Even when result auto-detection did not
++        // complete, preserve the exact Y+X Target so a failed/mis-armed trial
++        // can be diagnosed instead of looking like an ordinary legacy Trace.
++        if self.probe_session {
+             let phase_a = self.probe_target.adiv & 15;
+             let phase_s = self.probe_target.sdiv & 15;
+             let _ = write!(
+                 line,
+-                "probe,target,target_state,target_div,target_adiv,target_sdiv,target_acyc,target_scyc,target_keys,phase_a,phase_s,dv_advance,offset,route,raw_dv,clean_tail,call_first,call_final,deep_samples\n"
++                "probe,target,target_state,target_div,target_adiv,target_sdiv,target_acyc,target_scyc,target_atick,target_stick,target_keys,phase_a,phase_s,result,dv_advance,offset,route,raw_dv,clean_tail,call_first,call_final,deep_samples\n"
+             );
+             pnp::trace_file_write(line.as_bytes());
+             line.clear();
+-            let _ = write!(
+-                line,
+-                "SUICUNE,{},{:04X},{:04X},{},{},{},{},{:04X},{},{},{},{},{},{:04X},{},{},{},{}\n\n",
+-                self.probe_target.advance,
+-                self.probe_target.state,
+-                self.probe_target.div,
+-                self.probe_target.adiv,
+-                self.probe_target.sdiv,
+-                self.probe_target.acyc,
+-                self.probe_target.scyc,
+-                self.probe_target.keys,
+-                phase_a,
+-                phase_s,
+-                result.dv_advance,
+-                result.offset,
+-                result.route,
+-                result.raw_dv,
+-                result.clean_tail as u8,
+-                result.first_call_index,
+-                result.final_call_index,
+-                deep_log_count()
+-            );
++            if let Some(result) = self.probe_result {
++                let _ = write!(
++                    line,
++                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{},{},{:04X},{},{},OK,{},{},{},{:04X},{},{},{},{}\n\n",
++                    self.probe_target.advance,
++                    self.probe_target.state,
++                    self.probe_target.div,
++                    self.probe_target.adiv,
++                    self.probe_target.sdiv,
++                    self.probe_target.acyc,
++                    self.probe_target.scyc,
++                    self.probe_target.atick,
++                    self.probe_target.stick,
++                    self.probe_target.keys,
++                    phase_a,
++                    phase_s,
++                    result.dv_advance,
++                    result.offset,
++                    result.route,
++                    result.raw_dv,
++                    result.clean_tail as u8,
++                    result.first_call_index,
++                    result.final_call_index,
++                    deep_log_count()
++                );
++            } else {
++                let _ = write!(
++                    line,
++                    "SUICUNE,{},{:04X},{:04X},{},{},{},{},{},{},{:04X},{},{},NO_RESULT,,,,,,,,{}\n\n",
++                    self.probe_target.advance,
++                    self.probe_target.state,
++                    self.probe_target.div,
++                    self.probe_target.adiv,
++                    self.probe_target.sdiv,
++                    self.probe_target.acyc,
++                    self.probe_target.scyc,
++                    self.probe_target.atick,
++                    self.probe_target.stick,
++                    self.probe_target.keys,
++                    phase_a,
++                    phase_s,
++                    deep_log_count()
++                );
++            }
+             pnp::trace_file_write(line.as_bytes());
+             line.clear();
+         }
+ 
+         let _ = write!(
+             line,
+-            "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
++            "frame,rel_adv,advance,state,div,adiv,sdiv,acyc,scyc,atick,stick,keys,a_pressed,d235,d236,d237,d238,d239,d23a,d23b,d23c,d23d,d23e,watch_changed,celebi_species\n"
+         );
+         pnp::trace_file_write(line.as_bytes());
+ 
+@@ -546,7 +621,7 @@ impl Trace {
+             line.clear();
+             let _ = write!(
+                 line,
+-                "{},{},{},{:04X},{:04X},{},{},{},{},{:04X},{},",
++                "{},{},{},{:04X},{:04X},{},{},{},{},{},{},{:04X},{},",
+                 index,
+                 entry.advance.wrapping_sub(self.start_advance),
+                 entry.advance,
+@@ -556,6 +631,8 @@ impl Trace {
+                 entry.sdiv,
+                 entry.acyc,
+                 entry.scyc,
++                entry.atick,
++                entry.stick,
+                 entry.keys,
+                 (entry.flags & FLAG_A_PRESSED != 0) as u8
+             );
+@@ -574,7 +651,7 @@ impl Trace {
+         // Second section: every Random call, which is what shows how the DVs
+         // are actually produced inside a single frame.
+         line.clear();
+-        let _ = write!(line, "\ncall_index,pc,advance,add,sub,div,cycles\n");
++        let _ = write!(line, "\ncall_index,pc,advance,add,sub,div,cycles,host_tick\n");
+         pnp::trace_file_write(line.as_bytes());
+ 
+         let total = call_log_count() as usize;
+@@ -584,14 +661,15 @@ impl Trace {
+             line.clear();
+             let _ = write!(
+                 line,
+-                "{},{:04X},{},{:02X},{:02X},{:04X},{}\n",
++                "{},{:04X},{},{:02X},{:02X},{:04X},{},{}\n",
+                 total - shown + i,
+                 e.pc,
+                 e.advance,
+                 e.add,
+                 e.sub,
+                 e.div,
+-                e.cycles
++                e.cycles,
++                e.host_tick
+             );
+             pnp::trace_file_write(line.as_bytes());
+         }
+@@ -602,7 +680,7 @@ impl Trace {
+         line.clear();
+         let _ = write!(
+             line,
+-            "\ndeep_index,pc,advance,add,sub,div,cycles,r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,lr,host_pc,stk0,stk1,stk2,stk3,stk4,stk5,stk6,stk7,cpu_ctx_22f5e0_64,wram_d200_d27f,hram_ff80_ffff\n"
++            "\ndeep_index,pc,advance,add,sub,div,cycles,host_tick,r0,r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12,lr,host_pc,stk0,stk1,stk2,stk3,stk4,stk5,stk6,stk7,cpu_ctx_22f5e0_64,wram_d200_d27f,hram_ff80_ffff\n"
+         );
+         pnp::trace_file_write(line.as_bytes());
+ 
+@@ -613,14 +691,15 @@ impl Trace {
+             line.clear();
+             let _ = write!(
+                 line,
+-                "{},{:04X},{},{:02X},{:02X},{:04X},{}",
++                "{},{:04X},{},{:02X},{:02X},{:04X},{},{}",
+                 deep_total - deep_shown + i,
+                 e.pc,
+                 e.advance,
+                 e.add,
+                 e.sub,
+                 e.div,
+-                e.cycles
++                e.cycles,
++                e.host_tick
+             );
+             for reg in e.regs.iter() {
+                 let _ = write!(line, ",{:08X}", reg);
+@@ -644,11 +723,117 @@ impl Trace {
+             pnp::trace_file_write(line.as_bytes());
+         }
+ 
++        // Fourth section: exactly eight first-VBlank rDIV snapshots for
++        // locating the emulator's internal 16-bit divider.  The blobs are
++        // streamed in small chunks because a 1 KiB snapshot expands to 2048
++        // hex characters, larger than LineBuf by design.
++        line.clear();
++        let _ = write!(
++            line,
++            "\nwide_index,pc,advance,div,host_tick,div_ptr,ctx_base,ctx_valid,ctx_bytes,near_base,near_valid,near_bytes,cyc_hook_word,cyc_hook_ret\n"
++        );
++        pnp::trace_file_write(line.as_bytes());
++
++        let wide_shown = (wide_log_count() as usize).min(WIDE_LOG_LEN);
++        for i in 0..wide_shown {
++            let e = wide_log_meta(i);
++
++            line.clear();
++            let _ = write!(
++                line,
++                "{},{:04X},{},{:02X},{},{:08X},{:08X},{},",
++                i,
++                e.pc,
++                e.advance,
++                e.div,
++                e.host_tick,
++                e.div_ptr,
++                e.ctx_base,
++                e.ctx_valid
++            );
++            pnp::trace_file_write(line.as_bytes());
++
++            for start in (0..CTX_WIDE_LEN).step_by(256) {
++                line.clear();
++                let end = core::cmp::min(start + 256, CTX_WIDE_LEN);
++                for offset in start..end {
++                    let _ = write!(line, "{:02X}", wide_ctx_byte(i, offset));
++                }
++                pnp::trace_file_write(line.as_bytes());
++            }
++
++            line.clear();
++            let _ = write!(line, ",{:08X},{},", e.near_base, e.near_valid);
++            pnp::trace_file_write(line.as_bytes());
++
++            for start in (0..DIV_NEAR_LEN).step_by(256) {
++                line.clear();
++                let end = core::cmp::min(start + 256, DIV_NEAR_LEN);
++                for offset in start..end {
++                    let _ = write!(line, "{:02X}", wide_near_byte(i, offset));
++                }
++                pnp::trace_file_write(line.as_bytes());
++            }
++
++            line.clear();
++            let _ = write!(line, ",{:08X},{:08X}\n", cyc_hook_word(), cyc_hook_ret());
++            pnp::trace_file_write(line.as_bytes());
++        }
++
+         pnp::trace_file_close();
+         self.save_index += 1;
+         self.save_result = Some(true);
+     }
+ 
++    /// Compact status block for the RNG page.  This is deliberately visible
++    /// outside the Trace tab because most Suicune work is done while watching
++    /// State/DIV/Advance.  While paused, the display refreshes on the next
++    /// allowed Fixed frame, so after Y+L returns to pause the user can verify
++    /// Probe REC before pressing R.
++    pub fn draw_rng_status(&self) {
++        let fixed = pnp::fixed_a_frame();
++        let run = if fixed.pending {
++            "WAIT"
++        } else if fixed.running {
++            "RUN"
++        } else {
++            "-"
++        };
++        pnp::println!(
++            "Fix {} A{} {} U{}",
++            fixed.frames,
++            fixed.armed as u8,
++            run,
++            fixed.physical_up as u8
++        );
++
++        if self.probe_active {
++            let mode = if self.state == TraceState::Armed { "ARM" } else { "REC" };
++            pnp::println!("Probe {} T{}", mode, self.probe_target.advance);
++            pnp::println!(
++                "Ph {}/{} D{} W{}",
++                self.probe_target.adiv & 15,
++                self.probe_target.sdiv & 15,
++                deep_log_count(),
++                wide_log_count()
++            );
++        } else if let Some(result) = self.probe_result {
++            pnp::println!("Probe OK +{} {}c", result.offset, result.route);
++            pnp::println!(
++                "DV {:04X} D{} W{}",
++                result.raw_dv,
++                deep_log_count(),
++                wide_log_count()
++            );
++        } else if self.probe_session {
++            pnp::println!("Probe STOP T{}", self.probe_target.advance);
++            pnp::println!("NO RESULT D{} W{}", deep_log_count(), wide_log_count());
++        } else {
++            pnp::println!("Probe OFF");
++            pnp::println!("Deep 0");
++        }
++    }
++
+     pub fn draw(&mut self, reader: &Gen2Reader, is_locked: bool) {
+         if is_locked {
+             if pnp::is_just_pressed(pnp::Button::Ddown) {
+@@ -661,7 +846,11 @@ impl Trace {
+             } else if pnp::is_just_pressed(pnp::Button::A) {
+                 match self.state {
+                     TraceState::Recording | TraceState::Armed => self.stop(),
+-                    _ => self.start(reader),
++                    _ => {
++                        self.probe_session = false;
++                        self.probe_result = None;
++                        self.start(reader);
++                    }
+                 }
+             } else if pnp::is_just_pressed(pnp::Button::B) {
+                 if let Some(frame) = self.first_change {
+@@ -682,9 +871,13 @@ impl Trace {
+         );
+         pnp::println!("from adv {}", self.start_advance);
+         pnp::println!("from st  {:04X}", self.start_state);
+-        pnp::println!("watch {:04X}", self.watch_addr);
+-        pnp::println!("changes {}", self.watch_changes);
+-        pnp::println!("calls {} deep {}", call_log_count(), deep_log_count());
++        pnp::println!("watch {:04X} chg {}", self.watch_addr, self.watch_changes);
++        pnp::println!(
++            "calls {} d{} w{}",
++            call_log_count(),
++            deep_log_count(),
++            wide_log_count()
++        );
+         if self.probe_active {
+             pnp::println!("Probe ARMED T{}", self.probe_target.advance);
+         } else if let Some(result) = self.probe_result {
+@@ -698,6 +891,7 @@ impl Trace {
+         // If this stays at 0 the cycle-counter hook address is wrong for this
+         // release and the acyc/scyc columns will be useless.
+         pnp::println!("cyc {:08X}", cycle_counter());
++        pnp::println!("CH {:08X} R{:08X}", cyc_hook_word(), cyc_hook_ret());
+         match self.save_result {
+             Some(true) => pnp::println!("saved #{}", pnp::trace_written_slot()),
+             Some(false) => pnp::println!("FAIL {:08X}", pnp::trace_last_error()),
+diff --git a/reader_core/src/pnp/bindings.rs b/reader_core/src/pnp/bindings.rs
+index 62889d4..87fbcbf 100644
+--- a/reader_core/src/pnp/bindings.rs
++++ b/reader_core/src/pnp/bindings.rs
+@@ -6,6 +6,7 @@ extern "C" {
+     pub fn host_set_print_max_len(max_len: u32);
+     pub fn host_get_game_title_id() -> u64;
+     pub fn host_game_start_ms() -> u64;
++    pub fn host_system_tick() -> u64;
+     pub fn get_current_keys() -> u32;
+     pub fn host_fixed_state() -> u32;
+     pub fn host_fixed_run_id() -> u32;
+@@ -49,6 +50,10 @@ pub mod test_stubs {
+         0
+     }
+     #[no_mangle]
++    pub extern "C" fn host_system_tick() -> u64 {
++        0
++    }
++    #[no_mangle]
+     pub extern "C" fn get_current_keys() -> u32 {
+         0
+     }
+diff --git a/reader_core/src/pnp/input.rs b/reader_core/src/pnp/input.rs
+index faf205c..c6e8014 100644
+--- a/reader_core/src/pnp/input.rs
++++ b/reader_core/src/pnp/input.rs
+@@ -78,6 +78,7 @@ pub struct FixedAFrame {
+     pub last_run: u8,
+     pub armed: bool,
+     pub running: bool,
++    pub pending: bool,
+     pub physical_a: bool,
+     pub physical_up: bool,
+ }
+@@ -92,6 +93,7 @@ pub fn fixed_a_frame() -> FixedAFrame {
+         running: (bits & (1 << 17)) != 0,
+         physical_a: (bits & (1 << 18)) != 0,
+         physical_up: (bits & (1 << 19)) != 0,
++        pending: (bits & (1 << 20)) != 0,
+     }
+ }
+ 
+diff --git a/reader_core/src/pnp/memory.rs b/reader_core/src/pnp/memory.rs
+index 2b377a3..cd5570a 100644
+--- a/reader_core/src/pnp/memory.rs
++++ b/reader_core/src/pnp/memory.rs
+@@ -19,6 +19,15 @@ pub fn read_array<const SIZE: usize>(addr: u32) -> [u8; SIZE] {
+     out
+ }
+ 
++/// Copy host-process memory directly into an existing raw buffer.
++///
++/// This is used by the short-lived Suicune DIV wide probe so the 1 KiB
++/// emulator-context snapshot can live in static storage instead of being
++/// allocated on the timing-sensitive hook stack.
++pub unsafe fn read_into_raw(addr: u32, out: *mut u8, size: usize) {
++    unsafe { bindings::host_read_mem(addr, size as u32, out as u32) };
++}
++
+ pub fn read_vec(addr: u32, size: u32) -> Vec<u8> {
+     let mut out = vec![0; size as usize];
+     unsafe {
+diff --git a/reader_core/src/pnp/time.rs b/reader_core/src/pnp/time.rs
+index 7911037..68bbcb3 100644
+--- a/reader_core/src/pnp/time.rs
++++ b/reader_core/src/pnp/time.rs
+@@ -13,6 +13,12 @@ pub fn game_start_ms() -> u64 {
+     unsafe { bindings::host_game_start_ms() }
+ }
+ 
++/// High-resolution monotonic ARM11 tick sampled by the 3GX host.
++/// This is intentionally kept separate from the emulated GB cycle counter.
++pub fn system_tick() -> u64 {
++    unsafe { bindings::host_system_tick() }
++}
++
+ pub fn os_time() -> NaiveDateTime {
+     let ms = unsafe { bindings::osGetTime() };
+     datetime_from_console_ms(ms.saturating_sub(3155673600000))

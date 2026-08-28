@@ -13,6 +13,12 @@ pub fn game_start_ms() -> u64 {
     unsafe { bindings::host_game_start_ms() }
 }
 
+/// High-resolution monotonic ARM11 tick sampled by the 3GX host.
+/// This is intentionally kept separate from the emulated GB cycle counter.
+pub fn system_tick() -> u64 {
+    unsafe { bindings::host_system_tick() }
+}
+
 pub fn os_time() -> NaiveDateTime {
     let ms = unsafe { bindings::osGetTime() };
     datetime_from_console_ms(ms.saturating_sub(3155673600000))

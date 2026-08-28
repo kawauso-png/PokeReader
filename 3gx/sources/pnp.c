@@ -117,6 +117,15 @@ u64 host_game_start_ms()
   return game_start_ms;
 }
 
+// High-resolution monotonic ARM11 system tick.  Unlike osGetTime() this is
+// fine-grained enough to distinguish rDIV reads within a single presented VC
+// frame.  It is host time, not a Game Boy CPU-cycle count; Deep Probe logs it
+// separately so we never confuse the two clocks.
+u64 host_system_tick()
+{
+  return svcGetSystemTick();
+}
+
 u32 trampoline_addr = 0;
 u32 route_hook_addr = 0;
 

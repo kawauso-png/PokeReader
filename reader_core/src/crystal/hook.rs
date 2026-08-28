@@ -16,6 +16,18 @@ static mut CYCLE_COUNTER: u32 = 0;
 // sub-tick position that the DIV byte alone cannot show.
 static mut ACYCLES: u32 = 0;
 static mut SCYCLES: u32 = 0;
+// High-resolution host tick at the same two VBlank rDIV reads.  The legacy
+// cycle hook is currently zero on JP VC, so these provide a safe timing
+// fallback without guessing and patching an unverified emulator code address.
+static mut ATICKS: u64 = 0;
+static mut STICKS: u64 = 0;
+
+// Diagnostics for the legacy cycle hook.  On JP VC the accumulated counter
+// has stayed at zero.  Recording both the original instruction word and the
+// hook macro's resolved return address tells us whether 0x1A8360 was actually
+// a BL call site without trying risky alternate addresses.
+static mut CYC_HOOK_WORD: u32 = 0;
+static mut CYC_HOOK_RET: u32 = 0;
 
 // Diagnostics for the Japanese release: is the hook firing at all, and what
 // program counter does it see when the game reads the DIV register?
@@ -40,6 +52,7 @@ pub struct CallEntry {
     pub sub: u8,
     pub advance: u32,
     pub cycles: u32,
+    pub host_tick: u64,
 }
 
 // Deep Suicune probe.  Unlike CALL_LOG, this only samples the first rDIV read
@@ -62,6 +75,152 @@ const WRAM_SNAPSHOT_LEN: usize = 128; // D200-D27F
 const HRAM_SNAPSHOT_LEN: usize = 128; // FF80-FFFF
 const HOST_STACK_WORDS: usize = 8;
 
+// Short-lived wide snapshot used only to locate the emulator's internal
+// 16-bit DIV counter.  Eight first-VBlank samples are enough to correlate the
+// visible DIV byte with the missing low byte while keeping probe overhead
+// bounded.  The 1 KiB context window covers 0x22F400..0x22F7FF, including the
+// known emulator-side pointers around 0x22F6xx/0x22F794.  A second 512-byte
+// window is centered around the host byte pointer that Gen2Reader already uses
+// to read rDIV.
+pub const WIDE_LOG_LEN: usize = 8;
+pub const CTX_WIDE_BASE: u32 = 0x0022f400;
+pub const CTX_WIDE_LEN: usize = 1024;
+pub const DIV_NEAR_LEN: usize = 512;
+const DIV_NEAR_BEFORE: u32 = 0x100;
+
+#[derive(Clone, Copy, Default)]
+pub struct WideMeta {
+    pub pc: u16,
+    pub advance: u32,
+    pub div: u8,
+    pub host_tick: u64,
+    pub div_ptr: u32,
+    pub ctx_base: u32,
+    pub ctx_valid: u8,
+    pub near_base: u32,
+    pub near_valid: u8,
+}
+
+static mut WIDE_META: [WideMeta; WIDE_LOG_LEN] = [WideMeta {
+    pc: 0,
+    advance: 0,
+    div: 0,
+    host_tick: 0,
+    div_ptr: 0,
+    ctx_base: CTX_WIDE_BASE,
+    ctx_valid: 0,
+    near_base: 0,
+    near_valid: 0,
+}; WIDE_LOG_LEN];
+static mut WIDE_CTX: [[u8; CTX_WIDE_LEN]; WIDE_LOG_LEN] = [[0; CTX_WIDE_LEN]; WIDE_LOG_LEN];
+static mut WIDE_NEAR: [[u8; DIV_NEAR_LEN]; WIDE_LOG_LEN] = [[0; DIV_NEAR_LEN]; WIDE_LOG_LEN];
+static mut WIDE_COUNT: u32 = 0;
+static mut WIDE_LOGGING: bool = false;
+
+fn wide_log_start() {
+    unsafe {
+        WIDE_COUNT = 0;
+        WIDE_LOGGING = true;
+    }
+}
+
+fn wide_log_stop() {
+    unsafe { WIDE_LOGGING = false };
+}
+
+fn wide_log_clear() {
+    unsafe {
+        WIDE_COUNT = 0;
+        WIDE_LOGGING = false;
+    }
+}
+
+pub fn wide_log_count() -> u32 {
+    unsafe { WIDE_COUNT.min(WIDE_LOG_LEN as u32) }
+}
+
+pub fn wide_log_meta(index: usize) -> WideMeta {
+    unsafe {
+        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize {
+            WIDE_META[index]
+        } else {
+            WideMeta::default()
+        }
+    }
+}
+
+pub fn wide_ctx_byte(index: usize, offset: usize) -> u8 {
+    unsafe {
+        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize && offset < CTX_WIDE_LEN {
+            WIDE_CTX[index][offset]
+        } else {
+            0
+        }
+    }
+}
+
+pub fn wide_near_byte(index: usize, offset: usize) -> u8 {
+    unsafe {
+        if index < WIDE_COUNT.min(WIDE_LOG_LEN as u32) as usize && offset < DIV_NEAR_LEN {
+            WIDE_NEAR[index][offset]
+        } else {
+            0
+        }
+    }
+}
+
+fn capture_wide_vblank(reader: &Gen2Reader, pc: u16, div: u8, host_tick: u64) {
+    let index = unsafe {
+        if !WIDE_LOGGING || WIDE_COUNT as usize >= WIDE_LOG_LEN {
+            WIDE_LOGGING = false;
+            return;
+        }
+        WIDE_COUNT as usize
+    };
+
+    let div_ptr = reader.div_host_ptr();
+    let near_base = div_ptr.saturating_sub(DIV_NEAR_BEFORE);
+    let ctx_valid = pnp::is_memory_mapped(CTX_WIDE_BASE)
+        && pnp::is_memory_mapped(CTX_WIDE_BASE + CTX_WIDE_LEN as u32 - 1);
+    let near_valid = div_ptr != 0
+        && pnp::is_memory_mapped(near_base)
+        && pnp::is_memory_mapped(near_base + DIV_NEAR_LEN as u32 - 1);
+
+    unsafe {
+        let ctx_out = core::ptr::addr_of_mut!(WIDE_CTX)
+            .cast::<u8>()
+            .add(index * CTX_WIDE_LEN);
+        core::ptr::write_bytes(ctx_out, 0, CTX_WIDE_LEN);
+        if ctx_valid {
+            pnp::read_into_raw(CTX_WIDE_BASE, ctx_out, CTX_WIDE_LEN);
+        }
+
+        let near_out = core::ptr::addr_of_mut!(WIDE_NEAR)
+            .cast::<u8>()
+            .add(index * DIV_NEAR_LEN);
+        core::ptr::write_bytes(near_out, 0, DIV_NEAR_LEN);
+        if near_valid {
+            pnp::read_into_raw(near_base, near_out, DIV_NEAR_LEN);
+        }
+
+        WIDE_META[index] = WideMeta {
+            pc,
+            advance: RNG_ADVANCE,
+            div,
+            host_tick,
+            div_ptr,
+            ctx_base: CTX_WIDE_BASE,
+            ctx_valid: ctx_valid as u8,
+            near_base: if near_valid { near_base } else { 0 },
+            near_valid: near_valid as u8,
+        };
+        WIDE_COUNT = WIDE_COUNT.wrapping_add(1);
+        if WIDE_COUNT as usize >= WIDE_LOG_LEN {
+            WIDE_LOGGING = false;
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct DeepEntry {
     pub pc: u16,
@@ -70,6 +229,7 @@ pub struct DeepEntry {
     pub sub: u8,
     pub advance: u32,
     pub cycles: u32,
+    pub host_tick: u64,
     pub regs: [u32; 15],
     pub host_stack: [u32; HOST_STACK_WORDS],
     pub cpu_ctx: [u8; CPU_CTX_LEN],
@@ -85,6 +245,7 @@ impl DeepEntry {
         sub: 0,
         advance: 0,
         cycles: 0,
+        host_tick: 0,
         regs: [0; 15],
         host_stack: [0; HOST_STACK_WORDS],
         cpu_ctx: [0; CPU_CTX_LEN],
@@ -104,10 +265,23 @@ pub fn deep_log_start() {
         DEEP_COUNT = 0;
         DEEP_LOGGING = true;
     }
+    wide_log_start();
 }
 
 pub fn deep_log_stop() {
     unsafe { DEEP_LOGGING = false };
+    wide_log_stop();
+}
+
+/// Clear stale deep samples as well as stopping capture.  Regular Trace saves
+/// must never inherit Deep rows from a previous Suicune probe.
+pub fn deep_log_clear() {
+    unsafe {
+        DEEP_WRITE = 0;
+        DEEP_COUNT = 0;
+        DEEP_LOGGING = false;
+    }
+    wide_log_clear();
 }
 
 pub fn deep_log_count() -> u32 {
@@ -122,7 +296,13 @@ pub fn deep_log_entry(index: usize) -> DeepEntry {
     }
 }
 
-fn capture_deep_random(reader: &Gen2Reader, regs: &[u32], stack_pointer: *mut u32, pc: u16) {
+fn capture_deep_random(
+    reader: &Gen2Reader,
+    regs: &[u32],
+    stack_pointer: *mut u32,
+    pc: u16,
+    host_tick: u64,
+) {
     // Only one snapshot per Random call.  2F68 is the second rDIV read of the
     // same call and would nearly double the overhead without adding much.
     if pc != 0x2f60 {
@@ -172,6 +352,7 @@ fn capture_deep_random(reader: &Gen2Reader, regs: &[u32], stack_pointer: *mut u3
         sub: state as u8,
         advance: rng_advance(),
         cycles: cycle_counter(),
+        host_tick,
         regs: saved_regs,
         host_stack: saved_stack,
         cpu_ctx,
@@ -193,6 +374,7 @@ static mut CALL_LOG: [CallEntry; CALL_LOG_LEN] = [CallEntry {
     sub: 0,
     advance: 0,
     cycles: 0,
+    host_tick: 0,
 }; CALL_LOG_LEN];
 static mut CALL_WRITE: usize = 0;
 static mut CALL_COUNT: u32 = 0;
@@ -218,7 +400,6 @@ pub fn call_log_count() -> u32 {
 pub fn call_log_entry(index: usize) -> CallEntry {
     unsafe {
         let total = CALL_COUNT as usize;
-        let len = total.min(CALL_LOG_LEN);
         let start = if total > CALL_LOG_LEN {
             CALL_WRITE
         } else {
@@ -258,10 +439,28 @@ pub fn sdiv_cycles() -> u32 {
     unsafe { SCYCLES }
 }
 
+/// High-resolution host tick at the first VBlank rDIV read.
+pub fn adiv_tick() -> u64 {
+    unsafe { ATICKS }
+}
+
+/// High-resolution host tick at the second VBlank rDIV read.
+pub fn sdiv_tick() -> u64 {
+    unsafe { STICKS }
+}
+
 /// Raw accumulated cycle counter. Stays at zero if the counter hook never
 /// fires, which is how to tell that its address is wrong for this release.
 pub fn cycle_counter() -> u32 {
     unsafe { CYCLE_COUNTER }
+}
+
+pub fn cyc_hook_word() -> u32 {
+    unsafe { CYC_HOOK_WORD }
+}
+
+pub fn cyc_hook_ret() -> u32 {
+    unsafe { CYC_HOOK_RET }
 }
 
 pub fn rng_advance() -> u32 {
@@ -354,8 +553,11 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
 
     let reader = Gen2Reader::crystal();
     let pc = reader.pc_reg();
+    // Sample once and reuse the value for every record produced by this rDIV
+    // hook.  This keeps the hot-path overhead deterministic.
+    let host_tick = pnp::system_tick();
 
-    capture_deep_random(&reader, regs, _stack_pointer, pc);
+    capture_deep_random(&reader, regs, _stack_pointer, pc, host_tick);
 
     unsafe {
         if CALL_LOGGING {
@@ -367,6 +569,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
                 sub: state as u8,
                 advance: RNG_ADVANCE,
                 cycles: CYCLE_COUNTER,
+                host_tick,
             };
             CALL_WRITE = (CALL_WRITE + 1) % CALL_LOG_LEN;
             CALL_COUNT = CALL_COUNT.wrapping_add(1);
@@ -387,8 +590,10 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
     const RNG_DIV_READ_2: [u16; 2] = [0x2bd, 0x2be];
     if RNG_DIV_READ_1.contains(&pc) {
         let div = reader.div();
+        capture_wide_vblank(&reader, pc, div, host_tick);
         unsafe { ADIV = div };
         unsafe { ACYCLES = CYCLE_COUNTER };
+        unsafe { ATICKS = host_tick };
 
         unsafe { ADD_DIV_TRACKER.update(div) };
         unsafe { RNG_ADVANCE = RNG_ADVANCE.wrapping_add(1) };
@@ -397,6 +602,7 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
         let div = reader.div();
         unsafe { SDIV = div };
         unsafe { SCYCLES = CYCLE_COUNTER };
+        unsafe { STICKS = host_tick };
         unsafe { SUB_DIV_TRACKER.update(div) };
     }
 }
@@ -407,6 +613,12 @@ fn gb_read_mem(regs: &[u32], _stack_pointer: *mut u32) {
 static mut GB_READ_MEM_HOOK: u32 = 0x1af17c;
 
 pub fn init_crystal() {
+    // Read the instruction before hook_game_branch potentially rewrites it.
+    // If this is not an ARM BL (top byte EB), replace_arm_branch intentionally
+    // leaves it untouched and returns 0; the pair is shown on Trace and saved
+    // with the wide samples.
+    unsafe { CYC_HOOK_WORD = pnp::read::<u32>(0x1a8360) };
+
     if let Ok(crate::title::LoadedTitle::CrystalJp) = crate::title::loaded_title() {
         unsafe { GB_READ_MEM_HOOK = 0x1af11c };
     }
@@ -416,4 +628,6 @@ pub fn init_crystal() {
         update_cycle_counter = 0x1a8360,
         gb_read_mem = GB_READ_MEM_HOOK,
     );
+
+    unsafe { CYC_HOOK_RET = update_cycle_counter::return_addr };
 }

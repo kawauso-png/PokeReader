@@ -56,7 +56,9 @@ The CSV records sample count, min, median, p99, and max.
 
 ## svcGetSystemTick microbenchmark
 
-On the first Suicune v3.8 arm after plugin load, C directly executes 4096 consecutive `svcGetSystemTick()` calls with normal interrupts enabled. The benchmark is cached and copied into every later trace from that plugin session.
+After the encounter result is already locked, C directly executes 4096 consecutive `svcGetSystemTick()` calls with normal interrupts enabled. Running it only after result lock keeps benchmark cost completely out of the Y+X -> Fixed start -> Resume timing path.
+
+The benchmark is cached for that plugin session and written into the trace observe section.
 
 Reported fields:
 

@@ -64,15 +64,21 @@ if grep -Fq 'last_valid_2f_a' "$GEN1"; then
   exit 1
 fi
 
-# Blue startup must reject arbitrary uninitialized pointer values, while still
-# accepting the VC backing range repeatedly observed on hardware (08BA/08BB...).
-need "$PNP" '#define BLUE_VC_BACKING_MIN 0x08000000u' 'Blue VC backing lower bound missing'
-need "$PNP" '#define BLUE_VC_BACKING_MAX 0x09000000u' 'Blue VC backing upper bound missing'
+# Japanese Blue has repeatedly produced VC backing addresses 08BAxxxx/08BBxxxx.
+# Restrict pointer destinations to that 1 MiB host window and still require
+# svcQueryMemory to resolve the address before any memcpy read occurs.
+need "$PNP" '#define BLUE_VC_BACKING_MIN 0x08B00000u' 'tight Blue VC backing lower bound missing'
+need "$PNP" '#define BLUE_VC_BACKING_MAX 0x08C00000u' 'tight Blue VC backing upper bound missing'
 need "$PNP" 'addr >= BLUE_VC_BACKING_MIN && addr < BLUE_VC_BACKING_MAX' 'Blue VC backing whitelist unused'
-need "$PNP" 'addr < BLUE_HOST_STATE_MIN || addr >= BLUE_HOST_STATE_MAX' 'arbitrary Blue pointers are not rejected'
-need "$PNP" 'return result == 0;' 'fixed host-state query semantics changed'
+need "$PNP" 'addr >= BLUE_HOST_STATE_MIN && addr < BLUE_HOST_STATE_MAX' 'Blue fixed host-state whitelist missing'
+need "$PNP" 's32 result = svcQueryMemory(&info, &page, addr);' 'Blue whitelist is not followed by kernel mapping check'
+need "$PNP" 'return result == 0;' 'kernel mapping check semantics changed'
 if grep -Fq 'MEMPERM_READ' "$PNP"; then
   echo 'AUDIT FAIL: MEMPERM_READ gate breaks Japanese Blue VC backing RAM' >&2
+  exit 1
+fi
+if grep -Fq 'MEMSTATE_FREE' "$PNP"; then
+  echo 'AUDIT FAIL: MEMSTATE gate breaks Japanese Blue VC backing RAM' >&2
   exit 1
 fi
 

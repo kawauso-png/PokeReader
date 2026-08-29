@@ -23,5 +23,6 @@ u32 get_route_hook_addr();
 u32 pa_from_va_ptr(u32 addr);
 bool is_citra();
 bool is_memory_mapped(u32 addr);
+u32 host_blue_stable_ptr(u32 slot);
 u32 host_blue_fixed_run_id(void);
 u32 host_blue_fixed_state(void);

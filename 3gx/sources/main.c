@@ -16,6 +16,50 @@ static Handle memLayoutChanged;
 static u8 stack[0x1000] __attribute__((aligned(8)));
 static bool is_paused = false;
 
+#define BLUE_JP_TITLE_ID 0x0004000000170E00ULL
+#define BLUE_FIXED_FRAMES 2
+
+// Blue-only exact-A controller.  This intentionally does not reuse any
+// Crystal/Suicune RNG logic; only the generic host-side one-frame pause gate is
+// reused.  A run is coupled to a monotonically increasing id so Rust can never
+// pair a battle with an older conversation A press.
+static u32 blue_fixed_run_id = 0;
+static u32 blue_fixed_frames_remaining = 0;
+static bool blue_fixed_pending = false;
+static bool blue_wait_a_release = false;
+static u32 blue_fixed_error = 0;
+
+static bool is_blue_jp(void)
+{
+    return get_title_id() == BLUE_JP_TITLE_ID;
+}
+
+u32 host_blue_fixed_run_id(void)
+{
+    return blue_fixed_run_id;
+}
+
+// bits 0..2 remaining, 3 pending, 4 wait-A-release, 5 physical A,
+// 6 paused, 8..11 error (1=no A at start, 2=snapshot unavailable,
+// 3=A released before both frames completed).
+u32 host_blue_fixed_state(void)
+{
+    u32 physical_a = (get_current_keys() & KEY_A) != 0;
+    return (blue_fixed_frames_remaining & 0x7)
+        | ((u32)blue_fixed_pending << 3)
+        | ((u32)blue_wait_a_release << 4)
+        | (physical_a << 5)
+        | ((u32)is_paused << 6)
+        | ((blue_fixed_error & 0xf) << 8);
+}
+
+static void reset_blue_fixed_transient(void)
+{
+    blue_fixed_frames_remaining = 0;
+    blue_fixed_pending = false;
+    blue_wait_a_release = false;
+}
+
 void handle_freeze(bool isTopScreen)
 {
     u64 masked_title_id = get_title_id() & 0xfff000;
@@ -28,9 +72,114 @@ void handle_freeze(bool isTopScreen)
     while (is_paused && !isTopScreen)
     {
         scan_input();
-
         u32 just_pressed = host_just_pressed();
+        u32 held = get_current_keys();
 
+        if (is_blue_jp())
+        {
+            // Y+L only queues the run.  No game frame is allowed through until
+            // Y/L/R are physically released, while A must remain held.
+            if (blue_fixed_pending)
+            {
+                if ((held & (KEY_Y | KEY_L | KEY_R)) == 0)
+                {
+                    if ((held & KEY_A) == 0)
+                    {
+                        blue_fixed_pending = false;
+                        blue_fixed_error = 1;
+                        continue;
+                    }
+
+                    blue_fixed_run_id++;
+                    if (!blue_capture_target(blue_fixed_run_id))
+                    {
+                        blue_fixed_pending = false;
+                        blue_fixed_error = 2;
+                        continue;
+                    }
+
+                    blue_fixed_pending = false;
+                    blue_fixed_frames_remaining = BLUE_FIXED_FRAMES;
+                    blue_wait_a_release = false;
+                    blue_fixed_error = 0;
+                    continue;
+                }
+                svcSleepThread(10000000);
+                continue;
+            }
+
+            // Let exactly one emulated frame through, then the following bottom
+            // screen hook re-enters this pause loop.  A must be physically held
+            // for both permitted frames or the run is aborted.
+            if (blue_fixed_frames_remaining > 0)
+            {
+                if ((held & KEY_A) == 0)
+                {
+                    blue_fixed_frames_remaining = 0;
+                    blue_wait_a_release = false;
+                    blue_fixed_error = 3;
+                    continue;
+                }
+
+                blue_fixed_frames_remaining--;
+                if (blue_fixed_frames_remaining == 0)
+                {
+                    blue_wait_a_release = true;
+                }
+                break;
+            }
+
+            // After the second frame, remain paused until A is physically
+            // released.  This guarantees the game can never receive a 3rd A
+            // frame even if the user keeps holding the button.
+            if (blue_wait_a_release)
+            {
+                if ((held & KEY_A) == 0)
+                {
+                    blue_wait_a_release = false;
+                    continue;
+                }
+                svcSleepThread(10000000);
+                continue;
+            }
+
+            // Fixed 2F trigger MUST be checked before the ordinary L single
+            // frame branch.  Holding A+Y then tapping L schedules the run.
+            if ((just_pressed & KEY_L) && (held & KEY_Y) && !(held & KEY_R))
+            {
+                blue_fixed_pending = true;
+                blue_fixed_error = 0;
+                continue;
+            }
+
+            // B cancels a pending/error state without resuming the game.
+            if (just_pressed & KEY_B)
+            {
+                reset_blue_fixed_transient();
+                blue_fixed_error = 0;
+                continue;
+            }
+
+            // Plain L keeps the useful single-frame diagnostic path.
+            if ((just_pressed & KEY_L) && !(held & KEY_Y))
+            {
+                break;
+            }
+
+            // On Blue, A is NEVER a Resume key.  Resume is deliberately R-only
+            // so the final encounter A cannot accidentally escape the pause.
+            if ((just_pressed & KEY_R) && !(held & KEY_A))
+            {
+                is_paused = false;
+                reset_blue_fixed_transient();
+                break;
+            }
+
+            svcSleepThread(10000000);
+            continue;
+        }
+
+        // Preserve the upstream behavior for non-Blue titles.
         if (just_pressed & (KEY_SELECT | KEY_L))
         {
             break;
@@ -149,7 +298,6 @@ void __system_allocateHeaps(PluginHeader *header)
 void main(void)
 {
     PluginHeader *header = (PluginHeader *)0x07000000;
-
     __system_allocateHeaps(header);
     srvInit();
 
@@ -162,7 +310,7 @@ void main(void)
     MemInfo info;
     PageInfo out;
     svcQueryMemory(&info, &out, 0x100000);
- 
+
     u32 present_buffer_ptr = (u32)memmem((u8*)info.base_addr, info.size, PRESENT_FRAMEBUFFER_BYTES, sizeof(PRESENT_FRAMEBUFFER_BYTES)) - 8;
     u32 map_input_memory_block = (u32)memmem((u8*)info.base_addr, info.size, MAP_INPUT_BLOCK, sizeof(MAP_INPUT_BLOCK));
 

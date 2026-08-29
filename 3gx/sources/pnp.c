@@ -25,8 +25,8 @@ u64 game_start_ms = 0;
 #define BLUE_JP_TITLE_ID 0x0004000000170E00ULL
 #define BLUE_HOST_STATE_MIN 0x00200000u
 #define BLUE_HOST_STATE_MAX 0x00400000u
-#define BLUE_VC_BACKING_MIN 0x08000000u
-#define BLUE_VC_BACKING_MAX 0x09000000u
+#define BLUE_VC_BACKING_MIN 0x08B00000u
+#define BLUE_VC_BACKING_MAX 0x08C00000u
 
 char print_buffer[MAX_LINES][MAX_LINE_LENGTH];
 u32 print_buffer_color[MAX_LINES];
@@ -147,21 +147,19 @@ bool is_memory_mapped(u32 addr)
 
   if (get_title_id() == BLUE_JP_TITLE_ID)
   {
-    // Japanese Blue hardware has repeatedly shown the emulator state slots at
-    // 0x0022xxxx and VC backing RAM at 0x08xxxxxx (for example 08BAEBA0 and
-    // 08BB2C74).  Do not accept arbitrary addresses while the slots are still
-    // initializing: that was the #147 boot crash.  At the same time, do not
-    // reject the validated VC backing based on unreliable svcQueryMemory perms.
-    if (addr >= BLUE_VC_BACKING_MIN && addr < BLUE_VC_BACKING_MAX)
-    {
-      return true;
-    }
-    if (addr < BLUE_HOST_STATE_MIN || addr >= BLUE_HOST_STATE_MAX)
+    // The fixed emulator state slots live at 0x0022xxxx.  VC backing pointers
+    // observed repeatedly on Japanese Blue live in 0x08Bxxxxx (e.g. 08BAEBA0
+    // and 08BB2C74).  Reject anything outside those two known host regions.
+    if (!((addr >= BLUE_HOST_STATE_MIN && addr < BLUE_HOST_STATE_MAX) ||
+          (addr >= BLUE_VC_BACKING_MIN && addr < BLUE_VC_BACKING_MAX)))
     {
       return false;
     }
   }
 
+  // Even inside the Blue whitelist, require the kernel to resolve the address.
+  // Do not inspect state/permission metadata because that produced false
+  // negatives for valid GB VC backing RAM on real hardware.
   MemInfo info;
   PageInfo page;
   s32 result = svcQueryMemory(&info, &page, addr);

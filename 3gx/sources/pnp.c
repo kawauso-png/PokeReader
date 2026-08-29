@@ -32,6 +32,16 @@ u64 game_start_ms = 0;
 #define BLUE_DIV_PTR_SLOT  0x0022F794u
 #define BLUE_PTR_STABLE_SAMPLES 2u
 
+// Safe observational scan for update-version-1 hardware.  This stays inside
+// the single 0x0022Fxxx emulator-state page that already contains all three
+// historically used slots.  Values that merely look like 0x08xxxxxx pointers
+// are displayed only; they are never dereferenced or automatically adopted.
+#define BLUE_SCAN_MIN 0x0022F500u
+#define BLUE_SCAN_MAX 0x0022F900u
+#define BLUE_SCAN_VALUE_MIN 0x08000000u
+#define BLUE_SCAN_VALUE_MAX 0x09000000u
+#define BLUE_SCAN_MAX_PRINT 5u
+
 typedef struct
 {
   u32 slot;
@@ -121,11 +131,65 @@ static void blue_print_raw_ptr_diag(u32 slot, u32 candidate)
   }
 }
 
+static void blue_scan_host_state_ptrs(void)
+{
+  if (get_title_id() != BLUE_JP_TITLE_ID)
+  {
+    return;
+  }
+
+  // All addresses read below are inside one fixed host-state page.  Candidate
+  // VALUES are never used as addresses in this function.
+  u32 hit_addr[BLUE_SCAN_MAX_PRINT];
+  u32 hit_value[BLUE_SCAN_MAX_PRINT];
+  u32 total = 0;
+  u32 shown = 0;
+
+  for (u32 addr = BLUE_SCAN_MIN; addr < BLUE_SCAN_MAX; addr += sizeof(u32))
+  {
+    u32 value = *(vu32 *)addr;
+    if (value >= BLUE_SCAN_VALUE_MIN && value < BLUE_SCAN_VALUE_MAX)
+    {
+      if (shown < BLUE_SCAN_MAX_PRINT)
+      {
+        hit_addr[shown] = addr;
+        hit_value[shown] = value;
+        shown++;
+      }
+      total++;
+    }
+  }
+
+  char line[32];
+  int len = snprintf(line, sizeof(line), "SCAN 22F5-22F8 %lu hit", (unsigned long)total);
+  if (len > 0)
+  {
+    host_print((u32)line, (u32)len, total != 0 ? 0x00CC00 : 0xFF0000);
+  }
+
+  for (u32 i = 0; i < shown; i++)
+  {
+    len = snprintf(line, sizeof(line), "S %08lX > %08lX",
+                   (unsigned long)hit_addr[i], (unsigned long)hit_value[i]);
+    if (len > 0)
+    {
+      host_print((u32)line, (u32)len, 0xFFFFFF);
+    }
+  }
+}
+
 void host_read_mem(u32 game_addr, u32 size, u32 out_ptr)
 {
   if (get_title_id() == BLUE_JP_TITLE_ID && size == sizeof(u32) &&
       (game_addr == BLUE_WRAM_PTR_SLOT || game_addr == BLUE_HRAM_PTR_SLOT || game_addr == BLUE_DIV_PTR_SLOT))
   {
+    // Run the bounded observational scan once per Snapshot, on the first (W)
+    // slot read.  It does not dereference any candidate value.
+    if (game_addr == BLUE_WRAM_PTR_SLOT)
+    {
+      blue_scan_host_state_ptrs();
+    }
+
     // Diagnostic read is limited to the three fixed 0x0022xxxx pointer slots.
     // The candidate is only displayed and classified; it is never dereferenced
     // unless host_blue_stable_ptr() independently validates and stabilizes it.

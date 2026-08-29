@@ -45,6 +45,9 @@ static BlueStablePtr blue_stable_ptrs[] = {
   { BLUE_DIV_PTR_SLOT,  0, 0 },
 };
 
+static bool query_resolves(u32 addr);
+u32 host_blue_stable_ptr(u32 slot);
+
 char print_buffer[MAX_LINES][MAX_LINE_LENGTH];
 u32 print_buffer_color[MAX_LINES];
 u32 buffer_index = 0;
@@ -98,6 +101,18 @@ void host_print(u32 ptr, u32 size, u32 color)
 
 void host_read_mem(u32 game_addr, u32 size, u32 out_ptr)
 {
+  if (get_title_id() == BLUE_JP_TITLE_ID && size == sizeof(u32) &&
+      (game_addr == BLUE_WRAM_PTR_SLOT || game_addr == BLUE_HRAM_PTR_SLOT || game_addr == BLUE_DIV_PTR_SLOT))
+  {
+    // Never expose a raw VC backing pointer to Rust until the fixed slot has
+    // produced the same valid candidate on two separate snapshot reads.
+    // Returning zero makes resolve_ptr_slot() stop at mapped(0)==false, so no
+    // backing address can be dereferenced during the unstable startup window.
+    u32 stable = host_blue_stable_ptr(game_addr);
+    memcpy((void *)out_ptr, &stable, sizeof(stable));
+    return;
+  }
+
   memcpy((void *)out_ptr, (void *)game_addr, size);
 }
 
@@ -171,9 +186,6 @@ bool is_memory_mapped(u32 addr)
 
   if (get_title_id() == BLUE_JP_TITLE_ID)
   {
-    // The fixed emulator state slots live at 0x0022xxxx. VC backing pointers
-    // observed repeatedly on Japanese Blue live in 0x08Bxxxxx (for example
-    // 08BAEBA0 and 08BB2C74). Reject everything else before any dereference.
     if (!((addr >= BLUE_HOST_STATE_MIN && addr < BLUE_HOST_STATE_MAX) ||
           (addr >= BLUE_VC_BACKING_MIN && addr < BLUE_VC_BACKING_MAX)))
     {
@@ -181,9 +193,6 @@ bool is_memory_mapped(u32 addr)
     }
   }
 
-  // Do not classify Nintendo GB VC backing memory by permission/state flags;
-  // those produced false negatives on hardware. Requiring the kernel query to
-  // resolve the whitelisted address is sufficient here.
   return query_resolves(addr);
 }
 
@@ -209,9 +218,9 @@ u32 host_blue_stable_ptr(u32 slot)
     return 0;
   }
 
-  // The slot itself is a fixed, known emulator-state address. Read only that
-  // fixed location first; never dereference the value until it has passed the
-  // backing-range/query checks and remained identical for two frame samples.
+  // This is the only raw pointer-slot read. The slot is one of three fixed,
+  // hardware-validated 0x0022xxxx addresses; the candidate itself is not
+  // dereferenced here.
   u32 candidate = *(vu32 *)slot;
   if (candidate < BLUE_VC_BACKING_MIN || candidate >= BLUE_VC_BACKING_MAX || !query_resolves(candidate))
   {

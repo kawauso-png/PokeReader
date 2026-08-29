@@ -30,19 +30,13 @@ fn my_panic(info: &core::panic::PanicInfo) -> ! {
         let file = location.file();
         let slice = &file[file.len() - 7..];
 
-        // Since we're about to break, storing a few u32s in these registers won't break us further.
-        // In the future it might be helpful to disable this for release builds.
         unsafe {
-            // r9 and r10 aren't used as frequently as the lower registers, so in most situations
-            // we'll get more useful information by storing the last 4 characters of the file name
-            // and the line number where we broke.
             let partial_file_name = *(slice.as_ptr() as *const u32);
             core::arch::asm!("mov r9, {}", in(reg) partial_file_name);
             core::arch::asm!("mov r10, {}", in(reg) location.line());
         }
     }
 
-    // svcBreak(USERBREAK_PANIC)
     unsafe { core::arch::asm!("svc 0x3C", in("r0") 0u32) };
     loop {}
 }
@@ -55,6 +49,7 @@ fn initialize_loaded_title(title: &LoadedTitle) {
         LoadedTitle::Or | LoadedTitle::As => gen6::init_oras(),
         LoadedTitle::X | LoadedTitle::Y => gen6::init_xy(),
         LoadedTitle::Transporter => transporter::init_transporter(),
+        LoadedTitle::BlueJp => gen1::init_blue(),
         LoadedTitle::CrystalEn
         | LoadedTitle::CrystalDe
         | LoadedTitle::CrystalFr
@@ -67,13 +62,6 @@ fn initialize_loaded_title(title: &LoadedTitle) {
 #[cfg(target_os = "horizon")]
 #[no_mangle]
 pub extern "C" fn initialize() {
-    // Keep the Japanese Blue research path isolated from the normal title/update
-    // registry.  This branch is intentionally a Mewtwo calibration build only.
-    if pnp::title_id() == gen1::BLUE_JP_TITLE_ID {
-        gen1::init_blue();
-        return;
-    }
-
     if let Ok(title) = loaded_title() {
         initialize_loaded_title(title);
     }
@@ -86,6 +74,7 @@ fn run_loaded_title_frame(title: &LoadedTitle) {
         LoadedTitle::Or | LoadedTitle::As => gen6::run_oras_frame(),
         LoadedTitle::X | LoadedTitle::Y => gen6::run_xy_frame(),
         LoadedTitle::Transporter => transporter::run_frame(),
+        LoadedTitle::BlueJp => gen1::run_frame(),
         LoadedTitle::CrystalEn
         | LoadedTitle::CrystalDe
         | LoadedTitle::CrystalFr
@@ -97,13 +86,6 @@ fn run_loaded_title_frame(title: &LoadedTitle) {
 
 #[no_mangle]
 pub extern "C" fn run_frame() {
-    // Japanese VC Blue: run the clean Mewtwo calibration logger before the
-    // normal loaded_title() path so no Crystal/Suicune behavior can leak in.
-    if pnp::title_id() == gen1::BLUE_JP_TITLE_ID {
-        gen1::run_frame();
-        return;
-    }
-
     match loaded_title() {
         Ok(title) => run_loaded_title_frame(title),
         Err(TitleError::InvalidUpdate {

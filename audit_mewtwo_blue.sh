@@ -4,6 +4,7 @@ set -eu
 MAIN=3gx/sources/main.c
 GEN1=reader_core/src/gen1/mod.rs
 TITLE=reader_core/src/title.rs
+LIB=reader_core/src/lib.rs
 PNP=3gx/sources/pnp.c
 PLG=3gx/PokeReader.plgInfo
 
@@ -20,6 +21,8 @@ need() {
 need "$TITLE" 'BlueJp = 0x0004000000170E00' 'Blue title id missing'
 need "$TITLE" '(LoadedTitle::BlueJp, 0)' 'Blue hardware version 0 missing'
 need "$TITLE" '(LoadedTitle::BlueJp, 1056)' 'Blue remaster 1056 missing'
+need "$LIB" 'LoadedTitle::BlueJp => gen1::init_blue()' 'Blue initialize route missing'
+need "$LIB" 'LoadedTitle::BlueJp => gen1::run_frame()' 'Blue per-frame route missing'
 need "$PLG" '0x00170E00' 'Blue 3GX target missing'
 
 need "$MAIN" '#define BLUE_FIXED_FRAMES 2' 'fixed frame count is not 2'

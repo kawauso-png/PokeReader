@@ -15,6 +15,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
+      - name: Blue Mewtwo audit
+        run: python3 audit_mewtwo_blue.py
       - name: Lint
         run: make lint
       - name: Test
@@ -24,6 +26,6 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Blue-JP-Mewtwo-FinalHunt-v1
+          name: PokeReader-Blue-JP-Mewtwo-Audited-Fixed2F-v1
           retention-days: 3
           path: out/default.3gx

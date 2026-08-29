@@ -19,9 +19,9 @@ need() {
 }
 
 need "$TITLE" 'BlueJp = 0x0004000000170E00' 'Blue title id missing'
-need "$TITLE" '(LoadedTitle::BlueJp, 0)' 'Blue legacy hardware version 0 missing'
-need "$TITLE" '(LoadedTitle::BlueJp, 1)' 'Blue real-hardware update version 1 missing'
-need "$TITLE" '(LoadedTitle::BlueJp, 1056)' 'Blue Citra remaster 1056 missing'
+need "$TITLE" '(LoadedTitle::BlueJp, 0)' 'Blue hardware version 0 missing'
+need "$TITLE" '(LoadedTitle::BlueJp, 1)' 'real-hardware Blue update version 1 missing'
+need "$TITLE" '(LoadedTitle::BlueJp, 1056)' 'Blue remaster 1056 missing'
 need "$LIB" 'LoadedTitle::BlueJp => gen1::init_blue()' 'Blue initialize route missing'
 need "$LIB" 'LoadedTitle::BlueJp => gen1::run_frame()' 'Blue per-frame route missing'
 need "$PLG" '0x00170E00' 'Blue 3GX target missing'
@@ -64,7 +64,13 @@ if grep -Fq 'last_valid_2f_a' "$GEN1"; then
   exit 1
 fi
 
+# Real Japanese Blue hardware proved that Nintendo GB VC backing RAM is directly
+# readable even when svcQueryMemory permission flags are not conventional.
+# Reject FREE regions, but never reintroduce MEMPERM_READ as a false-negative gate.
 need "$PNP" 'info.state == MEMSTATE_FREE' 'FREE memory not rejected'
-need "$PNP" 'info.perm & MEMPERM_READ' 'read permission not checked'
+if grep -Fq 'info.perm & MEMPERM_READ' "$PNP"; then
+  echo 'AUDIT FAIL: MEMPERM_READ gate breaks Japanese Blue VC backing RAM' >&2
+  exit 1
+fi
 
 echo 'Blue Mewtwo audit: PASS'

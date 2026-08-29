@@ -11,11 +11,6 @@ pub fn is_memory_mapped(addr: u32) -> bool {
     unsafe { bindings::is_memory_mapped(addr) }
 }
 
-pub fn blue_stable_ptr(slot: u32) -> Option<u32> {
-    let ptr = unsafe { bindings::host_blue_stable_ptr(slot) };
-    (ptr != 0).then_some(ptr)
-}
-
 pub fn read_array<const SIZE: usize>(addr: u32) -> [u8; SIZE] {
     let mut out = [0; SIZE];
     unsafe {

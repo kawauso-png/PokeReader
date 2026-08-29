@@ -14,6 +14,7 @@ pub enum LoadedTitle {
     Us = 0x00040000001B5000,
     Um = 0x00040000001B5100,
     Transporter = 0x00040000000C9C00,
+    BlueJp = 0x0004000000170E00,
     CrystalEn = 0x0004000000172800,
     CrystalDe = 0x0004000000172B00,
     CrystalFr = 0x0004000000172E00,
@@ -35,10 +36,6 @@ pub enum TitleError {
 static mut LOADED: bool = false;
 static mut LOAD_RESULT: Result<LoadedTitle, TitleError> = Err(TitleError::InvalidTitle);
 
-// Older citra builds can't reliably report the game's version
-// via the fs sysmodule. For that environment we detect whether
-// the running game is the latest version by checking a known, unique
-// 16-byte value located at a fixed address in the game's memory.
 fn check_citra_title_version(addr: u32, expected: &'static [u8; 16], version: u16) -> UpdateInfo {
     let version_bytes = pnp::read_array::<16>(addr);
     let version = match &version_bytes == expected {
@@ -75,6 +72,10 @@ fn get_citra_title_version(title: LoadedTitle) -> UpdateInfo {
             version: 5,
             debug_info: None,
         },
+        LoadedTitle::BlueJp => UpdateInfo {
+            version: 1056,
+            debug_info: None,
+        },
         LoadedTitle::CrystalEn
         | LoadedTitle::CrystalDe
         | LoadedTitle::CrystalFr
@@ -99,8 +100,6 @@ fn get_update_version(title: LoadedTitle) -> UpdateInfo {
 }
 
 pub fn loaded_title() -> &'static Result<LoadedTitle, TitleError> {
-    // Reader is single-threaded, so this is safe.
-    // Even then, title and update version will also always be the same values.
     unsafe {
         if LOADED {
             return &LOAD_RESULT;
@@ -127,6 +126,8 @@ pub fn loaded_title() -> &'static Result<LoadedTitle, TitleError> {
             | (LoadedTitle::X, 5)
             | (LoadedTitle::Y, 5)
             | (LoadedTitle::Transporter, 5)
+            | (LoadedTitle::BlueJp, 0)
+            | (LoadedTitle::BlueJp, 1056)
             | (LoadedTitle::CrystalEn, 0)
             | (LoadedTitle::CrystalDe, 0)
             | (LoadedTitle::CrystalFr, 0)

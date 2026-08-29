@@ -14,6 +14,7 @@ extern "C" {
     pub fn pa_from_va_ptr(ptr: u32) -> u32;
     pub fn is_citra() -> bool;
     pub fn is_memory_mapped(addr: u32) -> bool;
+    pub fn host_blue_stable_ptr(slot: u32) -> u32;
     pub fn host_blue_fixed_run_id() -> u32;
     pub fn host_blue_fixed_state() -> u32;
 }
@@ -50,6 +51,8 @@ pub mod test_stubs {
     pub extern "C" fn is_citra() -> bool { false }
     #[no_mangle]
     pub extern "C" fn is_memory_mapped(_addr: u32) -> bool { true }
+    #[no_mangle]
+    pub extern "C" fn host_blue_stable_ptr(_slot: u32) -> u32 { 0 }
     #[no_mangle]
     pub extern "C" fn host_blue_fixed_run_id() -> u32 { 0 }
     #[no_mangle]

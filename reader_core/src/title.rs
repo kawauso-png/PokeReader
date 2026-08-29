@@ -126,7 +126,11 @@ pub fn loaded_title() -> &'static Result<LoadedTitle, TitleError> {
             | (LoadedTitle::X, 5)
             | (LoadedTitle::Y, 5)
             | (LoadedTitle::Transporter, 5)
+            // Japanese VC Blue on the user's real 3DS reports remaster/update
+            // version 1. Keep 0 for older hardware-path builds and 1056 for the
+            // Citra compatibility path already used by this project.
             | (LoadedTitle::BlueJp, 0)
+            | (LoadedTitle::BlueJp, 1)
             | (LoadedTitle::BlueJp, 1056)
             | (LoadedTitle::CrystalEn, 0)
             | (LoadedTitle::CrystalDe, 0)

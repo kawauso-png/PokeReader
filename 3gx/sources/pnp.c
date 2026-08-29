@@ -68,7 +68,7 @@ void host_print(u32 ptr, u32 size, u32 color)
   {
     u32 copy_size = (size < print_max_len - 1) ? size : print_max_len - 1;
     memcpy(print_buffer[buffer_index], (char *)ptr, copy_size);
-    print_buffer[buffer_index][copy_size] = '\0'; // Null-terminate the string
+    print_buffer[buffer_index][copy_size] = '\0';
     print_buffer_color[buffer_index] = color;
     buffer_index++;
   }
@@ -120,35 +120,42 @@ u64 host_game_start_ms()
 u32 trampoline_addr = 0;
 u32 route_hook_addr = 0;
 
-void set_trampoline_addr(u32 trampoline) {
-  trampoline_addr = trampoline;
-}
+void set_trampoline_addr(u32 trampoline) { trampoline_addr = trampoline; }
+u32 get_trampoline_addr() { return trampoline_addr; }
+void set_route_hook_addr(u32 route_hook) { route_hook_addr = route_hook; }
+u32 get_route_hook_addr() { return route_hook_addr; }
+u32 pa_from_va_ptr(u32 addr) { return (u32)PA_FROM_VA_PTR(addr); }
 
-u32 get_trampoline_addr() {
-  return trampoline_addr;
-}
-
-void set_route_hook_addr(u32 route_hook) {
-  route_hook_addr = route_hook;
-}
-
-u32 get_route_hook_addr() {
-  return route_hook_addr;
-}
-
-u32 pa_from_va_ptr(u32 addr) {
-  return (u32)PA_FROM_VA_PTR(addr);
-}
-
-bool is_citra() {
+bool is_citra()
+{
   s64 out = 0;
   svcGetSystemInfo(&out, 0x20000, 0);
   return out != 0;
 }
 
-bool is_memory_mapped(u32 addr) {
+bool is_memory_mapped(u32 addr)
+{
+  if (addr == 0)
+  {
+    return false;
+  }
+
   MemInfo info;
   PageInfo page;
   s32 result = svcQueryMemory(&info, &page, addr);
-  return result == 0;
+  if (result != 0)
+  {
+    return false;
+  }
+
+  // svcQueryMemory can successfully describe a FREE/RESERVED region.  A
+  // successful query alone therefore does not make a pointer safe to read.
+  if (info.state == MEMSTATE_FREE || (info.perm & MEMPERM_READ) == 0)
+  {
+    return false;
+  }
+
+  u64 start = info.base_addr;
+  u64 end = start + info.size;
+  return (u64)addr >= start && (u64)addr < end;
 }

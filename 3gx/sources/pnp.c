@@ -39,26 +39,17 @@ void reset_print()
 
 void draw_to_screen(u32 screenId, u8 *framebuffer, u32 stride, u32 format)
 {
-  if (buffer_index == 0)
-  {
-    return;
-  }
-
+  if (buffer_index == 0) return;
   ovDrawTranspartBlackRect((u32)framebuffer, stride, format, print_y, print_x, buffer_index * 12 + 4, print_max_len * 8 + 8, 1);
-
   print_x += 4;
   print_y += 4;
-
   for (u32 i = 0; i < buffer_index; i++)
   {
     u32 color = print_buffer_color[i];
-    u32 red = (color >> 16) & 0xff;
-    u32 green = (color >> 8) & 0xff;
-    u32 blue = color & 0xff;
-    ovDrawString((u32)framebuffer, stride, format, SCREEN_WIDTH, print_y, print_x, red, green, blue, print_buffer[i]);
+    ovDrawString((u32)framebuffer, stride, format, SCREEN_WIDTH, print_y, print_x,
+      (color >> 16) & 0xff, (color >> 8) & 0xff, color & 0xff, print_buffer[i]);
     print_y += 12;
   }
-
   reset_print();
 }
 
@@ -74,21 +65,10 @@ void host_print(u32 ptr, u32 size, u32 color)
   }
 }
 
-void host_read_mem(u32 game_addr, u32 size, u32 out_ptr)
-{
-  memcpy((void *)out_ptr, (void *)game_addr, size);
-}
+void host_read_mem(u32 game_addr, u32 size, u32 out_ptr) { memcpy((void *)out_ptr, (void *)game_addr, size); }
+void host_write_mem(u32 game_addr, u32 size, u32 in_ptr) { memcpy((void *)game_addr, (void *)in_ptr, size); }
 
-void host_write_mem(u32 game_addr, u32 size, u32 in_ptr)
-{
-  memcpy((void *)game_addr, (void *)in_ptr, size);
-}
-
-u32 host_just_pressed()
-{
-  return (get_previous_keys() ^ 0xffffffff) & get_current_keys();
-}
-
+u32 host_just_pressed() { return (get_previous_keys() ^ 0xffffffff) & get_current_keys(); }
 u32 host_is_just_pressed(u32 io_bits)
 {
   u32 just_pressed = host_just_pressed();
@@ -102,24 +82,12 @@ void host_set_print_max_len(u32 max_len)
   print_max_len = max_len_with_terminator > MAX_LINE_LENGTH ? MAX_LINE_LENGTH : max_len_with_terminator;
 }
 
-u64 host_get_game_title_id()
-{
-  return get_title_id();
-}
-
-void set_game_start_ms(u64 ms)
-{
-  game_start_ms = ms;
-}
-
-u64 host_game_start_ms()
-{
-  return game_start_ms;
-}
+u64 host_get_game_title_id() { return get_title_id(); }
+void set_game_start_ms(u64 ms) { game_start_ms = ms; }
+u64 host_game_start_ms() { return game_start_ms; }
 
 u32 trampoline_addr = 0;
 u32 route_hook_addr = 0;
-
 void set_trampoline_addr(u32 trampoline) { trampoline_addr = trampoline; }
 u32 get_trampoline_addr() { return trampoline_addr; }
 void set_route_hook_addr(u32 route_hook) { route_hook_addr = route_hook; }
@@ -135,30 +103,13 @@ bool is_citra()
 
 bool is_memory_mapped(u32 addr)
 {
-  if (addr == 0)
-  {
-    return false;
-  }
-
+  if (addr == 0) return false;
   MemInfo info;
   PageInfo page;
   s32 result = svcQueryMemory(&info, &page, addr);
-  if (result != 0)
-  {
-    return false;
-  }
-
-  // Nintendo's GB VC backing mappings can be directly readable by the current
-  // process even when svcQueryMemory does not advertise MEMPERM_READ in the
-  // conventional way.  Japanese Blue hardware already validated direct reads
-  // from these regions.  Keep the important FREE-region guard, but do not use
-  // the permission bit as a false-negative gate for VC emulator backing RAM.
-  if (info.state == MEMSTATE_FREE || info.size == 0)
-  {
-    return false;
-  }
-
-  u64 start = info.base_addr;
-  u64 end = start + info.size;
-  return (u64)addr >= start && (u64)addr < end;
+  // Match the exact semantics used by the Japanese Blue build that was
+  // validated on real hardware.  The VC emulator backing addresses are
+  // directly readable even though state/permission metadata is not reliable
+  // enough to classify them here.
+  return result == 0;
 }

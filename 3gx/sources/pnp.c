@@ -99,11 +99,39 @@ void host_print(u32 ptr, u32 size, u32 color)
   }
 }
 
+static char blue_ptr_label(u32 slot)
+{
+  if (slot == BLUE_WRAM_PTR_SLOT) return 'W';
+  if (slot == BLUE_HRAM_PTR_SLOT) return 'H';
+  if (slot == BLUE_DIV_PTR_SLOT) return 'D';
+  return '?';
+}
+
+static void blue_print_raw_ptr_diag(u32 slot, u32 candidate)
+{
+  bool range_ok = candidate >= BLUE_VC_BACKING_MIN && candidate < BLUE_VC_BACKING_MAX;
+  bool query_ok = range_ok && query_resolves(candidate);
+  char line[32];
+  int len = snprintf(line, sizeof(line), "RAW %c %08lX R%d Q%d",
+                     blue_ptr_label(slot), (unsigned long)candidate,
+                     range_ok ? 1 : 0, query_ok ? 1 : 0);
+  if (len > 0)
+  {
+    host_print((u32)line, (u32)len, 0xFFFFFF);
+  }
+}
+
 void host_read_mem(u32 game_addr, u32 size, u32 out_ptr)
 {
   if (get_title_id() == BLUE_JP_TITLE_ID && size == sizeof(u32) &&
       (game_addr == BLUE_WRAM_PTR_SLOT || game_addr == BLUE_HRAM_PTR_SLOT || game_addr == BLUE_DIV_PTR_SLOT))
   {
+    // Diagnostic read is limited to the three fixed 0x0022xxxx pointer slots.
+    // The candidate is only displayed and classified; it is never dereferenced
+    // unless host_blue_stable_ptr() independently validates and stabilizes it.
+    u32 candidate = *(vu32 *)game_addr;
+    blue_print_raw_ptr_diag(game_addr, candidate);
+
     // Never expose a raw VC backing pointer to Rust until the fixed slot has
     // produced the same valid candidate on two separate snapshot reads.
     // Returning zero makes resolve_ptr_slot() stop at mapped(0)==false, so no
@@ -218,9 +246,9 @@ u32 host_blue_stable_ptr(u32 slot)
     return 0;
   }
 
-  // This is the only raw pointer-slot read. The slot is one of three fixed,
-  // hardware-validated 0x0022xxxx addresses; the candidate itself is not
-  // dereferenced here.
+  // This is the only raw pointer-slot read used for stabilization. The slot is
+  // one of three fixed, hardware-validated 0x0022xxxx addresses; the candidate
+  // itself is not dereferenced here.
   u32 candidate = *(vu32 *)slot;
   if (candidate < BLUE_VC_BACKING_MIN || candidate >= BLUE_VC_BACKING_MAX || !query_resolves(candidate))
   {

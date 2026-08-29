@@ -19,8 +19,9 @@ need() {
 }
 
 need "$TITLE" 'BlueJp = 0x0004000000170E00' 'Blue title id missing'
-need "$TITLE" '(LoadedTitle::BlueJp, 0)' 'Blue hardware version 0 missing'
-need "$TITLE" '(LoadedTitle::BlueJp, 1056)' 'Blue remaster 1056 missing'
+need "$TITLE" '(LoadedTitle::BlueJp, 0)' 'Blue legacy hardware version 0 missing'
+need "$TITLE" '(LoadedTitle::BlueJp, 1)' 'Blue real-hardware update version 1 missing'
+need "$TITLE" '(LoadedTitle::BlueJp, 1056)' 'Blue Citra remaster 1056 missing'
 need "$LIB" 'LoadedTitle::BlueJp => gen1::init_blue()' 'Blue initialize route missing'
 need "$LIB" 'LoadedTitle::BlueJp => gen1::run_frame()' 'Blue per-frame route missing'
 need "$PLG" '0x00170E00' 'Blue 3GX target missing'

@@ -64,16 +64,15 @@ if grep -Fq 'last_valid_2f_a' "$GEN1"; then
   exit 1
 fi
 
-# Do not reinterpret svcQueryMemory metadata for GB VC backing RAM. The exact
-# result==0 semantics below are the semantics already validated on Japanese Blue
-# real hardware. Pointer values are still required to be non-zero in mapped().
-need "$PNP" 'return result == 0;' 'hardware-validated svcQueryMemory semantics changed'
+# Blue startup must reject arbitrary uninitialized pointer values, while still
+# accepting the VC backing range repeatedly observed on hardware (08BA/08BB...).
+need "$PNP" '#define BLUE_VC_BACKING_MIN 0x08000000u' 'Blue VC backing lower bound missing'
+need "$PNP" '#define BLUE_VC_BACKING_MAX 0x09000000u' 'Blue VC backing upper bound missing'
+need "$PNP" 'addr >= BLUE_VC_BACKING_MIN && addr < BLUE_VC_BACKING_MAX' 'Blue VC backing whitelist unused'
+need "$PNP" 'addr < BLUE_HOST_STATE_MIN || addr >= BLUE_HOST_STATE_MAX' 'arbitrary Blue pointers are not rejected'
+need "$PNP" 'return result == 0;' 'fixed host-state query semantics changed'
 if grep -Fq 'MEMPERM_READ' "$PNP"; then
   echo 'AUDIT FAIL: MEMPERM_READ gate breaks Japanese Blue VC backing RAM' >&2
-  exit 1
-fi
-if grep -Fq 'info.state == MEMSTATE_FREE' "$PNP"; then
-  echo 'AUDIT FAIL: MEMSTATE classification breaks validated Blue VC backing RAM' >&2
   exit 1
 fi
 

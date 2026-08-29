@@ -131,6 +131,7 @@ pub fn print_title() {
             LoadedTitle::Or => pnp::println!(color = 0xFF4433, " Pokemon Omega Ruby"),
             LoadedTitle::As => pnp::println!(color = 0x0000ff, " Pokemon Alpha Sapphire"),
             LoadedTitle::Transporter => pnp::println!(color = 0xd7ff00, " Pokemon Transporter"),
+            LoadedTitle::BlueJp => pnp::println!(color = 0x005fff, " Pokemon Blue JP"),
             LoadedTitle::CrystalEn
             | LoadedTitle::CrystalDe
             | LoadedTitle::CrystalFr
@@ -213,13 +214,11 @@ pub fn draw_pkx(pkx: &impl Pkx, pkx_type: PkxType) {
     pnp::println!("PID: {:08X}", pkx.pid());
     pnp::println!(color = shiny_color, "PSV: {:04}, {}", pkx.psv(), shiny_type);
     if pkx_type == PkxType::Tame {
-        // Friendship will always be zero for wild pokemon and does not fit
         pnp::println!("Friendship: {}", pkx.current_friendship());
     }
     pnp::println!("");
     pnp::println!("HPower: {}", pkx.hidden_power_t());
     if pkx_type == PkxType::Wild {
-        // PP does not matter for Party/Box view as you can just summary
         print_pp(get_pp(pkx));
     }
     print_stat!(iv_hp, ev_hp, Hp, &nature_stat, "HP ");

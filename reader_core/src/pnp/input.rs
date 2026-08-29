@@ -37,31 +37,14 @@ impl PartialEq<u32> for Button {
 
 impl BitAnd<Button> for u32 {
     type Output = u32;
-
-    fn bitand(self, rhs: Button) -> Self::Output {
-        self & (rhs as u32)
-    }
+    fn bitand(self, rhs: Button) -> Self::Output { self & (rhs as u32) }
 }
 
 impl BitOr for Button {
     type Output = u32;
-
-    fn bitor(self, rhs: Self) -> Self::Output {
-        (self as u32) | (rhs as u32)
-    }
+    fn bitor(self, rhs: Self) -> Self::Output { (self as u32) | (rhs as u32) }
 }
 
-/// Check if buttons were just pressed.
-/// Convenient for one time checks.
-///
-/// # Examples
-/// ```
-/// use pnp::{Button, is_just_pressed};
-///
-/// if is_just_pressed(Button::Dup | Button::Ddown) {
-///   // Do something
-/// }
-/// ```
 pub fn is_just_pressed(io_bits: impl Into<u32>) -> bool {
     let is_pressed = unsafe { bindings::host_is_just_pressed(io_bits.into()) };
     is_pressed != 0
@@ -70,4 +53,51 @@ pub fn is_just_pressed(io_bits: impl Into<u32>) -> bool {
 pub fn is_pressing(io_bits: impl Into<u32>) -> bool {
     let current_keys = unsafe { bindings::get_current_keys() };
     (current_keys & io_bits.into()) != 0
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BlueFixedState {
+    pub remaining: u8,
+    pub pending: bool,
+    pub wait_a_release: bool,
+    pub physical_a: bool,
+    pub paused: bool,
+    pub error: u8,
+}
+
+pub fn blue_fixed_run_id() -> u32 {
+    unsafe { bindings::host_blue_fixed_run_id() }
+}
+
+pub fn blue_fixed_state() -> BlueFixedState {
+    let raw = unsafe { bindings::host_blue_fixed_state() };
+    BlueFixedState {
+        remaining: (raw & 0x7) as u8,
+        pending: raw & (1 << 3) != 0,
+        wait_a_release: raw & (1 << 4) != 0,
+        physical_a: raw & (1 << 5) != 0,
+        paused: raw & (1 << 6) != 0,
+        error: ((raw >> 8) & 0xF) as u8,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blue_state_layout_is_stable() {
+        let raw = 2 | (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6) | (3 << 8);
+        let s = BlueFixedState {
+            remaining: (raw & 0x7) as u8,
+            pending: raw & (1 << 3) != 0,
+            wait_a_release: raw & (1 << 4) != 0,
+            physical_a: raw & (1 << 5) != 0,
+            paused: raw & (1 << 6) != 0,
+            error: ((raw >> 8) & 0xF) as u8,
+        };
+        assert_eq!(s.remaining, 2);
+        assert!(s.pending && s.wait_a_release && s.physical_a && s.paused);
+        assert_eq!(s.error, 3);
+    }
 }

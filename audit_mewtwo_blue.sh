@@ -64,12 +64,16 @@ if grep -Fq 'last_valid_2f_a' "$GEN1"; then
   exit 1
 fi
 
-# Real Japanese Blue hardware proved that Nintendo GB VC backing RAM is directly
-# readable even when svcQueryMemory permission flags are not conventional.
-# Reject FREE regions, but never reintroduce MEMPERM_READ as a false-negative gate.
-need "$PNP" 'info.state == MEMSTATE_FREE' 'FREE memory not rejected'
-if grep -Fq 'info.perm & MEMPERM_READ' "$PNP"; then
+# Do not reinterpret svcQueryMemory metadata for GB VC backing RAM. The exact
+# result==0 semantics below are the semantics already validated on Japanese Blue
+# real hardware. Pointer values are still required to be non-zero in mapped().
+need "$PNP" 'return result == 0;' 'hardware-validated svcQueryMemory semantics changed'
+if grep -Fq 'MEMPERM_READ' "$PNP"; then
   echo 'AUDIT FAIL: MEMPERM_READ gate breaks Japanese Blue VC backing RAM' >&2
+  exit 1
+fi
+if grep -Fq 'info.state == MEMSTATE_FREE' "$PNP"; then
+  echo 'AUDIT FAIL: MEMSTATE classification breaks validated Blue VC backing RAM' >&2
   exit 1
 fi
 

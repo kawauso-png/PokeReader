@@ -1,4 +1,4 @@
-use crate::pnp::{self, Button};
+use crate::pnp;
 
 pub const BLUE_JP_TITLE_ID: u64 = 0x0004_0000_0017_0E00;
 
@@ -19,16 +19,19 @@ const W_ENEMY_LEVEL: u16 = 0xCFDA;
 
 const MEWTWO_INTERNAL_ID: u8 = 0x83;
 const MEWTWO_LEVEL: u8 = 70;
-const MAX_A_TO_BATTLE_HOST_FRAMES: u32 = 120;
+const MAX_TARGET_TO_BATTLE_FRAMES: u32 = 180;
+const DV_MIN_BATTLE_AGE: u8 = 3;
+const DV_STABLE_COUNT: u8 = 2;
 
 const WHITE: u32 = 0xFFFFFF;
 const GREEN: u32 = 0x00CC00;
 const RED: u32 = 0xFF0000;
 const BLUE: u32 = 0x005FFF;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 struct Snapshot {
     wram_base: Option<u32>,
+    hram_base: Option<u32>,
     div_host: Option<u32>,
     pc: Option<u16>,
     div: Option<u8>,
@@ -45,7 +48,14 @@ struct Snapshot {
 
 impl Snapshot {
     fn pointer_ok(&self) -> bool {
-        self.wram_base.is_some() && self.div_host.is_some()
+        self.wram_base.is_some()
+            && self.hram_base.is_some()
+            && self.div_host.is_some()
+            && self.pc.is_some()
+            && self.random_add.is_some()
+            && self.random_sub.is_some()
+            && self.frame_counter.is_some()
+            && self.div.is_some()
     }
 
     fn is_mewtwo_battle(&self) -> bool {
@@ -60,38 +70,86 @@ impl Snapshot {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 struct Sample {
     host_frame: u32,
     snapshot: Snapshot,
 }
 
-#[derive(Clone, Copy)]
-struct CalResult {
-    trigger_a: Sample,
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+struct TrialResult {
+    run_id: u32,
+    target: Sample,
     battle: Sample,
 }
 
-struct CalState {
-    host_frame: u32,
-    a_pending: Option<Sample>,
-    last_valid_2f_a: Option<Sample>,
-    result: Option<CalResult>,
-    was_mewtwo_battle: bool,
-    one_frame_rejected: u32,
-    two_frame_valid: u32,
-    battle_without_valid_a: bool,
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+struct DvStability {
+    battle_age: u8,
+    last_raw: Option<u16>,
+    same_count: u8,
 }
 
-static mut CAL_STATE: CalState = CalState {
+impl DvStability {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn observe(&mut self, in_mewtwo_battle: bool, raw: Option<u16>) -> bool {
+        if !in_mewtwo_battle {
+            self.reset();
+            return false;
+        }
+
+        self.battle_age = self.battle_age.saturating_add(1);
+        let Some(raw) = raw else {
+            self.last_raw = None;
+            self.same_count = 0;
+            return false;
+        };
+
+        if self.last_raw == Some(raw) {
+            self.same_count = self.same_count.saturating_add(1);
+        } else {
+            self.last_raw = Some(raw);
+            self.same_count = 1;
+        }
+
+        self.battle_age >= DV_MIN_BATTLE_AGE && self.same_count >= DV_STABLE_COUNT
+    }
+}
+
+#[derive(Clone, Copy, Default)]
+struct TrialState {
+    host_frame: u32,
+    run_id: u32,
+    target: Option<Sample>,
+    result: Option<TrialResult>,
+    stability: DvStability,
+    expired: bool,
+}
+
+impl TrialState {
+    fn begin(&mut self, run_id: u32, target: Sample) {
+        self.run_id = run_id;
+        self.target = Some(target);
+        self.result = None;
+        self.stability.reset();
+        self.expired = false;
+    }
+}
+
+static mut STATE: TrialState = TrialState {
     host_frame: 0,
-    a_pending: None,
-    last_valid_2f_a: None,
+    run_id: 0,
+    target: None,
     result: None,
-    was_mewtwo_battle: false,
-    one_frame_rejected: 0,
-    two_frame_valid: 0,
-    battle_without_valid_a: false,
+    stability: DvStability {
+        battle_age: 0,
+        last_raw: None,
+        same_count: 0,
+    },
+    expired: false,
 };
 
 pub fn init_blue() {}
@@ -147,6 +205,7 @@ fn snapshot() -> Snapshot {
 
     Snapshot {
         wram_base,
+        hram_base,
         div_host,
         pc: read_host_u16(PC_REG_ADDR),
         div: div_host.and_then(read_host_u8),
@@ -160,6 +219,28 @@ fn snapshot() -> Snapshot {
         dv_atk_def: read_wram_u8(wram_base, W_ENEMY_DV_ATK_DEF),
         dv_spe_spc: read_wram_u8(wram_base, W_ENEMY_DV_SPE_SPC),
     }
+}
+
+#[no_mangle]
+pub extern "C" fn blue_capture_target(run_id: u32) -> u32 {
+    if pnp::title_id() != BLUE_JP_TITLE_ID {
+        return 0;
+    }
+
+    let snap = snapshot();
+    if !snap.pointer_ok() {
+        return 0;
+    }
+
+    unsafe {
+        let state = &mut STATE;
+        let target = Sample {
+            host_frame: state.host_frame,
+            snapshot: snap,
+        };
+        state.begin(run_id, target);
+    }
+    1
 }
 
 fn shiny_from_raw(raw: u16) -> bool {
@@ -177,20 +258,20 @@ fn draw_sample(label: &str, sample: Sample) {
     let s = sample.snapshot;
     match (s.random_add, s.random_sub, s.frame_counter, s.div, s.pc) {
         (Some(a), Some(sub), Some(f), Some(d), Some(pc)) => {
-            pnp::println!("{} H{} R{:02X}{:02X}", label, sample.host_frame, a, sub);
-            pnp::println!("  F{:02X} D{:02X} PC{:04X}", f, d, pc);
+            pnp::println!("{} R{:02X}{:02X} F{:02X}", label, a, sub, f);
+            pnp::println!(" D{:02X} PC{:04X}", d, pc);
         }
         _ => pnp::println!(color = RED, "{} snapshot incomplete", label),
     }
 }
 
-fn draw_result(result: CalResult) {
+fn draw_result(result: TrialResult) {
     match result.battle.snapshot.raw_dv() {
         Some(raw) => {
             let shiny = shiny_from_raw(raw);
             pnp::println!(
                 color = if shiny { GREEN } else { WHITE },
-                "RESULT RAW {:04X} {}",
+                "ACT {:04X} {}",
                 raw,
                 if shiny { "SHINY" } else { "normal" }
             );
@@ -202,69 +283,70 @@ fn draw_result(result: CalResult) {
                 raw & 0xF
             );
         }
-        None => pnp::println!(color = RED, "RESULT RAW ----"),
+        None => pnp::println!(color = RED, "ACT ----"),
     }
-    draw_sample("A2F", result.trigger_a);
-    draw_sample("B", result.battle);
-    pnp::println!(
-        "Delta H{}",
-        result
-            .battle
-            .host_frame
-            .wrapping_sub(result.trigger_a.host_frame)
-    );
+    draw_sample("TARGET", result.target);
+    draw_sample("BATTLE", result.battle);
 }
 
-fn draw(state: &CalState, current: &Snapshot) {
-    pnp::println!(color = BLUE, "JP Blue / Mewtwo RESIDUAL v2");
-    pnp::println!("HostF {}", state.host_frame);
-    match current.wram_base {
-        Some(v) => pnp::println!("C000 {:08X}", v),
-        None => pnp::println!(color = RED, "C000 --------"),
+fn fixed_status_text(f: pnp::BlueFixedState) -> &'static str {
+    if f.error != 0 {
+        return "ERROR";
     }
-    match current.div_host {
-        Some(v) => pnp::println!("FF04 {:08X}", v),
-        None => pnp::println!(color = RED, "FF04 --------"),
+    if f.pending {
+        return "WAIT MOD RELEASE";
     }
+    if f.remaining != 0 {
+        return "RUN 2F";
+    }
+    if f.wait_a_release {
+        return "RELEASE A";
+    }
+    if f.paused {
+        return "PAUSED";
+    }
+    "LIVE"
+}
+
+fn draw(state: &TrialState, current: &Snapshot) {
+    let fixed = pnp::blue_fixed_state();
+    pnp::println!(color = BLUE, "JP Blue Mewtwo AUDITED");
+    pnp::println!("HostF {} Run {}", state.host_frame, pnp::blue_fixed_run_id());
     pnp::println!(
         color = if current.pointer_ok() { GREEN } else { RED },
         "PTR {}",
-        if current.pointer_ok() { "OK" } else { "CHECK" }
+        if current.pointer_ok() { "OK" } else { "WAIT" }
     );
-    match (
-        current.random_add,
-        current.random_sub,
-        current.frame_counter,
-        current.div,
-    ) {
-        (Some(a), Some(s), Some(f), Some(d)) => {
-            pnp::println!("NOW R{:02X}{:02X} F{:02X} D{:02X}", a, s, f, d)
-        }
+    match (current.random_add, current.random_sub, current.frame_counter, current.div) {
+        (Some(a), Some(s), Some(f), Some(d)) => pnp::println!("NOW R{:02X}{:02X} F{:02X} D{:02X}", a, s, f, d),
         _ => pnp::println!(color = RED, "NOW R---- F-- D--"),
     }
-    pnp::println!("2F valid {} / 1F reject {}", state.two_frame_valid, state.one_frame_rejected);
-    pnp::println!("");
+    pnp::println!("2F {} rem{}", fixed_status_text(fixed), fixed.remaining);
+    if fixed.error != 0 {
+        pnp::println!(color = RED, "2F error {} (B clears)", fixed.error);
+    }
 
     if let Some(result) = state.result {
         draw_result(result);
-        pnp::println!("Locked; retry same protocol");
+        pnp::println!(color = GREEN, "LOCK run {} stable", result.run_id);
         return;
     }
 
-    if let Some(pending) = state.a_pending {
-        pnp::println!("A started H{}", pending.host_frame);
-        pnp::println!("KEEP A for frame 2");
-    } else if let Some(valid) = state.last_valid_2f_a {
-        pnp::println!(color = GREEN, "A 2F VALID");
-        draw_sample("A2F", valid);
-        pnp::println!("Hands off; waiting battle");
-    } else if state.battle_without_valid_a {
-        pnp::println!(color = RED, "BATTLE: no valid 2F A");
+    if state.expired {
+        pnp::println!(color = RED, "Trial expired; arm again");
+    } else if let Some(target) = state.target {
+        draw_sample("TARGET", target);
+        if state.stability.battle_age != 0 {
+            pnp::println!("DV settle {}/{} age{}", state.stability.same_count, DV_STABLE_COUNT, state.stability.battle_age);
+        } else {
+            pnp::println!("Run {} armed", state.run_id);
+        }
     } else {
-        pnp::println!(color = GREEN, "READY: final A must be 2F");
+        pnp::println!("L+R pause");
+        pnp::println!("Hold A+Y, tap L");
+        pnp::println!("Release Y/L; keep A");
+        pnp::println!("After 2F release A, R");
     }
-
-    pnp::println!("1F A is rejected by design");
 }
 
 pub fn run_frame() {
@@ -272,60 +354,35 @@ pub fn run_frame() {
     let current = snapshot();
 
     unsafe {
-        let state = &mut CAL_STATE;
+        let state = &mut STATE;
         state.host_frame = state.host_frame.wrapping_add(1);
-        let in_battle = current.is_mewtwo_battle();
 
-        // Hardware result: a 1F A pulse can be missed by the GB side, while
-        // keeping A through the second host frame was recognized.  Preserve the
-        // snapshot from frame 1, but only promote it after frame 2 still sees A.
-        if !in_battle && pnp::is_just_pressed(Button::A) {
-            state.a_pending = Some(Sample {
-                host_frame: state.host_frame,
-                snapshot: current,
-            });
-            state.result = None;
-            state.battle_without_valid_a = false;
-        } else if !in_battle {
-            if let Some(start) = state.a_pending {
-                if state.host_frame == start.host_frame.wrapping_add(1) {
-                    if pnp::is_pressing(Button::A) {
-                        state.last_valid_2f_a = Some(start);
-                        state.two_frame_valid = state.two_frame_valid.wrapping_add(1);
-                    } else {
-                        state.last_valid_2f_a = None;
-                        state.one_frame_rejected = state.one_frame_rejected.wrapping_add(1);
+        if state.result.is_none() {
+            if let Some(target) = state.target {
+                let elapsed = state.host_frame.wrapping_sub(target.host_frame);
+                if elapsed > MAX_TARGET_TO_BATTLE_FRAMES {
+                    state.target = None;
+                    state.stability.reset();
+                    state.expired = true;
+                } else {
+                    let in_battle = current.is_mewtwo_battle();
+                    let stable = state.stability.observe(in_battle, current.raw_dv());
+                    if stable {
+                        state.result = Some(TrialResult {
+                            run_id: state.run_id,
+                            target,
+                            battle: Sample {
+                                host_frame: state.host_frame,
+                                snapshot: current,
+                            },
+                        });
                     }
-                    state.a_pending = None;
-                } else if state.host_frame.wrapping_sub(start.host_frame) > 1 {
-                    state.a_pending = None;
                 }
+            } else {
+                state.stability.reset();
             }
         }
 
-        if in_battle && !state.was_mewtwo_battle {
-            let battle = Sample {
-                host_frame: state.host_frame,
-                snapshot: current,
-            };
-            match state.last_valid_2f_a {
-                Some(trigger_a)
-                    if battle
-                        .host_frame
-                        .wrapping_sub(trigger_a.host_frame)
-                        <= MAX_A_TO_BATTLE_HOST_FRAMES =>
-                {
-                    state.result = Some(CalResult { trigger_a, battle });
-                    state.battle_without_valid_a = false;
-                }
-                _ => {
-                    state.result = None;
-                    state.battle_without_valid_a = true;
-                }
-            }
-        }
-
-        state.was_mewtwo_battle = in_battle;
         draw(state, &current);
     }
 }
@@ -342,5 +399,46 @@ mod tests {
         assert!(!shiny_from_raw(0x1AAA));
         assert!(!shiny_from_raw(0x2BAA));
         assert!(!shiny_from_raw(0x2AAB));
+    }
+
+    #[test]
+    fn dv_requires_battle_age_and_stability() {
+        let mut d = DvStability::default();
+        assert!(!d.observe(true, Some(0x1234))); // age 1, count 1
+        assert!(!d.observe(true, Some(0x1234))); // age 2, count 2 but too early
+        assert!(d.observe(true, Some(0x1234)));  // age 3, stable
+    }
+
+    #[test]
+    fn dv_change_restarts_stability_count() {
+        let mut d = DvStability::default();
+        assert!(!d.observe(true, Some(0x1111)));
+        assert!(!d.observe(true, Some(0x2222)));
+        assert!(d.observe(true, Some(0x2222)));
+    }
+
+    #[test]
+    fn leaving_battle_resets_dv_stability() {
+        let mut d = DvStability::default();
+        assert!(!d.observe(true, Some(0x1111)));
+        assert!(!d.observe(false, None));
+        assert_eq!(d, DvStability::default());
+    }
+
+    #[test]
+    fn new_run_clears_previous_result_and_expiry() {
+        let mut s = TrialState {
+            host_frame: 9,
+            run_id: 1,
+            target: None,
+            result: Some(TrialResult::default()),
+            stability: DvStability { battle_age: 9, last_raw: Some(1), same_count: 9 },
+            expired: true,
+        };
+        s.begin(7, Sample::default());
+        assert_eq!(s.run_id, 7);
+        assert!(s.result.is_none());
+        assert!(!s.expired);
+        assert_eq!(s.stability, DvStability::default());
     }
 }

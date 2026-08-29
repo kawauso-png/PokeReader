@@ -16,7 +16,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
       - name: Blue Mewtwo audit
-        run: python3 audit_mewtwo_blue.py
+        run: sh audit_mewtwo_blue.sh
       - name: Lint
         run: make lint
       - name: Test

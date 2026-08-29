@@ -64,7 +64,7 @@ if grep -Fq 'last_valid_2f_a' "$GEN1"; then
   exit 1
 fi
 
-# Japanese Blue has repeatedly produced VC backing addresses 08BAxxxx/08BBxxxx.
+# Japanese Blue previously produced VC backing addresses 08BAxxxx/08BBxxxx.
 # A raw pointer is never exposed to Rust until a fixed slot produces the same
 # valid candidate on two separate snapshot reads. Until then host_read_mem
 # returns zero, making resolve_ptr_slot stop before dereference.
@@ -77,11 +77,34 @@ need "$PNP" 'state->stable_samples >= BLUE_PTR_STABLE_SAMPLES ? candidate : 0' '
 need "$PNP" 'candidate < BLUE_VC_BACKING_MIN || candidate >= BLUE_VC_BACKING_MAX || !query_resolves(candidate)' 'candidate range/query validation missing'
 need "$PNP" 'return query_resolves(addr);' 'mapped reads do not require kernel query resolution'
 
-# Diagnostic output may inspect only the three fixed pointer slots. It must
-# print/classify the raw value before stabilization without dereferencing it.
+# Raw fixed-slot diagnostics: display/classify only; stabilization remains the
+# only path that can expose a candidate to Rust.
 need "$PNP" 'u32 candidate = *(vu32 *)game_addr;' 'safe fixed-slot diagnostic read missing'
 need "$PNP" 'blue_print_raw_ptr_diag(game_addr, candidate);' 'raw pointer diagnostic not emitted'
 need "$PNP" '"RAW %c %08lX R%d Q%d"' 'raw pointer diagnostic format changed'
+
+# Version-1 host-state discovery is deliberately observational. It scans only
+# 0x22F500-0x22F8FF (one already-used emulator-state page), recognizes broad
+# 0x08xxxxxx-looking VALUES, prints at most five source/value pairs, and never
+# uses those values as addresses or automatically changes W/H/D slot constants.
+need "$PNP" '#define BLUE_SCAN_MIN 0x0022F500u' 'bounded scan lower address missing'
+need "$PNP" '#define BLUE_SCAN_MAX 0x0022F900u' 'bounded scan upper address missing'
+need "$PNP" '#define BLUE_SCAN_VALUE_MIN 0x08000000u' 'scan candidate lower range missing'
+need "$PNP" '#define BLUE_SCAN_VALUE_MAX 0x09000000u' 'scan candidate upper range missing'
+need "$PNP" '#define BLUE_SCAN_MAX_PRINT 5u' 'scan output bound missing'
+need "$PNP" 'for (u32 addr = BLUE_SCAN_MIN; addr < BLUE_SCAN_MAX; addr += sizeof(u32))' 'bounded host-state scan loop missing'
+need "$PNP" 'u32 value = *(vu32 *)addr;' 'host-state word observation missing'
+need "$PNP" 'hit_addr[shown] = addr;' 'scan source address is not retained'
+need "$PNP" 'hit_value[shown] = value;' 'scan candidate value is not retained'
+need "$PNP" '"S %08lX > %08lX"' 'scan source/value display missing'
+need "$PNP" 'if (game_addr == BLUE_WRAM_PTR_SLOT)' 'scan is not limited to once per Snapshot'
+need "$PNP" 'blue_scan_host_state_ptrs();' 'host-state scan is not invoked'
+
+# The scanner must not auto-adopt a discovered slot. The historical slot
+# constants stay unchanged until hardware evidence identifies replacements.
+need "$PNP" '#define BLUE_WRAM_PTR_SLOT 0x0022F6C8u' 'W slot changed before validation'
+need "$PNP" '#define BLUE_HRAM_PTR_SLOT 0x0022F6D8u' 'H slot changed before validation'
+need "$PNP" '#define BLUE_DIV_PTR_SLOT  0x0022F794u' 'D slot changed before validation'
 
 if grep -Fq 'MEMPERM_READ' "$PNP"; then
   echo 'AUDIT FAIL: MEMPERM_READ gate breaks Japanese Blue VC backing RAM' >&2

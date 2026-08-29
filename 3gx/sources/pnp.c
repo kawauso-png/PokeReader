@@ -27,6 +27,23 @@ u64 game_start_ms = 0;
 #define BLUE_HOST_STATE_MAX 0x00400000u
 #define BLUE_VC_BACKING_MIN 0x08B00000u
 #define BLUE_VC_BACKING_MAX 0x08C00000u
+#define BLUE_WRAM_PTR_SLOT 0x0022F6C8u
+#define BLUE_HRAM_PTR_SLOT 0x0022F6D8u
+#define BLUE_DIV_PTR_SLOT  0x0022F794u
+#define BLUE_PTR_STABLE_SAMPLES 2u
+
+typedef struct
+{
+  u32 slot;
+  u32 last_candidate;
+  u32 stable_samples;
+} BlueStablePtr;
+
+static BlueStablePtr blue_stable_ptrs[] = {
+  { BLUE_WRAM_PTR_SLOT, 0, 0 },
+  { BLUE_HRAM_PTR_SLOT, 0, 0 },
+  { BLUE_DIV_PTR_SLOT,  0, 0 },
+};
 
 char print_buffer[MAX_LINES][MAX_LINE_LENGTH];
 u32 print_buffer_color[MAX_LINES];
@@ -138,6 +155,13 @@ bool is_citra()
   return out != 0;
 }
 
+static bool query_resolves(u32 addr)
+{
+  MemInfo info;
+  PageInfo page;
+  return svcQueryMemory(&info, &page, addr) == 0;
+}
+
 bool is_memory_mapped(u32 addr)
 {
   if (addr == 0)
@@ -147,9 +171,9 @@ bool is_memory_mapped(u32 addr)
 
   if (get_title_id() == BLUE_JP_TITLE_ID)
   {
-    // The fixed emulator state slots live at 0x0022xxxx.  VC backing pointers
-    // observed repeatedly on Japanese Blue live in 0x08Bxxxxx (e.g. 08BAEBA0
-    // and 08BB2C74).  Reject anything outside those two known host regions.
+    // The fixed emulator state slots live at 0x0022xxxx. VC backing pointers
+    // observed repeatedly on Japanese Blue live in 0x08Bxxxxx (for example
+    // 08BAEBA0 and 08BB2C74). Reject everything else before any dereference.
     if (!((addr >= BLUE_HOST_STATE_MIN && addr < BLUE_HOST_STATE_MAX) ||
           (addr >= BLUE_VC_BACKING_MIN && addr < BLUE_VC_BACKING_MAX)))
     {
@@ -157,11 +181,57 @@ bool is_memory_mapped(u32 addr)
     }
   }
 
-  // Even inside the Blue whitelist, require the kernel to resolve the address.
-  // Do not inspect state/permission metadata because that produced false
-  // negatives for valid GB VC backing RAM on real hardware.
-  MemInfo info;
-  PageInfo page;
-  s32 result = svcQueryMemory(&info, &page, addr);
-  return result == 0;
+  // Do not classify Nintendo GB VC backing memory by permission/state flags;
+  // those produced false negatives on hardware. Requiring the kernel query to
+  // resolve the whitelisted address is sufficient here.
+  return query_resolves(addr);
+}
+
+u32 host_blue_stable_ptr(u32 slot)
+{
+  if (get_title_id() != BLUE_JP_TITLE_ID)
+  {
+    return 0;
+  }
+
+  BlueStablePtr *state = NULL;
+  for (u32 i = 0; i < sizeof(blue_stable_ptrs) / sizeof(blue_stable_ptrs[0]); i++)
+  {
+    if (blue_stable_ptrs[i].slot == slot)
+    {
+      state = &blue_stable_ptrs[i];
+      break;
+    }
+  }
+
+  if (state == NULL || !query_resolves(slot))
+  {
+    return 0;
+  }
+
+  // The slot itself is a fixed, known emulator-state address. Read only that
+  // fixed location first; never dereference the value until it has passed the
+  // backing-range/query checks and remained identical for two frame samples.
+  u32 candidate = *(vu32 *)slot;
+  if (candidate < BLUE_VC_BACKING_MIN || candidate >= BLUE_VC_BACKING_MAX || !query_resolves(candidate))
+  {
+    state->last_candidate = 0;
+    state->stable_samples = 0;
+    return 0;
+  }
+
+  if (candidate == state->last_candidate)
+  {
+    if (state->stable_samples < BLUE_PTR_STABLE_SAMPLES)
+    {
+      state->stable_samples++;
+    }
+  }
+  else
+  {
+    state->last_candidate = candidate;
+    state->stable_samples = 1;
+  }
+
+  return state->stable_samples >= BLUE_PTR_STABLE_SAMPLES ? candidate : 0;
 }

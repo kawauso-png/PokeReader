@@ -148,9 +148,12 @@ bool is_memory_mapped(u32 addr)
     return false;
   }
 
-  // svcQueryMemory can successfully describe a FREE/RESERVED region.  A
-  // successful query alone therefore does not make a pointer safe to read.
-  if (info.state == MEMSTATE_FREE || (info.perm & MEMPERM_READ) == 0)
+  // Nintendo's GB VC backing mappings can be directly readable by the current
+  // process even when svcQueryMemory does not advertise MEMPERM_READ in the
+  // conventional way.  Japanese Blue hardware already validated direct reads
+  // from these regions.  Keep the important FREE-region guard, but do not use
+  // the permission bit as a false-negative gate for VC emulator backing RAM.
+  if (info.state == MEMSTATE_FREE || info.size == 0)
   {
     return false;
   }

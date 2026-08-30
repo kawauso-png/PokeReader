@@ -54,8 +54,10 @@ jobs:
         run: python3 fix_suicune_early_control_lab_v55_patch.py
       - name: Fix v5.5 detector insertion anchor
         run: python3 fix_suicune_early_control_lab_v55_patch2.py
-      - name: Use first record anchor for detector
+      - name: Configure detector match behavior
         run: python3 fix_suicune_early_control_lab_v55_patch3.py
+      - name: Anchor detector at unique Suicune result check
+        run: python3 fix_suicune_early_control_lab_v55_patch4.py
       - name: Apply Early Control Lab v5.5
         run: python3 apply_suicune_early_control_lab_v55.py
       - name: Verify v5.5 markers
@@ -65,6 +67,7 @@ jobs:
           grep -q "request_suicune_early_gate" reader_core/src/pnp/input.rs
           grep -q "EARLY,V55" reader_core/src/crystal/trace.rs
           grep -q "Lab E" reader_core/src/crystal/trace.rs
+          grep -q "let e = self.entries\[self.len - 1\]" reader_core/src/crystal/trace.rs
           grep -q "STARTSIG,V54" reader_core/src/crystal/trace.rs
           grep -q "SPH,V50" reader_core/src/crystal/trace.rs
           grep -q "RPH,V49" reader_core/src/crystal/trace.rs

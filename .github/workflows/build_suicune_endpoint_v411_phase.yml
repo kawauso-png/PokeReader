@@ -35,12 +35,17 @@ jobs:
       - name: Apply v4.1.1 F600 phase logger
         run: python3 apply_suicune_endpoint_v411_phase.py
 
+      - name: Apply original rDIV helper diagnostics
+        run: python3 apply_suicune_endpoint_v411_armret.py
+
       - name: Verify phase markers
         run: |
           grep -q "struct EndpointSnapshot" reader_core/src/crystal/trace.rs
           grep -q "CRYSTAL_PHASE_AUX_ADDR" reader_core/src/crystal/hook.rs
           grep -q "phase_aux_f600" reader_core/src/crystal/trace.rs
           grep -q "pub phase_aux: u32" reader_core/src/crystal/hook.rs
+          grep -q "GB_READ_HOOK_RET" reader_core/src/crystal/hook.rs
+          grep -q "ARM_GBREAD_TARGET" reader_core/src/crystal/trace.rs
           grep -q "wrapping_add(11)" reader_core/src/crystal/trace.rs
           grep -q "fixed_a_frames = 2;" 3gx/sources/main.c
 

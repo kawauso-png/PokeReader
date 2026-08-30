@@ -14,6 +14,7 @@
 #define HRAM_FRAME_OFF 0x55u
 
 #define FAST_MAX 256u
+#define FAST_STACK_SIZE 0x3000u
 
 typedef struct
 {
@@ -35,7 +36,8 @@ static volatile u32 fast_count = 0;
 static volatile u32 fast_dropped = 0;
 static volatile bool fast_active = false;
 static volatile bool fast_thread_ok = false;
-static Thread fast_thread = 0;
+static Handle fast_thread = 0;
+static u8 fast_stack[FAST_STACK_SIZE] __attribute__((aligned(8)));
 static u32 fast_hram = 0;
 static u32 fast_divp = 0;
 static u8 last_add = 0;
@@ -103,8 +105,14 @@ static void fast_sampler_main(void *arg)
             continue;
         }
 
-        /* Tight loop only during the ~9 GB-frame release->DV window. */
+        /*
+         * 3GX cannot use libctru threadCreate() without pulling APT runtime
+         * globals that do not exist in this plugin environment. This raw SVC
+         * thread runs only during the ~9 GB-frame release->DV window. A very
+         * short sleep gives the emulator time to execute between observations.
+         */
         capture_event(1u, false);
+        svcSleepThread(1000LL);
     }
 }
 
@@ -115,10 +123,9 @@ void host_blue_rngfast_init(void)
     if (get_title_id() != BLUE_JP_TITLE_ID)
         return;
 
-    fast_thread = threadCreate(fast_sampler_main, NULL, 0x3000, 0x3F, 1, true);
-    if (fast_thread == NULL)
-        fast_thread = threadCreate(fast_sampler_main, NULL, 0x3000, 0x3F, -2, true);
-    fast_thread_ok = fast_thread != NULL;
+    u32 *stack_top = (u32 *)(fast_stack + FAST_STACK_SIZE);
+    Result r = svcCreateThread(&fast_thread, fast_sampler_main, 0, stack_top, 0x2F, -2);
+    fast_thread_ok = R_SUCCEEDED(r);
 }
 
 u32 host_blue_rngfast_start(void)

@@ -3,13 +3,12 @@
 #include <string.h>
 
 /*
- * Blue Mewtwo v7.3.1 SAFE marker.
+ * Blue Mewtwo v7.3.2 SAFE phase marker.
  *
- * This deliberately does NOT create threads, install hooks, scan memory, or
- * perform file I/O while the Mewtwo transition is running. Rust calls mark()
- * on the already-validated GB-side hJoyHeld.A 1->0 transition. We only copy
- * values that blue_dvtrace.c has already sampled. After battle/CSV finalize,
- * append_csv() writes the marker as a tiny second CSV section.
+ * Critical-path rule: no threads, hooks, scans, sleeps or file I/O between
+ * GB-side A release and DV generation. mark() only copies values that the
+ * ordinary v7 trace already sampled. All phase classification metadata is
+ * supplied after battle, when the generated Mewtwo can no longer be changed.
  */
 
 extern u32 host_blue_dvtrace_seq(void);
@@ -52,7 +51,9 @@ static void write_bytes(Handle file, u64 *offset, const char *s, u32 len)
         *offset += written;
 }
 
-u32 host_blue_gbrelease_append_csv(u32 slot)
+u32 host_blue_gbrelease_append_csv(u32 slot, u32 pre_seq, u32 pre_rng,
+                                   u32 pre_div, u32 phase_offset,
+                                   u32 dvhigh_first_div)
 {
     if (slot == 0 || !gbrel_valid)
         return 0;
@@ -98,15 +99,26 @@ u32 host_blue_gbrelease_append_csv(u32 slot)
     u8 frame = (u8)(gbrel_rng & 0xFFu);
     u8 div = (u8)gbrel_div;
 
-    char line[256];
+    u8 pre_add = (u8)((pre_rng >> 16) & 0xFFu);
+    u8 pre_sub = (u8)((pre_rng >> 8) & 0xFFu);
+    u8 pre_frame = (u8)(pre_rng & 0xFFu);
+    bool known_phase = phase_offset == 90u || phase_offset == 91u || phase_offset == 94u;
+
+    char line[512];
     int n = snprintf(
         line, sizeof(line),
-        "\ngb_release_meta,seq,battle_seq,release_to_battle,rng_add,rng_sub,frame,div\n"
-        "GBREL,%lu,%lu,%lu,%02X,%02X,%02X,%02X\n",
+        "\ngb_release_meta,seq,battle_seq,release_to_battle,rng_add,rng_sub,frame,div,"
+        "pre_seq,pre_rng_add,pre_rng_sub,pre_frame,pre_div,dvhigh_first_div,phase_offset,phase_known\n"
+        "GBREL,%lu,%lu,%lu,%02X,%02X,%02X,%02X,%lu,%02X,%02X,%02X,%02X,%02X,%lu,%u\n",
         (unsigned long)gbrel_seq,
         (unsigned long)battle_seq,
         (unsigned long)delta,
-        add, sub, frame, div);
+        add, sub, frame, div,
+        (unsigned long)pre_seq,
+        pre_add, pre_sub, pre_frame, (u8)pre_div,
+        (u8)dvhigh_first_div,
+        (unsigned long)phase_offset,
+        known_phase ? 1u : 0u);
     if (n > 0)
         write_bytes(file, &off, line, (u32)n);
 

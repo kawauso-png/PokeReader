@@ -55,6 +55,7 @@ struct ResultInfo {
     battle: Snapshot,
     physical_start: Option<Snapshot>,
     physical_release: Option<Snapshot>,
+    gb_release: Option<Snapshot>,
     fixed_run_id: u32,
     source: u32,
 }
@@ -64,11 +65,14 @@ struct RunState {
     normal_trigger: Option<Snapshot>,
     physical_start: Option<Snapshot>,
     physical_release: Option<Snapshot>,
+    gb_release: Option<Snapshot>,
     fixed_target: Option<Snapshot>,
     fixed_run_id: u32,
     result: Option<ResultInfo>,
     was_battle: bool,
     was_physical_a: bool,
+    was_game_a_held: bool,
+    saw_game_a_held: bool,
 }
 
 static mut RUN_STATE: RunState = RunState {
@@ -81,11 +85,14 @@ static mut RUN_STATE: RunState = RunState {
     normal_trigger: None,
     physical_start: None,
     physical_release: None,
+    gb_release: None,
     fixed_target: None,
     fixed_run_id: 0,
     result: None,
     was_battle: false,
     was_physical_a: false,
+    was_game_a_held: false,
+    saw_game_a_held: false,
 };
 
 pub fn init_blue() {}
@@ -151,12 +158,15 @@ pub fn run_frame() {
         let in_battle = current.in_mewtwo_battle();
 
         if !in_battle {
-            // v7.1 rule: the physical A press is the authoritative start of a
-            // new Mewtwo attempt. This is intentionally independent of the VC
-            // reset lifecycle because the 3GX process survives a VC reset.
             let physical_a = pnp::is_pressing(Button::A);
             let physical_edge = physical_a && !state.was_physical_a;
             let physical_release = !physical_a && state.was_physical_a;
+
+            // This call refreshes the Game Boy-side hJoyPressed/hJoyHeld cache
+            // every host sample. The edge itself is diagnostic only.
+            let game_edge = pnp::is_just_pressed(Button::A);
+            let (_, game_held_raw) = pnp::blue_game_joy();
+            let game_a_held = (game_held_raw & 0x01) != 0;
 
             if physical_edge {
                 host_blue_dvtrace_mark_physical_a();
@@ -165,6 +175,8 @@ pub fn run_frame() {
                     state.normal_trigger = Some(current);
                     state.physical_start = Some(current);
                     state.physical_release = None;
+                    state.gb_release = None;
+                    state.saw_game_a_held = game_a_held;
                     state.result = None;
                 }
             }
@@ -173,16 +185,30 @@ pub fn run_frame() {
                 state.physical_release = Some(current);
             }
 
-            state.was_physical_a = physical_a;
-
-            // Keep the Game Boy hJoyPressed edge as diagnostic data only.
-            // Do NOT re-arm from it: after a VC reset an old game_a_seq can
-            // survive in the plugin process, while physical A is always tied
-            // to the current human attempt. This also keeps every normal CSV
-            // anchored to the same physical-press definition.
-            if pnp::is_just_pressed(Button::A) {
+            if game_edge {
                 host_blue_dvtrace_mark_game_a();
             }
+
+            // Empirical result from traces 0011-0020: the first GB-side
+            // hJoyHeld.A 1->0 transition is exactly 9 sampled frames before
+            // Mewtwo DV write in 10/10 trials. Treat this as the authoritative
+            // execution anchor; physical release is retained only to quantify
+            // host HID sampling skew.
+            if state.physical_start.is_some() {
+                if game_a_held {
+                    state.saw_game_a_held = true;
+                }
+                if state.gb_release.is_none()
+                    && state.saw_game_a_held
+                    && state.was_game_a_held
+                    && !game_a_held
+                {
+                    state.gb_release = Some(current);
+                }
+            }
+
+            state.was_physical_a = physical_a;
+            state.was_game_a_held = game_a_held;
         } else {
             state.was_physical_a = pnp::is_pressing(Button::A);
         }
@@ -199,6 +225,7 @@ pub fn run_frame() {
                     battle: current,
                     physical_start: state.physical_start,
                     physical_release: state.physical_release,
+                    gb_release: state.gb_release,
                     fixed_run_id,
                     source: host_blue_dvtrace_arm_source(),
                 });
@@ -208,7 +235,7 @@ pub fn run_frame() {
         }
         state.was_battle = in_battle;
 
-        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v7.1");
+        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v7.2");
         pnp::println!(
             color = if current.all_ptrs_ok() { GREEN } else { RED },
             "SYSTEM {}",
@@ -239,13 +266,23 @@ pub fn run_frame() {
             if let (Some(start), Some(release)) = (result.physical_start, result.physical_release) {
                 if release.seq >= start.seq && bq >= release.seq {
                     pnp::println!("A HOLD {}F", release.seq.wrapping_sub(start.seq));
-                    pnp::println!(color = GREEN, "REL->DV {}F", bq.wrapping_sub(release.seq));
+                    pnp::println!("PHYREL->DV {}F", bq.wrapping_sub(release.seq));
                 }
             }
 
-            // A Game Boy edge is only valid for this attempt if it is not
-            // older than the authoritative physical press. This filters stale
-            // game_a_seq values left behind by a VC reset.
+            if let Some(gb_release) = result.gb_release {
+                if bq >= gb_release.seq {
+                    let delta = bq.wrapping_sub(gb_release.seq);
+                    pnp::println!(
+                        color = if delta == 9 { GREEN } else { RED },
+                        "GBREL->DV {}F",
+                        delta
+                    );
+                }
+            } else {
+                pnp::println!(color = RED, "GB RELEASE MISSED");
+            }
+
             if pq != 0 && gq >= pq && bq >= gq {
                 pnp::println!("GAME->DV {}F", bq.wrapping_sub(gq));
             }
@@ -261,12 +298,12 @@ pub fn run_frame() {
             if result.fixed_run_id != 0 {
                 pnp::println!("Exact2F run {}", result.fixed_run_id);
             }
-            pnp::println!(color = YELLOW, "PHY/RELEASE AUTH");
+            pnp::println!(color = YELLOW, "GB RELEASE AUTH");
         } else if state.fixed_target.is_some() {
             pnp::println!(color = GREEN, "EXACT2F ARMED");
         } else {
             pnp::println!("FINAL-A AUTO TRACK");
-            pnp::println!("VC RESET SAFE / PHY AUTH");
+            pnp::println!("VC RESET SAFE / GB RELEASE");
             pnp::println!("CSV AUTO-SAVE V7 COMPAT");
             pnp::println!(color = YELLOW, "PRED LOCKED: learning");
         }

@@ -9,16 +9,6 @@ if ! grep -q '^mod shiny_forecast;$' "$RUST"; then
     sed -i '1imod shiny_forecast;' "$RUST"
 fi
 
-if ! grep -q 'host_blue_forecast_append_csv' "$RUST"; then
-    awk '
-    { print }
-    /fn host_blue_gbrelease_valid\(\) -> u32;/ {
-        print "    fn host_blue_forecast_append_csv(slot: u32, valid: u32, candidates: u32, shiny: u32, phase_count: u32, next_horizon: u32, next_candidates: u32, next_shiny: u32, target_seq: u32, actual_raw: u32, actual_hit: u32) -> u32;"
-    }
-    ' "$RUST" > "$RUST.tmp"
-    mv "$RUST.tmp" "$RUST"
-fi
-
 if ! grep -q 'shiny_forecast::observe_phase' "$RUST"; then
     awk '
     BEGIN { in_adp = 0 }
@@ -80,28 +70,8 @@ if ! grep -q 'FC NOW C{} S{} P{}' "$RUST"; then
     mv "$RUST.tmp" "$RUST"
 fi
 
-if ! grep -q 'let arm_fc = shiny_forecast::arm_stats' "$RUST"; then
-    awk '
-    /let fixed_run_id = if state.fixed_target.is_some\(\)/ {
-        print "                let arm_fc = shiny_forecast::arm_stats();"
-        print "                if slot != 0 && arm_fc.valid {"
-        print "                    let actual_hit = shiny_forecast::arm_contains(current.raw_dv);"
-        print "                    let _ = host_blue_forecast_append_csv("
-        print "                        slot, 1, arm_fc.candidates as u32, arm_fc.shiny as u32,"
-        print "                        arm_fc.phase_count as u32, arm_fc.next_horizon as u32,"
-        print "                        arm_fc.next_candidates as u32, arm_fc.next_shiny as u32,"
-        print "                        arm_fc.target_seq, current.raw_dv as u32, u32::from(actual_hit),"
-        print "                    );"
-        print "                }"
-        print
-    }
-    { print }
-    ' "$RUST" > "$RUST.tmp"
-    mv "$RUST.tmp" "$RUST"
-fi
-
-# scan_full leaves RAW_BITS at its final +16F evaluation.  Re-evaluate the
-# current trigger state before snapshotting ARM_BITS so actual_hit tests NOW.
+# scan_full leaves RAW_BITS at its final +16F evaluation. Re-evaluate the
+# current trigger state before snapshotting ARM_BITS so the arm snapshot is NOW.
 if ! grep -q 'let arm_n = seed_current' "$FCMOD"; then
     awk '
     /for i in 0\.\.RAW_WORDS \{ ARM_BITS\[i\] = RAW_BITS\[i\]; \}/ {
@@ -112,6 +82,11 @@ if ! grep -q 'let arm_n = seed_current' "$FCMOD"; then
     ' "$FCMOD" > "$FCMOD.tmp"
     mv "$FCMOD.tmp" "$FCMOD"
 fi
+
+# AutoPause candidate mode only wants compact sets. The scanner therefore
+# skips shiny-containing horizons wider than 8 raw-DV candidates and keeps
+# searching farther ahead within the 16F horizon.
+sed -i 's/out.next_horizon == 0 && e.1 != 0 {/out.next_horizon == 0 \&\& e.1 != 0 \&\& e.0 <= 8 {/' "$FCMOD"
 
 sed -i 's/BLUE MEWTWO RNG v7.5.1 ADAPT/BLUE MEWTWO RNG v7.6.0 FCST/' "$RUST"
 sed -i 's/ADAPTIVE ENVELOPE READ-ONLY/SHINY FORECAST READ-ONLY/' "$RUST"

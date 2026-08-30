@@ -29,19 +29,13 @@ fn my_panic(info: &core::panic::PanicInfo) -> ! {
         let file = location.file();
         let slice = &file[file.len() - 7..];
 
-        // Since we're about to break, storing a few u32s in these registers won't break us further.
-        // In the future it might be helpful to disable this for release builds.
         unsafe {
-            // r9 and r10 aren't used as frequently as the lower registers, so in most situations
-            // we'll get more useful information by storing the last 4 characters of the file name
-            // and the line number where we broke.
             let partial_file_name = *(slice.as_ptr() as *const u32);
             core::arch::asm!("mov r9, {}", in(reg) partial_file_name);
             core::arch::asm!("mov r10, {}", in(reg) location.line());
         }
     }
 
-    // svcBreak(USERBREAK_PANIC)
     unsafe { core::arch::asm!("svc 0x3C", in("r0") 0u32) };
     loop {}
 }
@@ -91,6 +85,18 @@ fn run_loaded_title_frame(title: &LoadedTitle) {
 pub extern "C" fn arm_suicune_probe() {
     if let Ok(LoadedTitle::CrystalJp) = loaded_title() {
         crystal::arm_suicune_probe();
+    }
+}
+
+/// Host tick of the most recent JP Crystal add-side rDIV read. While the VC is
+/// paused at Target this stays frozen, so C can align probe arm / Exact3F to a
+/// reproducible host phase without advancing the game state.
+#[no_mangle]
+pub extern "C" fn suicune_target_atick() -> u64 {
+    if let Ok(LoadedTitle::CrystalJp) = loaded_title() {
+        crystal::current_adiv_tick()
+    } else {
+        0
     }
 }
 

@@ -20,7 +20,9 @@ jobs:
       - name: Test
         run: make test
       - name: Check Mewtwo analyzer
-        run: python3 -m py_compile analyze_mewtwo_microphase.py
+        run: |
+          python3 -m py_compile analyze_mewtwo_microphase.py
+          python3 analyze_mewtwo_microphase.py --selftest
       - name: Build
         run: make
       - name: Upload Artifacts

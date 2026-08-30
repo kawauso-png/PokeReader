@@ -56,10 +56,12 @@ pub fn is_just_pressed(io_bits: impl Into<u32>) -> bool {
     // after the cry/text to actually start battle; sampling hJoyPressed/hJoyHeld
     // makes A2 visible even when the overlay misses the physical release/press.
     if title == BLUE_JP_TITLE_ID && bits == Button::A as u32 {
-        return unsafe { bindings::host_blue_game_a_edge() } != 0;
+        let game_edge = unsafe { bindings::host_blue_game_a_edge() };
+        return game_edge != 0;
     }
 
-    unsafe { bindings::host_is_just_pressed(bits) } != 0
+    let is_pressed = unsafe { bindings::host_is_just_pressed(bits) };
+    is_pressed != 0
 }
 
 pub fn is_pressing(io_bits: impl Into<u32>) -> bool {

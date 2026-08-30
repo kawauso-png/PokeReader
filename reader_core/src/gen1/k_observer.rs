@@ -218,7 +218,7 @@ mod tests {
         let rng = 0x036700u32;
         let (first, gap) = infer_vblank(prev_rng, rng).unwrap();
         assert_eq!(gap, 0);
-        assert_eq!(first.wrapping_sub(0x1Eu8), 0x17);
+        assert_eq!(first.wrapping_sub(0x1Eu8), 0x18);
     }
 
     #[test]

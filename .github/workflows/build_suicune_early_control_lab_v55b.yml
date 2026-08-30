@@ -54,6 +54,8 @@ jobs:
         run: python3 fix_suicune_early_control_lab_v55_patch.py
       - name: Fix v5.5 detector insertion anchor
         run: python3 fix_suicune_early_control_lab_v55_patch2.py
+      - name: Use first record anchor for detector
+        run: python3 fix_suicune_early_control_lab_v55_patch3.py
       - name: Apply Early Control Lab v5.5
         run: python3 apply_suicune_early_control_lab_v55.py
       - name: Verify v5.5 markers

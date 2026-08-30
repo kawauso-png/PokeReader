@@ -39,7 +39,7 @@ skip_block {
     if (line == "static bool suicune_auto_resume_pending = false;") {
         print line
         print "// Suicune Observe v3.8 UP gate: require a stable physical UP before"
-        print "// releasing the exact two game frames. Three pause-loop samples at"
+        print "// releasing the exact three game frames. Three pause-loop samples at"
         print "// 10 ms spacing debounce transient D-pad misses without advancing VC."
         print "static u32 suicune_up_gate_stable = 0;"
         inserted_state++
@@ -106,13 +106,13 @@ skip_block {
     if (line == "            if (just_pressed & KEY_X)") {
         print "            // UP-gated v3.8 one-trigger path. Tap Y+X at Target; UP may"
         print "            // already be held or may be pressed after Y/X are released."
-        print "            // Exact 2F starts only after UP is stable for three samples."
+        print "            // Exact 3F starts only after UP is stable for three samples."
         print "            if (just_pressed & KEY_X)"
         print "            {"
         print "                arm_suicune_probe();"
         print "                suicune_observe_reset();"
         print "                suicune_obs_arm_tick = svcGetSystemTick();"
-        print "                fixed_a_frames = 2;"
+        print "                fixed_a_frames = 3;"
         print "                fixed_frames_remaining = 0;"
         print "                fixed_armed = true;"
         print "                fixed_run_pending = true;"
@@ -143,6 +143,7 @@ mv "$tmp" "$src"
 grep -q 'static u32 suicune_up_gate_stable = 0;' "$src"
 grep -q 'if (suicune_up_gate_stable < 3) suicune_up_gate_stable++;' "$src"
 grep -q 'UP-gated v3.8 one-trigger path' "$src"
+grep -q 'fixed_a_frames = 3;' "$src"
 grep -q 'suicune_auto_resume_pending && (just_pressed & KEY_B)' "$src"
 
-echo "Applied Suicune Observe v3.8 UP gate to $src"
+echo "Applied Suicune Observe v3.8 UP gate (Exact 3F) to $src"

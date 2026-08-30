@@ -36,7 +36,7 @@ if ! grep -q 'phase_clean = !current.in_mewtwo_battle' "$RUST"; then
     /state.last_snapshot = current;/ {
         print "        let (phase_joy_pressed, phase_joy_held) = pnp::blue_game_joy();"
         print "        let phase_clean = !current.in_mewtwo_battle()"
-        print "            && !pnp::is_pressing(0x0FFFu32)"
+        print "            && !pnp::is_pressing(0x00FFu32)"
         print "            && phase_joy_pressed == 0"
         print "            && phase_joy_held == 0;"
         print "        let _ = phase_tracker::observe("

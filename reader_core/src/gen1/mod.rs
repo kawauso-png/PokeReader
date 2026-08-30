@@ -7,9 +7,10 @@ const RED: u32 = 0xFF0000;
 const BLUE: u32 = 0x005FFF;
 const WHITE: u32 = 0xFFFFFF;
 const YELLOW: u32 = 0xFFFF00;
-const MAX_A_TO_BATTLE_HOST_FRAMES: u32 = 120;
+
 const ARM_SOURCE_GAME_A: u32 = 1;
 const ARM_SOURCE_EXACT2F: u32 = 2;
+const ARM_SOURCE_PHYSICAL_A: u32 = 3;
 
 static mut HOST_FRAME: u32 = 0;
 
@@ -18,10 +19,15 @@ extern "C" {
     fn host_blue_dvtrace_set_arm_source(source: u32);
     fn host_blue_dvtrace_arm() -> u32;
     fn host_blue_dvtrace_finalize() -> u32;
+    fn host_blue_dvtrace_mark_physical_a();
+    fn host_blue_dvtrace_mark_game_a();
     fn host_blue_dvtrace_seq() -> u32;
     fn host_blue_dvtrace_raw_dv() -> u32;
     fn host_blue_dvtrace_trigger_seq() -> u32;
+    fn host_blue_dvtrace_physical_a_seq() -> u32;
+    fn host_blue_dvtrace_game_a_seq() -> u32;
     fn host_blue_dvtrace_battle_seq() -> u32;
+    fn host_blue_dvtrace_arm_source() -> u32;
     fn host_blue_dvtrace_save_slot() -> u32;
     fn host_blue_dvtrace_save_error() -> u32;
 }
@@ -48,6 +54,7 @@ impl Snapshot {
 struct ResultInfo {
     battle: Snapshot,
     fixed_run_id: u32,
+    source: u32,
 }
 
 struct RunState {
@@ -57,6 +64,7 @@ struct RunState {
     fixed_run_id: u32,
     result: Option<ResultInfo>,
     was_battle: bool,
+    was_physical_a: bool,
 }
 
 static mut RUN_STATE: RunState = RunState {
@@ -71,6 +79,7 @@ static mut RUN_STATE: RunState = RunState {
     fixed_run_id: 0,
     result: None,
     was_battle: false,
+    was_physical_a: false,
 };
 
 pub fn init_blue() {}
@@ -114,18 +123,13 @@ fn sample() -> Snapshot {
     }
 }
 
-fn choose_fixed_run_id(state: &RunState, battle: Snapshot) -> Option<u32> {
-    if let Some(s) = state.fixed_target {
-        if battle.host_frame.wrapping_sub(s.host_frame) <= MAX_A_TO_BATTLE_HOST_FRAMES {
-            return Some(state.fixed_run_id);
-        }
+fn source_name(source: u32) -> &'static str {
+    match source {
+        ARM_SOURCE_GAME_A => "GAME",
+        ARM_SOURCE_EXACT2F => "EXACT2F",
+        ARM_SOURCE_PHYSICAL_A => "PHYS",
+        _ => "UNKNOWN",
     }
-    if let Some(s) = state.normal_trigger {
-        if battle.host_frame.wrapping_sub(s.host_frame) <= MAX_A_TO_BATTLE_HOST_FRAMES {
-            return Some(0);
-        }
-    }
-    None
 }
 
 pub fn run_frame() {
@@ -140,22 +144,50 @@ pub fn run_frame() {
         state.last_snapshot = current;
         let in_battle = current.in_mewtwo_battle();
 
-        // Blue A edges are sourced from hJoyPressed/hJoyHeld in pnp::input.
-        // Re-arming on every game-recognized A means A2 overwrites A1.
-        if !in_battle && pnp::is_just_pressed(Button::A) {
-            host_blue_dvtrace_set_arm_source(ARM_SOURCE_GAME_A);
-            if host_blue_dvtrace_arm() != 0 {
-                state.normal_trigger = Some(current);
-                state.result = None;
+        if !in_battle {
+            // Physical A is the reliable safety net. A normal human press lasts
+            // long enough to be seen here even if the GB hJoyPressed pulse is
+            // missed by the overlay sampling cadence.
+            let physical_a = pnp::is_pressing(Button::A);
+            let physical_edge = physical_a && !state.was_physical_a;
+            state.was_physical_a = physical_a;
+
+            if physical_edge {
+                host_blue_dvtrace_mark_physical_a();
+                host_blue_dvtrace_set_arm_source(ARM_SOURCE_PHYSICAL_A);
+                if host_blue_dvtrace_arm() != 0 {
+                    state.normal_trigger = Some(current);
+                    state.result = None;
+                }
             }
+
+            // If the Game Boy's own A edge is visible, prefer it as the exact
+            // trigger. It re-arms the same ring buffer a frame or two later and
+            // therefore supersedes the physical fallback without losing it.
+            if pnp::is_just_pressed(Button::A) {
+                host_blue_dvtrace_mark_game_a();
+                host_blue_dvtrace_set_arm_source(ARM_SOURCE_GAME_A);
+                if host_blue_dvtrace_arm() != 0 {
+                    state.normal_trigger = Some(current);
+                    state.result = None;
+                }
+            }
+        } else {
+            state.was_physical_a = pnp::is_pressing(Button::A);
         }
 
         if in_battle && !state.was_battle {
-            let _ = host_blue_dvtrace_finalize();
-            if let Some(fixed_run_id) = choose_fixed_run_id(state, current) {
+            let finalized = host_blue_dvtrace_finalize();
+            if finalized != 0 {
+                let fixed_run_id = if state.fixed_target.is_some() {
+                    state.fixed_run_id
+                } else {
+                    0
+                };
                 state.result = Some(ResultInfo {
                     battle: current,
                     fixed_run_id,
+                    source: host_blue_dvtrace_arm_source(),
                 });
             }
             state.fixed_target = None;
@@ -163,7 +195,7 @@ pub fn run_frame() {
         }
         state.was_battle = in_battle;
 
-        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v6");
+        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v7");
         pnp::println!(
             color = if current.all_ptrs_ok() { GREEN } else { RED },
             "SYSTEM {}",
@@ -181,7 +213,18 @@ pub fn run_frame() {
 
             let tq = host_blue_dvtrace_trigger_seq();
             let bq = host_blue_dvtrace_battle_seq();
-            pnp::println!("A2->DV {}F", bq.wrapping_sub(tq));
+            let pq = host_blue_dvtrace_physical_a_seq();
+            let gq = host_blue_dvtrace_game_a_seq();
+            pnp::println!("SRC {}", source_name(result.source));
+            if tq != 0 && bq >= tq {
+                pnp::println!("TRIG->DV {}F", bq.wrapping_sub(tq));
+            }
+            if pq != 0 && bq >= pq {
+                pnp::println!("PHY->DV {}F", bq.wrapping_sub(pq));
+            }
+            if gq != 0 && bq >= gq {
+                pnp::println!("GAME->DV {}F", bq.wrapping_sub(gq));
+            }
 
             let slot = host_blue_dvtrace_save_slot();
             let err = host_blue_dvtrace_save_error();
@@ -198,8 +241,8 @@ pub fn run_frame() {
         } else if state.fixed_target.is_some() {
             pnp::println!(color = GREEN, "EXACT2F ARMED");
         } else {
-            pnp::println!("FINAL-A AUTO TRACK");
-            pnp::println!("CSV AUTO-SAVE");
+            pnp::println!("FINAL-A AUTO TRACK P+G");
+            pnp::println!("CSV AUTO-SAVE V7");
             pnp::println!(color = YELLOW, "PRED LOCKED: learning");
         }
     }
@@ -216,5 +259,12 @@ mod tests {
         }
         assert!(!shiny_from_raw(0x1AAA));
         assert!(!shiny_from_raw(0x2BAA));
+    }
+
+    #[test]
+    fn source_names_are_stable() {
+        assert_eq!(source_name(ARM_SOURCE_GAME_A), "GAME");
+        assert_eq!(source_name(ARM_SOURCE_EXACT2F), "EXACT2F");
+        assert_eq!(source_name(ARM_SOURCE_PHYSICAL_A), "PHYS");
     }
 }

@@ -12,44 +12,26 @@ const MAX_A_TO_BATTLE_HOST_FRAMES: u32 = 120;
 static mut HOST_FRAME: u32 = 0;
 
 extern "C" {
-    fn host_blue_lab_sample() -> u32;
-    fn host_blue_lab_wram() -> u32;
-    fn host_blue_lab_hram() -> u32;
-    fn host_blue_lab_div_host() -> u32;
-    fn host_blue_lab_rng_pack() -> u32;
-    fn host_blue_lab_div_value() -> u32;
-    fn host_blue_lab_raw_dv() -> u32;
-    fn host_blue_lab_div_changes() -> u32;
-    fn host_blue_lab_div_steps() -> u32;
-
-    fn host_blue_lab_seq() -> u32;
-    fn host_blue_lab_hist_count() -> u32;
-    fn host_blue_lab_roll_zero() -> u32;
-    fn host_blue_lab_roll_one() -> u32;
-    fn host_blue_lab_roll_multi() -> u32;
-    fn host_blue_lab_roll_phase() -> u32;
-    fn host_blue_lab_roll_phase_n() -> u32;
-
-    fn host_blue_lab_pc_addr() -> u32;
-    fn host_blue_lab_pc_value() -> u32;
-    fn host_blue_lab_pc_samples() -> u32;
-    fn host_blue_lab_pc_changes() -> u32;
-    fn host_blue_lab_pc_rom() -> u32;
-    fn host_blue_lab_pc_map_hits() -> u32;
-    fn host_blue_lab_pc_swap_hits() -> u32;
-    fn host_blue_lab_pc_scan_passes() -> u32;
-    fn host_blue_lab_pc_scan_hits() -> u32;
-
-    fn host_blue_lab_analyze_window(start_seq: u32, end_seq: u32) -> u32;
-    fn host_blue_lab_window_valid() -> u32;
-    fn host_blue_lab_window_frames() -> u32;
-    fn host_blue_lab_window_zero() -> u32;
-    fn host_blue_lab_window_one() -> u32;
-    fn host_blue_lab_window_multi() -> u32;
-    fn host_blue_lab_window_phase() -> u32;
-    fn host_blue_lab_window_phase_n() -> u32;
-    fn host_blue_lab_window_map_hits() -> u32;
-    fn host_blue_lab_window_hash() -> u32;
+    fn host_blue_dvtrace_sample() -> u32;
+    fn host_blue_dvtrace_arm() -> u32;
+    fn host_blue_dvtrace_finalize() -> u32;
+    fn host_blue_dvtrace_seq() -> u32;
+    fn host_blue_dvtrace_rng() -> u32;
+    fn host_blue_dvtrace_div() -> u32;
+    fn host_blue_dvtrace_raw_dv() -> u32;
+    fn host_blue_dvtrace_trigger_seq() -> u32;
+    fn host_blue_dvtrace_dvwrite_seq() -> u32;
+    fn host_blue_dvtrace_battle_seq() -> u32;
+    fn host_blue_dvtrace_dvwrite_rng() -> u32;
+    fn host_blue_dvtrace_dvwrite_div() -> u32;
+    fn host_blue_dvtrace_pre_rng() -> u32;
+    fn host_blue_dvtrace_pre_div() -> u32;
+    fn host_blue_dvtrace_d2_pair() -> u32;
+    fn host_blue_dvtrace_add2_match() -> u32;
+    fn host_blue_dvtrace_two_call_ok() -> u32;
+    fn host_blue_dvtrace_solve() -> u32;
+    fn host_blue_dvtrace_save_slot() -> u32;
+    fn host_blue_dvtrace_save_error() -> u32;
 }
 
 #[derive(Clone, Copy, Default)]
@@ -73,23 +55,9 @@ impl Snapshot {
 }
 
 #[derive(Clone, Copy, Default)]
-struct WindowInfo {
-    valid: bool,
-    frames: u32,
-    zero: u32,
-    one: u32,
-    multi: u32,
-    phase: u8,
-    phase_n: u32,
-    map_hits: u32,
-    hash: u32,
-}
-
-#[derive(Clone, Copy, Default)]
 struct ResultPair {
     trigger: Snapshot,
     battle: Snapshot,
-    window: WindowInfo,
     fixed_run_id: u32,
 }
 
@@ -128,15 +96,16 @@ static mut RUN_STATE: RunState = RunState {
 
 pub fn init_blue() {}
 
-// main.c invokes this while paused immediately before it releases exactly two
-// emulated A frames.  Returning 1 is what enables the already-audited Blue
-// fixed-2F controller.  We capture the most recent live RNG/DIV/history sample
-// so the later battle can be analyzed against the exact pre-run state.
+// Called by the C pause loop immediately before the audited exact-2F run.
 #[no_mangle]
 pub extern "C" fn blue_capture_target(run_id: u32) -> u32 {
     unsafe {
         let s = RUN_STATE.last_snapshot;
         if s.all_ptrs_ok() && !s.in_mewtwo_battle() && s.seq != 0 {
+            let q = host_blue_dvtrace_arm();
+            if q == 0 {
+                return 0;
+            }
             RUN_STATE.fixed_target = Some(s);
             RUN_STATE.fixed_run_id = run_id;
             RUN_STATE.result = None;
@@ -158,32 +127,14 @@ fn shiny_from_raw(raw: u16) -> bool {
 }
 
 fn sample() -> Snapshot {
-    let status = unsafe { host_blue_lab_sample() };
+    let status = unsafe { host_blue_dvtrace_sample() };
     Snapshot {
         host_frame: unsafe { HOST_FRAME },
-        seq: unsafe { host_blue_lab_seq() },
+        seq: unsafe { host_blue_dvtrace_seq() },
         status,
-        rng: unsafe { host_blue_lab_rng_pack() },
-        div: unsafe { host_blue_lab_div_value() } as u8,
-        raw_dv: unsafe { host_blue_lab_raw_dv() } as u16,
-    }
-}
-
-fn load_window(start_seq: u32, end_seq: u32) -> WindowInfo {
-    let ok = unsafe { host_blue_lab_analyze_window(start_seq, end_seq) } != 0;
-    if !ok || unsafe { host_blue_lab_window_valid() } == 0 {
-        return WindowInfo::default();
-    }
-    WindowInfo {
-        valid: true,
-        frames: unsafe { host_blue_lab_window_frames() },
-        zero: unsafe { host_blue_lab_window_zero() },
-        one: unsafe { host_blue_lab_window_one() },
-        multi: unsafe { host_blue_lab_window_multi() },
-        phase: unsafe { host_blue_lab_window_phase() } as u8,
-        phase_n: unsafe { host_blue_lab_window_phase_n() },
-        map_hits: unsafe { host_blue_lab_window_map_hits() },
-        hash: unsafe { host_blue_lab_window_hash() },
+        rng: unsafe { host_blue_dvtrace_rng() },
+        div: unsafe { host_blue_dvtrace_div() } as u8,
+        raw_dv: unsafe { host_blue_dvtrace_raw_dv() } as u16,
     }
 }
 
@@ -191,8 +142,15 @@ fn draw_snapshot(label: &str, s: Snapshot) {
     let add = ((s.rng >> 16) & 0xFF) as u8;
     let sub = ((s.rng >> 8) & 0xFF) as u8;
     let frame = (s.rng & 0xFF) as u8;
-    pnp::println!("{} H{} R{:02X}{:02X}", label, s.host_frame, add, sub);
-    pnp::println!("  F{:02X} D{:02X} Q{}", frame, s.div, s.seq);
+    pnp::println!("{} H{} Q{} R{:02X}{:02X}", label, s.host_frame, s.seq, add, sub);
+    pnp::println!("  F{:02X} D{:02X}", frame, s.div);
+}
+
+fn draw_rng(label: &str, rng: u32, div: u8) {
+    let add = ((rng >> 16) & 0xFF) as u8;
+    let sub = ((rng >> 8) & 0xFF) as u8;
+    let frame = (rng & 0xFF) as u8;
+    pnp::println!("{} R{:02X}{:02X} F{:02X} D{:02X}", label, add, sub, frame, div);
 }
 
 fn choose_trigger(state: &RunState, battle: Snapshot) -> Option<(Snapshot, u32)> {
@@ -206,12 +164,16 @@ fn choose_trigger(state: &RunState, battle: Snapshot) -> Option<(Snapshot, u32)>
             return Some((s, 0));
         }
     }
+    if let Some(s) = state.a_pending {
+        if battle.host_frame.wrapping_sub(s.host_frame) <= MAX_A_TO_BATTLE_HOST_FRAMES {
+            return Some((s, 0));
+        }
+    }
     None
 }
 
 pub fn run_frame() {
     pnp::set_print_max_len(31);
-
     unsafe {
         HOST_FRAME = HOST_FRAME.wrapping_add(1);
     }
@@ -222,10 +184,10 @@ pub fn run_frame() {
         state.last_snapshot = current;
         let in_battle = current.in_mewtwo_battle();
 
-        // Keep ordinary physical-A diagnostics, but production-quality runs use
-        // the C-side fixed controller armed while paused.  This path remains
-        // useful when checking that a fresh A edge was actually seen.
+        // Ordinary A calibration: arm the DV logger on the fresh physical A
+        // edge. Exact-2F runs are armed separately by blue_capture_target().
         if !in_battle && pnp::is_just_pressed(Button::A) {
+            let _ = host_blue_dvtrace_arm();
             state.a_pending = Some(current);
             state.result = None;
         } else if !in_battle {
@@ -235,88 +197,56 @@ pub fn run_frame() {
                         state.last_valid_2f = Some(start);
                         state.valid_2f = state.valid_2f.wrapping_add(1);
                     } else {
-                        state.last_valid_2f = None;
                         state.reject_1f = state.reject_1f.wrapping_add(1);
                     }
-                    state.a_pending = None;
-                } else if current.host_frame.wrapping_sub(start.host_frame) > 1 {
+                }
+                // Keep a_pending as the ordinary-A trigger until battle or a
+                // generous timeout; it is also useful when the human holds A
+                // for longer than exactly two displayed frames.
+                if current.host_frame.wrapping_sub(start.host_frame) > MAX_A_TO_BATTLE_HOST_FRAMES {
                     state.a_pending = None;
                 }
             }
         }
 
         if in_battle && !state.was_battle {
+            let _ = host_blue_dvtrace_finalize();
             if let Some((trigger, fixed_run_id)) = choose_trigger(state, current) {
-                let window = load_window(trigger.seq, current.seq);
                 state.result = Some(ResultPair {
                     trigger,
                     battle: current,
-                    window,
                     fixed_run_id,
                 });
                 state.completed_runs = state.completed_runs.wrapping_add(1);
             }
             state.fixed_target = None;
             state.last_valid_2f = None;
+            state.a_pending = None;
         }
         state.was_battle = in_battle;
-
-        let wram = host_blue_lab_wram();
-        let hram = host_blue_lab_hram();
-        let div_host = host_blue_lab_div_host();
-        let hist_n = host_blue_lab_hist_count();
-        let rz = host_blue_lab_roll_zero();
-        let ro = host_blue_lab_roll_one();
-        let rm = host_blue_lab_roll_multi();
-        let rph = host_blue_lab_roll_phase();
-        let rphn = host_blue_lab_roll_phase_n();
-
-        let pc_addr = host_blue_lab_pc_addr();
-        let pc_value = host_blue_lab_pc_value() as u16;
-        let pc_n = host_blue_lab_pc_samples();
-        let pc_ch = host_blue_lab_pc_changes();
-        let pc_rom = host_blue_lab_pc_rom();
-        let pc_map = host_blue_lab_pc_map_hits();
-        let pc_swap = host_blue_lab_pc_swap_hits();
-        let scan_pass = host_blue_lab_pc_scan_passes();
-        let scan_hits = host_blue_lab_pc_scan_hits();
-
-        let fixed = pnp::blue_fixed_state();
-        let fixed_id = pnp::blue_fixed_run_id();
-
-        pnp::println!(color = BLUE, "BLUE MEWTWO HUNT LAB v1");
-        pnp::println!(
-            color = if current.all_ptrs_ok() { GREEN } else { RED },
-            "PTR3 {} H{} Q{}",
-            if current.all_ptrs_ok() { "OK" } else { "NO" },
-            hist_n,
-            current.seq
-        );
-        pnp::println!("W {:08X} H {:08X}", wram, hram);
-        pnp::println!("D {:08X}", div_host);
 
         let add = ((current.rng >> 16) & 0xFF) as u8;
         let sub = ((current.rng >> 8) & 0xFF) as u8;
         let frame = (current.rng & 0xFF) as u8;
+        let fixed = pnp::blue_fixed_state();
+
+        pnp::println!(color = BLUE, "BLUE MEWTWO HUNT LAB v2");
+        pnp::println!(
+            color = if current.all_ptrs_ok() { GREEN } else { RED },
+            "PTR3 {} H{} Q{}",
+            if current.all_ptrs_ok() { "OK" } else { "NO" },
+            current.host_frame,
+            current.seq
+        );
         pnp::println!("NOW R{:02X}{:02X} F{:02X} D{:02X}", add, sub, frame, current.div);
-        pnp::println!("DIV ch{} ds{}", host_blue_lab_div_changes(), host_blue_lab_div_steps());
-
-        pnp::println!("PC {:08X}>{:04X}", pc_addr, pc_value);
-        pnp::println!("PC n{} ch{} rom{}", pc_n, pc_ch, pc_rom);
-        pnp::println!("MAP {} SW{} scan{}/{}", pc_map, pc_swap, scan_hits, scan_pass);
-        pnp::println!("RNG Z{} O{} M{}", rz, ro, rm);
-        pnp::println!(color = YELLOW, "P16cand {} n{}", rph & 15, rphn);
-
         pnp::println!(
             "FIX id{} rem{} p{} a{}",
-            fixed_id,
+            pnp::blue_fixed_run_id(),
             fixed.remaining,
             if fixed.pending { 1 } else { 0 },
             if fixed.physical_a { 1 } else { 0 }
         );
-        if fixed.error != 0 {
-            pnp::println!(color = RED, "FIX ERR {}", fixed.error);
-        }
+        pnp::println!("2F ok{} / 1F rej{}", state.valid_2f, state.reject_1f);
 
         if let Some(result) = state.result {
             let shiny = shiny_from_raw(result.battle.raw_dv);
@@ -329,41 +259,63 @@ pub fn run_frame() {
             );
             draw_snapshot("T", result.trigger);
             draw_snapshot("B", result.battle);
-            if result.window.valid {
-                pnp::println!(
-                    "WIN{} Z{} O{} M{}",
-                    result.window.frames,
-                    result.window.zero,
-                    result.window.one,
-                    result.window.multi
+
+            let tq = host_blue_dvtrace_trigger_seq();
+            let wq = host_blue_dvtrace_dvwrite_seq();
+            let bq = host_blue_dvtrace_battle_seq();
+            if wq != 0 {
+                pnp::println!(color = GREEN, "DVWRITE Q{} lag{}", wq, bq.wrapping_sub(wq));
+                draw_rng(
+                    "DW",
+                    host_blue_dvtrace_dvwrite_rng(),
+                    host_blue_dvtrace_dvwrite_div() as u8,
                 );
-                pnp::println!(
-                    color = if result.window.multi == 0 { GREEN } else { YELLOW },
-                    "P16 {} n{} MAP{}",
-                    result.window.phase,
-                    result.window.phase_n,
-                    result.window.map_hits
+                draw_rng(
+                    "PRE",
+                    host_blue_dvtrace_pre_rng(),
+                    host_blue_dvtrace_pre_div() as u8,
                 );
-                pnp::println!("HASH {:08X} FID{}", result.window.hash, result.fixed_run_id);
-                if result.window.multi == 0 {
-                    pnp::println!(color = GREEN, "TRACE CLEAN: replay candidate");
-                } else {
-                    pnp::println!(color = YELLOW, "TRACE MULTI: learning calls");
-                }
             } else {
-                pnp::println!(color = RED, "WINDOW unavailable");
+                pnp::println!(color = RED, "DVWRITE not isolated");
             }
+
+            let pair = host_blue_dvtrace_d2_pair();
+            pnp::println!(
+                "DV2 rDIV {:02X}/{:02X} A2{}",
+                (pair >> 8) & 0xFF,
+                pair & 0xFF,
+                if host_blue_dvtrace_add2_match() != 0 { "Y" } else { "N" }
+            );
+
+            if host_blue_dvtrace_two_call_ok() != 0 {
+                let s = host_blue_dvtrace_solve();
+                let d1 = (s >> 24) & 0xFF;
+                let d2 = (s >> 16) & 0xFF;
+                let gap = (s >> 8) & 0xFF;
+                pnp::println!(color = GREEN, "2CALL YES d{:02X}>{:02X} g{}", d1, d2, gap);
+                pnp::println!("flags c{}{} q{}{}", (s >> 3) & 1, (s >> 2) & 1, (s >> 1) & 1, s & 1);
+            } else {
+                pnp::println!(color = YELLOW, "2CALL NO: earlier calls same frame");
+            }
+
+            let slot = host_blue_dvtrace_save_slot();
+            let err = host_blue_dvtrace_save_error();
+            pnp::println!(
+                color = if slot != 0 { GREEN } else { RED },
+                "CSV {} slot{} e{:08X}",
+                if slot != 0 { "OK" } else { "ERR" },
+                slot,
+                err
+            );
+            pnp::println!("trace Q{} -> Q{} FID{}", tq, bq, result.fixed_run_id);
         } else if state.fixed_target.is_some() {
-            pnp::println!(color = GREEN, "TARGET CAPTURED; run 2F");
+            pnp::println!(color = GREEN, "Exact2F target captured");
         } else {
-            pnp::println!("Pause -> hold A+Y -> tap L");
-            pnp::println!("Release Y/L; keep A 2F");
+            pnp::println!("CAL: stand before Mewtwo");
+            pnp::println!("Press A normally -> battle");
         }
 
-        // Deliberate safety gate: this integrated build learns the current Blue
-        // call/phase path but does not claim a shiny target until a raw-DV
-        // predictor has reproduced independent runs exactly.
-        pnp::println!(color = YELLOW, "HUNT LOCKED: RAW model learning");
+        pnp::println!(color = YELLOW, "HUNT LOCKED: DV call learning");
     }
 }
 

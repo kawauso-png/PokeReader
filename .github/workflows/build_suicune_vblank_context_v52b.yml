@@ -44,11 +44,14 @@ jobs:
         run: python3 fix_suicune_vblank_context_v52_patch.py
       - name: Apply rolling VBlank Context v5.2
         run: python3 apply_suicune_vblank_context_v52.py
+      - name: Freeze VBlank Context after Target
+        run: python3 apply_suicune_vblank_context_freeze_v52.py
       - name: Verify v5.2 markers
         run: |
           grep -q "VBlankContextSnapshot" reader_core/src/crystal/hook.rs
           grep -q "latest_vblank_context" reader_core/src/crystal/hook.rs
-          grep -q "LAST_VBLANK_CONTEXT" reader_core/src/crystal/hook.rs
+          grep -q "VBLANK_CONTEXT_CAPTURE_ENABLED" reader_core/src/crystal/hook.rs
+          grep -q "set_vblank_context_capture(false)" reader_core/src/crystal/trace.rs
           grep -q "STARTSIG,V52" reader_core/src/crystal/trace.rs
           grep -q "arm_regs_hex" reader_core/src/crystal/trace.rs
           grep -q "SPH,V50" reader_core/src/crystal/trace.rs

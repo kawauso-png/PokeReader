@@ -24,6 +24,6 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Blue-JP-Recovered-Stage10-PCValidate-v1
+          name: PokeReader-Blue-JP-Mewtwo-Hunt-Lab-v1
           retention-days: 3
           path: out/default.3gx

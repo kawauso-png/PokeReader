@@ -6,6 +6,7 @@ const MAX_OFFSET_M: u16 = 0x3FFF;
 const MAX_CANDIDATES: usize = 64 * 127;
 const FORECAST_HORIZON: usize = 16;
 const FORECAST_MAX_FITS: usize = 128;
+const FORECAST_MIN_QUIET: u16 = 2;
 
 #[derive(Clone, Copy)]
 struct Candidate {
@@ -25,6 +26,8 @@ pub struct TrackerStats {
     pub forecast_checks: u16,
     pub forecast_hits: u16,
     pub resets: u16,
+    pub quiet_streak: u16,
+    pub rng_skips: u16,
     pub last_k: u8,
     pub last_div_step: u8,
     pub last_gap: u8,
@@ -44,6 +47,8 @@ struct Tracker {
     forecast_checks: u16,
     forecast_hits: u16,
     resets: u16,
+    quiet_streak: u16,
+    rng_skips: u16,
     last_k: u8,
     last_div_step: u8,
     last_gap: u8,
@@ -64,14 +69,16 @@ static mut TRACKER: Tracker = Tracker {
     forecast_checks: 0,
     forecast_hits: 0,
     resets: 0,
+    quiet_streak: 0,
+    rng_skips: 0,
     last_k: 0,
     last_div_step: 0,
     last_gap: 0xFF,
     last_reason: 0,
     arm_stats: TrackerStats {
         valid: false, transitions: 0, fits: 0, sub_count: 0, lock_prefix: 0,
-        forecast_checks: 0, forecast_hits: 0, resets: 0,
-        last_k: 0, last_div_step: 0, last_gap: 0xFF, last_reason: 0,
+        forecast_checks: 0, forecast_hits: 0, resets: 0, quiet_streak: 0,
+        rng_skips: 0, last_k: 0, last_div_step: 0, last_gap: 0xFF, last_reason: 0,
     },
 };
 
@@ -123,6 +130,7 @@ impl Tracker {
         self.last_usable = usable;
         self.forecast_valid = false;
         self.lock_prefix = 0;
+        self.quiet_streak = 0;
         self.last_reason = reason;
         if count_reset { self.resets = self.resets.wrapping_add(1); }
     }
@@ -143,6 +151,8 @@ impl Tracker {
             forecast_checks: self.forecast_checks,
             forecast_hits: self.forecast_hits,
             resets: self.resets,
+            quiet_streak: self.quiet_streak,
+            rng_skips: self.rng_skips,
             last_k: self.last_k,
             last_div_step: self.last_div_step,
             last_gap: self.last_gap,
@@ -150,14 +160,11 @@ impl Tracker {
         }
     }
 
-    fn candidate_matches(prev_sub: u8, offset_m: u16, div: u8, div_step: u8, first: u8, gap: u8) -> Option<Candidate> {
-        if next_div_step(prev_sub) != div_step { return None; }
-        let current_sub = next_sample_sub(prev_sub);
-        let total = current_sub as u16 + offset_m;
+    fn candidate_matches_current(current: Candidate, div: u8, first: u8, gap: u8) -> bool {
+        let total = current.sample_sub as u16 + current.offset_m;
         let predicted_first = div.wrapping_add((total / SUB_MOD) as u8);
         let first_sub = (total % SUB_MOD) as u8;
-        if predicted_first != first || random_gap(first_sub) != gap { return None; }
-        Some(Candidate { sample_sub: current_sub, offset_m })
+        predicted_first == first && random_gap(first_sub) == gap
     }
 
     fn seed_from_transition(&mut self, seq: u32, div: u8, div_step: u8, first: u8, gap: u8, reason: u8) -> bool {
@@ -170,9 +177,12 @@ impl Tracker {
         let hi = core::cmp::min(center.saturating_add(63), MAX_OFFSET_M);
         let mut n = 0usize;
         for prev_sub in 0u8..64u8 {
+            if next_div_step(prev_sub) != div_step { continue; }
+            let current_sub = next_sample_sub(prev_sub);
             let mut offset = lo;
             while offset <= hi {
-                if let Some(c) = Self::candidate_matches(prev_sub, offset, div, div_step, first, gap) {
+                let c = Candidate { sample_sub: current_sub, offset_m: offset };
+                if Self::candidate_matches_current(c, div, first, gap) {
                     self.candidates[n] = c;
                     n += 1;
                 }
@@ -186,6 +196,7 @@ impl Tracker {
         self.last_usable = true;
         self.forecast_valid = false;
         self.lock_prefix = 0;
+        self.quiet_streak = u16::from(n != 0);
         self.last_reason = if n != 0 { reason } else { 7 };
         n != 0
     }
@@ -193,7 +204,7 @@ impl Tracker {
     fn rebuild_forecast(&mut self, rng: u32, div: u8) {
         self.forecast_valid = false;
         self.lock_prefix = 0;
-        if self.count == 0 || self.count > FORECAST_MAX_FITS { return; }
+        if self.quiet_streak < FORECAST_MIN_QUIET || self.count == 0 || self.count > FORECAST_MAX_FITS { return; }
         let mut ref_rng = [0u32; FORECAST_HORIZON];
         let mut ref_div = [0u8; FORECAST_HORIZON];
         let mut c = self.candidates[0];
@@ -224,6 +235,41 @@ impl Tracker {
         }
     }
 
+    fn advance_div_only(&mut self, div_step: u8) -> bool {
+        let mut write = 0usize;
+        for i in 0..self.count {
+            let c = self.candidates[i];
+            if next_div_step(c.sample_sub) != div_step { continue; }
+            self.candidates[write] = Candidate {
+                sample_sub: next_sample_sub(c.sample_sub),
+                offset_m: c.offset_m,
+            };
+            write += 1;
+        }
+        self.count = write;
+        write != 0
+    }
+
+    fn filter_rng_current(&mut self, div: u8, first: u8, gap: u8) -> bool {
+        let mut matches = 0usize;
+        for i in 0..self.count {
+            if Self::candidate_matches_current(self.candidates[i], div, first, gap) {
+                matches += 1;
+            }
+        }
+        if matches == 0 { return false; }
+        let mut write = 0usize;
+        for i in 0..self.count {
+            let c = self.candidates[i];
+            if Self::candidate_matches_current(c, div, first, gap) {
+                self.candidates[write] = c;
+                write += 1;
+            }
+        }
+        self.count = write;
+        true
+    }
+
     fn observe(&mut self, prev_seq: u32, prev_rng: u32, prev_div: u8,
                seq: u32, rng: u32, div: u8, usable: bool) -> TrackerStats {
         if !usable {
@@ -236,17 +282,20 @@ impl Tracker {
             self.clear(seq, true, 2, false);
             return self.stats();
         }
-        let Some((first, gap)) = infer_vblank(prev_rng, rng) else {
-            self.clear(seq, true, 3, self.count != 0 || self.transitions != 0);
-            return self.stats();
-        };
+
         let div_step = div.wrapping_sub(prev_div);
         self.last_div_step = div_step;
-        self.last_gap = gap;
-        self.last_k = first.wrapping_sub(div);
         if !matches!(div_step, 0x12 | 0x13) {
             self.clear(seq, true, 4, self.count != 0 || self.transitions != 0);
             return self.stats();
+        }
+
+        let inferred = infer_vblank(prev_rng, rng);
+        if let Some((first, gap)) = inferred {
+            self.last_gap = gap;
+            self.last_k = first.wrapping_sub(div);
+        } else {
+            self.last_gap = 0xFF;
         }
 
         let forecast_miss = self.forecast_valid
@@ -256,36 +305,52 @@ impl Tracker {
             if !forecast_miss { self.forecast_hits = self.forecast_hits.wrapping_add(1); }
         }
 
-        if self.count == 0 || forecast_miss {
-            if forecast_miss { self.resets = self.resets.wrapping_add(1); }
-            if self.seed_from_transition(seq, div, div_step, first, gap, if forecast_miss { 5 } else { 0 }) {
-                self.rebuild_forecast(rng, div);
+        if self.count == 0 {
+            if let Some((first, gap)) = inferred {
+                if self.seed_from_transition(seq, div, div_step, first, gap, 0) {
+                    self.rebuild_forecast(rng, div);
+                }
+            } else {
+                self.last_seq = seq;
+                self.last_usable = true;
+                self.last_reason = 3;
             }
             return self.stats();
         }
 
-        let mut write = 0usize;
-        for i in 0..self.count {
-            let c = self.candidates[i];
-            let prev_sub = c.sample_sub.wrapping_sub(FRAME_SUB_STEP) & 0x3F;
-            if let Some(next) = Self::candidate_matches(prev_sub, c.offset_m, div, div_step, first, gap) {
-                self.candidates[write] = next;
-                write += 1;
-            }
-        }
-        self.count = write;
-        if self.count == 0 {
+        if !self.advance_div_only(div_step) {
             self.resets = self.resets.wrapping_add(1);
-            if self.seed_from_transition(seq, div, div_step, first, gap, 6) {
-                self.rebuild_forecast(rng, div);
+            if let Some((first, gap)) = inferred {
+                if self.seed_from_transition(seq, div, div_step, first, gap, 6) {
+                    self.rebuild_forecast(rng, div);
+                }
+            } else {
+                self.clear(seq, true, 6, false);
             }
             return self.stats();
         }
+
         self.transitions = self.transitions.wrapping_add(1);
         self.last_seq = seq;
         self.last_usable = true;
-        self.last_reason = 0;
-        self.rebuild_forecast(rng, div);
+
+        let normal_rng = if let Some((first, gap)) = inferred {
+            self.filter_rng_current(div, first, gap)
+        } else {
+            false
+        };
+
+        if normal_rng && !forecast_miss {
+            self.quiet_streak = self.quiet_streak.wrapping_add(1);
+            self.last_reason = 0;
+            self.rebuild_forecast(rng, div);
+        } else {
+            self.rng_skips = self.rng_skips.wrapping_add(1);
+            self.quiet_streak = 0;
+            self.forecast_valid = false;
+            self.lock_prefix = 0;
+            self.last_reason = if forecast_miss { 9 } else { 8 };
+        }
         self.stats()
     }
 }
@@ -307,7 +372,8 @@ mod tests {
             candidates: [EMPTY_CANDIDATE; MAX_CANDIDATES], count: 0, transitions: 0,
             last_seq: 1410, last_usable: true, forecast_valid: false, forecast_rng: 0,
             forecast_div: 0, lock_prefix: 0, forecast_checks: 0, forecast_hits: 0,
-            resets: 0, last_k: 0, last_div_step: 0, last_gap: 0xFF, last_reason: 0,
+            resets: 0, quiet_streak: 0, rng_skips: 0, last_k: 0,
+            last_div_step: 0, last_gap: 0xFF, last_reason: 0,
             arm_stats: TrackerStats::default(),
         }
     }
@@ -338,16 +404,39 @@ mod tests {
                 assert_eq!(s.lock_prefix,3);
                 assert_eq!(s.forecast_checks,s.forecast_hits);
                 assert!(s.transitions>=6);
+                assert_eq!(s.rng_skips,0);
             }
         }
     }
 
     #[test]
-    fn bad_first_relation_reseeds_from_live_k_not_fixed_18h() {
+    fn live_k_seed_does_not_require_fixed_18h() {
         let mut t=fresh();
-        let s=t.observe(1410,0x102000,0x10,1411,0x303F00,0x22,true);
+        let s=t.observe(1410,0x108000,0x10,1411,0x405000,0x22,true);
         assert_eq!(s.last_k,0x0E);
         assert_ne!(s.fits,0);
         assert_eq!(s.transitions,1);
+    }
+
+    #[test]
+    fn extra_rng_frame_keeps_div_phase_candidates() {
+        let samples = [
+            (0xCD9E00u32,0x0Cu8),(0x036700,0x1E),(0x4B1F00,0x30),
+            (0xA6C400,0x42),(0x135600,0x55),
+        ];
+        let mut t = fresh();
+        for i in 1..samples.len() {
+            let (pr,pd)=samples[i-1]; let (r,d)=samples[i];
+            let _=t.observe(1409+i as u32,pr,pd,1410+i as u32,r,d,true);
+        }
+        let before_count=t.count;
+        let before_resets=t.resets;
+        let s=t.observe(1414,0x135600,0x55,1415,0x000000,0x67,true);
+        assert!(s.transitions>=5);
+        assert_ne!(s.fits,0);
+        assert!(s.fits as usize <= before_count);
+        assert_eq!(s.resets,before_resets);
+        assert_eq!(s.rng_skips,1);
+        assert_eq!(s.quiet_streak,0);
     }
 }

@@ -72,4 +72,43 @@ replace_once(
     "write F600 call field",
 )
 
-print("Applied Suicune Endpoint Probe v4.1.1 F600 phase logger")
+# Save two small ARM code windows only AFTER the encounter result is locked.
+# This adds zero hot-path reads.  0x1AF11C is the JP VC GB memory-read hook
+# site; Deep Probe also reports host_pc around 0x14AAA4.  Disassembling these
+# windows lets us determine exactly how F600/F604 feed the emulated rDIV read.
+replace_once(
+    trace,
+    """        // v3.5 intentionally omits the heavy differential dump. F604 is now
+        // sampled directly at every rDIV hook, so ordinary probe timing stays clean.
+
+        pnp::trace_file_close();""",
+    """        // v3.5 intentionally omits the heavy differential dump. F604 is now
+        // sampled directly at every rDIV hook, so ordinary probe timing stays clean.
+
+        line.clear();
+        let _ = write!(line, \"\\narm_code,base,hex\\n\");
+        pnp::trace_file_write(line.as_bytes());
+
+        let arm_memread = pnp::read_array::<256>(0x001af080);
+        line.clear();
+        let _ = write!(line, \"ARM_MEMREAD,001AF080,\");
+        for byte in arm_memread.iter() {
+            let _ = write!(line, \"{:02X}\", byte);
+        }
+        let _ = write!(line, \"\\n\");
+        pnp::trace_file_write(line.as_bytes());
+
+        let arm_caller = pnp::read_array::<256>(0x0014aa40);
+        line.clear();
+        let _ = write!(line, \"ARM_CALLER,0014AA40,\");
+        for byte in arm_caller.iter() {
+            let _ = write!(line, \"{:02X}\", byte);
+        }
+        let _ = write!(line, \"\\n\");
+        pnp::trace_file_write(line.as_bytes());
+
+        pnp::trace_file_close();""",
+    "add post-result ARM code dump",
+)
+
+print("Applied Suicune Endpoint Probe v4.1.1 F600 phase logger + ARM code dump")

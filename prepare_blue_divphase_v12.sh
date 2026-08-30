@@ -3,7 +3,10 @@ set -eu
 
 RUST=reader_core/src/gen1/mod.rs
 TRACKER=reader_core/src/gen1/phase_tracker.rs
+TRACKER_V743=reader_core/src/gen1/phase_tracker_v743.rs
 CTRACE=3gx/sources/blue_dvtrace.c
+
+cp "$TRACKER_V743" "$TRACKER"
 
 if ! grep -q '^mod phase_tracker;$' "$RUST"; then
     sed -i '1imod phase_tracker;' "$RUST"
@@ -79,8 +82,10 @@ if ! grep -q 'PH T{} F{} S{}' "$RUST"; then
     mv "$RUST.tmp" "$RUST"
 fi
 
-sed -i 's/BLUE MEWTWO RNG v7.3.2 SAFE/BLUE MEWTWO RNG v7.4.2 DIVPHASE/' "$RUST"
-sed -i 's/PRED LOCKED: phase learn/DIVPHASE TOLERANT/' "$RUST"
+sed -i 's/BLUE MEWTWO RNG v7.3.2 SAFE/BLUE MEWTWO RNG v7.4.3 DIVPHASE/' "$RUST"
+sed -i 's/BLUE MEWTWO RNG v7.4.2 DIVPHASE/BLUE MEWTWO RNG v7.4.3 DIVPHASE/' "$RUST"
+sed -i 's/PRED LOCKED: phase learn/DIVPHASE OFFSET REACQ/' "$RUST"
+sed -i 's/DIVPHASE TOLERANT/DIVPHASE OFFSET REACQ/' "$RUST"
 
 sed -i 's/phase_probe_begin(trigger_entry.div);/phase_probe_reset();/' "$CTRACE"
-sed -i 's/^[[:space:]]*write_phase_probe(file, &off);/    \/\* v14: memory probe retired; tolerant DIV phase tracker is Rust-only. \*\//g' "$CTRACE"
+sed -i 's/^[[:space:]]*write_phase_probe(file, &off);/    \/\* v15: memory probe retired; phase-preserving offset reacquire is Rust-only. \*\//g' "$CTRACE"

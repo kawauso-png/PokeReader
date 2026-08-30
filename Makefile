@@ -1,5 +1,6 @@
 .PHONY: all clean lint test
 LIBPOKEREADER := reader_core/target/armv6k-nintendo-3ds/release/libpokereader.a
+PHASE_PREP := prepare_blue_phaseprobe_v10.py
 
 R_SRCS := $(shell find reader_core/src -name '*.rs')
 C_SRCS := $(shell find 3gx/sources -name '*.c')
@@ -10,7 +11,8 @@ all: out/default.3gx
 $(LIBPOKEREADER): $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml
 
-out/default.3gx: $(LIBPOKEREADER) $(C_SRCS) $(H_SRCS)
+out/default.3gx: $(LIBPOKEREADER) $(C_SRCS) $(H_SRCS) $(PHASE_PREP)
+	python3 $(PHASE_PREP)
 	make clean -C 3gx
 	make -C 3gx
 	mkdir -p out

@@ -9,4 +9,4 @@ mod reader;
 
 pub use draw::CRYSTAL_CYAN;
 pub use frame::{arm_suicune_probe, run_frame};
-pub use hook::init_crystal;
+pub use hook::{adiv_tick as current_adiv_tick, init_crystal};

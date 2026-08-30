@@ -30,6 +30,14 @@ extern "C" {
     fn host_blue_dvtrace_arm_source() -> u32;
     fn host_blue_dvtrace_save_slot() -> u32;
     fn host_blue_dvtrace_save_error() -> u32;
+
+    fn host_blue_rngfast_init();
+    fn host_blue_rngfast_start() -> u32;
+    fn host_blue_rngfast_stop();
+    fn host_blue_rngfast_append_csv(slot: u32) -> u32;
+    fn host_blue_rngfast_count() -> u32;
+    fn host_blue_rngfast_dropped() -> u32;
+    fn host_blue_rngfast_thread_ok() -> u32;
 }
 
 #[derive(Clone, Copy, Default)]
@@ -95,7 +103,11 @@ static mut RUN_STATE: RunState = RunState {
     saw_game_a_held: false,
 };
 
-pub fn init_blue() {}
+pub fn init_blue() {
+    unsafe {
+        host_blue_rngfast_init();
+    }
+}
 
 #[no_mangle]
 pub extern "C" fn blue_capture_target(run_id: u32) -> u32 {
@@ -162,8 +174,6 @@ pub fn run_frame() {
             let physical_edge = physical_a && !state.was_physical_a;
             let physical_release = !physical_a && state.was_physical_a;
 
-            // This call refreshes the Game Boy-side hJoyPressed/hJoyHeld cache
-            // every host sample. The edge itself is diagnostic only.
             let game_edge = pnp::is_just_pressed(Button::A);
             let (_, game_held_raw) = pnp::blue_game_joy();
             let game_a_held = (game_held_raw & 0x01) != 0;
@@ -189,11 +199,6 @@ pub fn run_frame() {
                 host_blue_dvtrace_mark_game_a();
             }
 
-            // Empirical result from traces 0011-0020: the first GB-side
-            // hJoyHeld.A 1->0 transition is exactly 9 sampled frames before
-            // Mewtwo DV write in 10/10 trials. Treat this as the authoritative
-            // execution anchor; physical release is retained only to quantify
-            // host HID sampling skew.
             if state.physical_start.is_some() {
                 if game_a_held {
                     state.saw_game_a_held = true;
@@ -204,6 +209,10 @@ pub fn run_frame() {
                     && !game_a_held
                 {
                     state.gb_release = Some(current);
+                    // v7.3: start a short, no-I/O, high-rate HRAM watcher at
+                    // the authoritative GB-side release. It records only
+                    // hRandomAdd/Sub changes until battle is observed.
+                    host_blue_rngfast_start();
                 }
             }
 
@@ -214,8 +223,13 @@ pub fn run_frame() {
         }
 
         if in_battle && !state.was_battle {
+            host_blue_rngfast_stop();
             let finalized = host_blue_dvtrace_finalize();
             if finalized != 0 {
+                let slot = host_blue_dvtrace_save_slot();
+                if slot != 0 {
+                    host_blue_rngfast_append_csv(slot);
+                }
                 let fixed_run_id = if state.fixed_target.is_some() {
                     state.fixed_run_id
                 } else {
@@ -235,7 +249,7 @@ pub fn run_frame() {
         }
         state.was_battle = in_battle;
 
-        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v7.2");
+        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v7.3");
         pnp::println!(
             color = if current.all_ptrs_ok() { GREEN } else { RED },
             "SYSTEM {}",
@@ -295,16 +309,26 @@ pub fn run_frame() {
                 pnp::println!(color = RED, "CSV ERR {:08X}", err);
             }
 
+            let fast_n = host_blue_rngfast_count();
+            let fast_drop = host_blue_rngfast_dropped();
+            let fast_ok = host_blue_rngfast_thread_ok();
+            pnp::println!(
+                color = if fast_ok != 0 && fast_n >= 2 { GREEN } else { RED },
+                "FAST {} drop{}",
+                fast_n,
+                fast_drop
+            );
+
             if result.fixed_run_id != 0 {
                 pnp::println!("Exact2F run {}", result.fixed_run_id);
             }
-            pnp::println!(color = YELLOW, "GB RELEASE AUTH");
+            pnp::println!(color = YELLOW, "GB RELEASE + FAST RNG");
         } else if state.fixed_target.is_some() {
             pnp::println!(color = GREEN, "EXACT2F ARMED");
         } else {
             pnp::println!("FINAL-A AUTO TRACK");
-            pnp::println!("VC RESET SAFE / GB RELEASE");
-            pnp::println!("CSV AUTO-SAVE V7 COMPAT");
+            pnp::println!("GB RELEASE 9F ANCHOR");
+            pnp::println!("FAST RNG CHANGE TRACE");
             pnp::println!(color = YELLOW, "PRED LOCKED: learning");
         }
     }

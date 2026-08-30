@@ -5,6 +5,7 @@ const MAX_CANDIDATES: u16 = 8;
 
 #[derive(Clone, Copy, Default)]
 pub struct AutoPauseStats {
+    pub enabled: bool,
     pub latched: bool,
     pub fired: bool,
     pub target_seq: u32,
@@ -16,6 +17,7 @@ pub struct AutoPauseStats {
 }
 
 static mut LIVE: AutoPauseStats = AutoPauseStats {
+    enabled: false,
     latched: false,
     fired: false,
     target_seq: 0,
@@ -26,6 +28,13 @@ static mut LIVE: AutoPauseStats = AutoPauseStats {
     residue20: 0,
 };
 static mut FIRE_PENDING: bool = false;
+
+fn reset_all(enabled: bool) {
+    unsafe {
+        LIVE = AutoPauseStats { enabled, ..AutoPauseStats::default() };
+        FIRE_PENDING = false;
+    }
+}
 
 fn clear_latch() {
     unsafe {
@@ -39,8 +48,22 @@ fn clear_latch() {
     }
 }
 
-pub fn observe(seq: u32, adp: AdaptiveStats, fc: ForecastStats) -> AutoPauseStats {
+pub fn observe(
+    seq: u32,
+    adp: AdaptiveStats,
+    fc: ForecastStats,
+    enabled: bool,
+) -> AutoPauseStats {
     unsafe {
+        // Search mode is explicitly armed at the Mewtwo position. Turning it
+        // OFF completely resets a previous fire so the same plugin process can
+        // be re-armed after a save/reset cycle.
+        if !enabled {
+            reset_all(false);
+            return LIVE;
+        }
+        LIVE.enabled = true;
+
         if LIVE.fired {
             LIVE.remain = 0;
             return LIVE;
@@ -140,17 +163,28 @@ mod tests {
     }
 
     #[test]
-    fn compact_shiny_set_latches_and_fires_exactly_at_target() {
-        unsafe { LIVE = AutoPauseStats::default(); FIRE_PENDING = false; }
+    fn disabled_mode_never_latches() {
+        unsafe { reset_all(false); }
         let a = adp(0x18, 7);
-        let s = observe(100, a, fc(106, 7, 1));
+        let s = observe(100, a, fc(106, 7, 1), false);
+        assert!(!s.enabled);
+        assert!(!s.latched);
+        assert!(!take_fire());
+    }
+
+    #[test]
+    fn compact_shiny_set_latches_and_fires_exactly_at_target() {
+        unsafe { reset_all(false); }
+        let a = adp(0x18, 7);
+        let s = observe(100, a, fc(106, 7, 1), true);
+        assert!(s.enabled);
         assert!(s.latched);
         assert_eq!(s.remain, 6);
         for seq in 101..106 {
-            assert!(!observe(seq, a, fc(200, 7, 1)).fired);
+            assert!(!observe(seq, a, fc(200, 7, 1), true).fired);
             assert!(!take_fire());
         }
-        let s = observe(106, a, fc(200, 7, 1));
+        let s = observe(106, a, fc(200, 7, 1), true);
         assert!(s.fired);
         assert!(take_fire());
         assert!(!take_fire());
@@ -158,19 +192,19 @@ mod tests {
 
     #[test]
     fn wide_or_nonshiny_set_never_latches() {
-        unsafe { LIVE = AutoPauseStats::default(); FIRE_PENDING = false; }
+        unsafe { reset_all(false); }
         let a = adp(0x18, 7);
-        assert!(!observe(100, a, fc(105, 9, 1)).latched);
-        assert!(!observe(101, a, fc(105, 8, 0)).latched);
+        assert!(!observe(100, a, fc(105, 9, 1), true).latched);
+        assert!(!observe(101, a, fc(105, 8, 0), true).latched);
     }
 
     #[test]
     fn model_change_cancels_stale_target() {
-        unsafe { LIVE = AutoPauseStats::default(); FIRE_PENDING = false; }
+        unsafe { reset_all(false); }
         let a = adp(0x18, 7);
-        assert!(observe(100, a, fc(106, 7, 1)).latched);
+        assert!(observe(100, a, fc(106, 7, 1), true).latched);
         let b = adp(0x0E, 3);
-        assert!(!observe(101, b, ForecastStats { valid: true, ..ForecastStats::default() }).latched);
+        assert!(!observe(101, b, ForecastStats { valid: true, ..ForecastStats::default() }, true).latched);
         assert!(!take_fire());
     }
 }

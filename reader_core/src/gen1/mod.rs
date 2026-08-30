@@ -30,6 +30,12 @@ extern "C" {
     fn host_blue_dvtrace_arm_source() -> u32;
     fn host_blue_dvtrace_save_slot() -> u32;
     fn host_blue_dvtrace_save_error() -> u32;
+
+    fn host_blue_gbrelease_reset();
+    fn host_blue_gbrelease_mark();
+    fn host_blue_gbrelease_append_csv(slot: u32) -> u32;
+    fn host_blue_gbrelease_seq() -> u32;
+    fn host_blue_gbrelease_valid() -> u32;
 }
 
 #[derive(Clone, Copy, Default)]
@@ -95,6 +101,8 @@ static mut RUN_STATE: RunState = RunState {
     saw_game_a_held: false,
 };
 
+// Intentionally empty. v7.3 FastRNG froze at boot because it created a raw
+// SVC thread here. The safe-marker build adds no startup work at all.
 pub fn init_blue() {}
 
 #[no_mangle]
@@ -162,13 +170,17 @@ pub fn run_frame() {
             let physical_edge = physical_a && !state.was_physical_a;
             let physical_release = !physical_a && state.was_physical_a;
 
-            // This call refreshes the Game Boy-side hJoyPressed/hJoyHeld cache
-            // every host sample. The edge itself is diagnostic only.
+            // Refresh the Game Boy-side hJoyPressed/hJoyHeld cache every host
+            // sample. The edge itself remains diagnostic only.
             let game_edge = pnp::is_just_pressed(Button::A);
             let (_, game_held_raw) = pnp::blue_game_joy();
             let game_a_held = (game_held_raw & 0x01) != 0;
 
             if physical_edge {
+                // VC Reset does not reload the 3GX process. Clear all marker
+                // state at the new physical Final-A edge so no previous trial
+                // can leak into the new CSV.
+                host_blue_gbrelease_reset();
                 host_blue_dvtrace_mark_physical_a();
                 host_blue_dvtrace_set_arm_source(ARM_SOURCE_PHYSICAL_A);
                 if host_blue_dvtrace_arm() != 0 {
@@ -189,11 +201,9 @@ pub fn run_frame() {
                 host_blue_dvtrace_mark_game_a();
             }
 
-            // Empirical result from traces 0011-0020: the first GB-side
-            // hJoyHeld.A 1->0 transition is exactly 9 sampled frames before
-            // Mewtwo DV write in 10/10 trials. Treat this as the authoritative
-            // execution anchor; physical release is retained only to quantify
-            // host HID sampling skew.
+            // Traces 0011-0022 established this as the authoritative anchor:
+            // the GB-side hJoyHeld.A 1->0 transition was exactly 9 sampled
+            // frames before Mewtwo DV write in 12/12 trials.
             if state.physical_start.is_some() {
                 if game_a_held {
                     state.saw_game_a_held = true;
@@ -204,6 +214,9 @@ pub fn run_frame() {
                     && !game_a_held
                 {
                     state.gb_release = Some(current);
+                    // Safe v7.3.1 marker: copy already-sampled seq/RNG/DIV only.
+                    // No thread, hook, scan, sleep or I/O happens here.
+                    host_blue_gbrelease_mark();
                 }
             }
 
@@ -216,6 +229,14 @@ pub fn run_frame() {
         if in_battle && !state.was_battle {
             let finalized = host_blue_dvtrace_finalize();
             if finalized != 0 {
+                // blue_dvtrace_finalize() has already completed the ordinary
+                // CSV and left the timing-critical transition. Appending the
+                // release marker here cannot perturb the generated Mewtwo DV.
+                let slot = host_blue_dvtrace_save_slot();
+                if slot != 0 {
+                    let _ = host_blue_gbrelease_append_csv(slot);
+                }
+
                 let fixed_run_id = if state.fixed_target.is_some() {
                     state.fixed_run_id
                 } else {
@@ -235,7 +256,7 @@ pub fn run_frame() {
         }
         state.was_battle = in_battle;
 
-        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v7.2");
+        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v7.3.1 SAFE");
         pnp::println!(
             color = if current.all_ptrs_ok() { GREEN } else { RED },
             "SYSTEM {}",
@@ -295,17 +316,26 @@ pub fn run_frame() {
                 pnp::println!(color = RED, "CSV ERR {:08X}", err);
             }
 
+            let mark_ok = host_blue_gbrelease_valid();
+            let mark_seq = host_blue_gbrelease_seq();
+            pnp::println!(
+                color = if mark_ok != 0 { GREEN } else { RED },
+                "GBMARK {} Q{}",
+                if mark_ok != 0 { "OK" } else { "MISS" },
+                mark_seq
+            );
+
             if result.fixed_run_id != 0 {
                 pnp::println!("Exact2F run {}", result.fixed_run_id);
             }
-            pnp::println!(color = YELLOW, "GB RELEASE AUTH");
+            pnp::println!(color = YELLOW, "SAFE RELEASE MICROPHASE");
         } else if state.fixed_target.is_some() {
             pnp::println!(color = GREEN, "EXACT2F ARMED");
         } else {
             pnp::println!("FINAL-A AUTO TRACK");
-            pnp::println!("VC RESET SAFE / GB RELEASE");
-            pnp::println!("CSV AUTO-SAVE V7 COMPAT");
-            pnp::println!(color = YELLOW, "PRED LOCKED: learning");
+            pnp::println!("GB RELEASE 9F ANCHOR");
+            pnp::println!("NO THREAD / NO FAST HOOK");
+            pnp::println!(color = YELLOW, "PRED LOCKED: microphase");
         }
     }
 }

@@ -11,18 +11,28 @@ const MAX_A_TO_BATTLE_HOST_FRAMES: u32 = 120;
 static mut HOST_FRAME: u32 = 0;
 
 extern "C" {
-    fn host_blue_stage7_sample() -> u32;
-    fn host_blue_stage7_wram_slot() -> u32;
-    fn host_blue_stage7_hram_slot() -> u32;
-    fn host_blue_stage7_div_slot() -> u32;
-    fn host_blue_stage7_wram() -> u32;
-    fn host_blue_stage7_hram() -> u32;
-    fn host_blue_stage7_div_host() -> u32;
-    fn host_blue_stage7_rng_pack() -> u32;
-    fn host_blue_stage7_div_value() -> u32;
-    fn host_blue_stage7_raw_dv() -> u32;
-    fn host_blue_stage7_div_changes() -> u32;
-    fn host_blue_stage7_div_steps() -> u32;
+    fn host_blue_stage8_sample() -> u32;
+    fn host_blue_stage8_wram_slot() -> u32;
+    fn host_blue_stage8_hram_slot() -> u32;
+    fn host_blue_stage8_div_slot() -> u32;
+    fn host_blue_stage8_wram() -> u32;
+    fn host_blue_stage8_hram() -> u32;
+    fn host_blue_stage8_div_host() -> u32;
+    fn host_blue_stage8_rng_pack() -> u32;
+    fn host_blue_stage8_div_value() -> u32;
+    fn host_blue_stage8_raw_dv() -> u32;
+    fn host_blue_stage8_div_changes() -> u32;
+    fn host_blue_stage8_div_steps() -> u32;
+
+    fn host_blue_stage8_pc_slot() -> u32;
+    fn host_blue_stage8_pc() -> u32;
+    fn host_blue_stage8_pc_changes() -> u32;
+    fn host_blue_stage8_pc_samples() -> u32;
+    fn host_blue_stage8_map_pc() -> u32;
+    fn host_blue_stage8_map_hits() -> u32;
+    fn host_blue_stage8_map_hit_sample() -> u32;
+    fn host_blue_stage8_map_rng_pack() -> u32;
+    fn host_blue_stage8_map_div_value() -> u32;
 }
 
 #[derive(Clone, Copy, Default)]
@@ -37,6 +47,10 @@ struct Snapshot {
 impl Snapshot {
     fn all_ptrs_ok(self) -> bool {
         self.status & 0x07 == 0x07
+    }
+
+    fn pc_ok(self) -> bool {
+        self.status & (1 << 4) != 0
     }
 
     fn in_mewtwo_battle(self) -> bool {
@@ -87,13 +101,13 @@ fn shiny_from_raw(raw: u16) -> bool {
 }
 
 fn sample() -> Snapshot {
-    let status = unsafe { host_blue_stage7_sample() };
+    let status = unsafe { host_blue_stage8_sample() };
     Snapshot {
         host_frame: unsafe { HOST_FRAME },
         status,
-        rng: unsafe { host_blue_stage7_rng_pack() },
-        div: unsafe { host_blue_stage7_div_value() } as u8,
-        raw_dv: unsafe { host_blue_stage7_raw_dv() } as u16,
+        rng: unsafe { host_blue_stage8_rng_pack() },
+        div: unsafe { host_blue_stage8_div_value() } as u8,
+        raw_dv: unsafe { host_blue_stage8_raw_dv() } as u16,
     }
 }
 
@@ -149,21 +163,32 @@ pub fn run_frame() {
         }
         state.was_battle = in_battle;
 
-        let wslot = host_blue_stage7_wram_slot();
-        let hslot = host_blue_stage7_hram_slot();
-        let dslot = host_blue_stage7_div_slot();
-        let wram = host_blue_stage7_wram();
-        let hram = host_blue_stage7_hram();
-        let div_host = host_blue_stage7_div_host();
-        let dchg = host_blue_stage7_div_changes();
-        let dsteps = host_blue_stage7_div_steps();
+        let wslot = host_blue_stage8_wram_slot();
+        let hslot = host_blue_stage8_hram_slot();
+        let dslot = host_blue_stage8_div_slot();
+        let wram = host_blue_stage8_wram();
+        let hram = host_blue_stage8_hram();
+        let div_host = host_blue_stage8_div_host();
+        let dchg = host_blue_stage8_div_changes();
+        let dsteps = host_blue_stage8_div_steps();
 
-        pnp::println!(color = BLUE, "BLUE RECOVERED STAGE7");
+        let pc_slot = host_blue_stage8_pc_slot();
+        let pc = host_blue_stage8_pc() as u16;
+        let pc_ch = host_blue_stage8_pc_changes();
+        let pc_samples = host_blue_stage8_pc_samples();
+        let map_pc = host_blue_stage8_map_pc() as u16;
+        let map_hits = host_blue_stage8_map_hits();
+        let map_sample = host_blue_stage8_map_hit_sample();
+        let map_rng = host_blue_stage8_map_rng_pack();
+        let map_div = host_blue_stage8_map_div_value() as u8;
+
+        pnp::println!(color = BLUE, "BLUE RECOVERED STAGE8 PC");
         pnp::println!(
-            color = if current.all_ptrs_ok() { GREEN } else { RED },
-            "PTR {} ST{:02X}",
-            if current.all_ptrs_ok() { "ALL3 OK" } else { "CHECK" },
-            current.status & 0x0F
+            color = if current.all_ptrs_ok() && current.pc_ok() { GREEN } else { RED },
+            "PTR3 {} PC {} ST{:02X}",
+            if current.all_ptrs_ok() { "OK" } else { "NO" },
+            if current.pc_ok() { "OK" } else { "NO" },
+            current.status & 0x1F
         );
         pnp::println!("W {:08X}>{:08X}", wslot, wram);
         pnp::println!("H {:08X}>{:08X}", hslot, hram);
@@ -174,6 +199,28 @@ pub fn run_frame() {
         let frame = (current.rng & 0xFF) as u8;
         pnp::println!("NOW R{:02X}{:02X} F{:02X} D{:02X}", add, sub, frame, current.div);
         pnp::println!("DIV ch{} ds{}", dchg, dsteps);
+
+        pnp::println!(
+            color = if current.pc_ok() { GREEN } else { RED },
+            "PC {:08X}>{:04X} ch{}",
+            pc_slot,
+            pc,
+            pc_ch
+        );
+        pnp::println!("PC samples {} map {:04X}", pc_samples, map_pc);
+        pnp::println!(
+            color = if map_hits != 0 { GREEN } else { WHITE },
+            "MapPC hits {} lastS{}",
+            map_hits,
+            map_sample
+        );
+        if map_hits != 0 {
+            let ma = ((map_rng >> 16) & 0xFF) as u8;
+            let ms = ((map_rng >> 8) & 0xFF) as u8;
+            let mf = (map_rng & 0xFF) as u8;
+            pnp::println!("MAP R{:02X}{:02X} F{:02X} D{:02X}", ma, ms, mf, map_div);
+        }
+
         pnp::println!("2F ok{} / 1F rej{}", state.valid_2f, state.reject_1f);
 
         if in_battle {
@@ -188,9 +235,8 @@ pub fn run_frame() {
             pnp::println!("A started H{}; KEEP A", pending.host_frame);
         } else if let Some(valid) = state.last_valid_2f {
             pnp::println!(color = GREEN, "A 2F VALID H{}", valid.host_frame);
-            pnp::println!("Hands off; wait battle");
         } else {
-            pnp::println!("READY: final A must be 2F");
+            pnp::println!("Stand before Mewtwo 5 sec");
         }
 
         if let Some(result) = state.result {

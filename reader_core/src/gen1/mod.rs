@@ -215,19 +215,33 @@ pub fn run_frame() {
             let game_a_held = (game_held_raw & 0x01) != 0;
 
             if physical_edge {
-                // VC Reset does not reload the 3GX process. Clear all marker
-                // state at the new physical Final-A edge so no previous trial
-                // can leak into the new CSV.
+                // VC Reset does not reload the 3GX process. Clear stale release
+                // state and always keep the physical marker for diagnostics.
                 host_blue_gbrelease_reset();
                 host_blue_dvtrace_mark_physical_a();
-                host_blue_dvtrace_set_arm_source(ARM_SOURCE_PHYSICAL_A);
-                if host_blue_dvtrace_arm() != 0 {
-                    state.normal_trigger = Some(current);
+
+                if state.fixed_target.is_some() {
+                    // Exact2F was already armed by blue_capture_target() while
+                    // paused. The first allowed A frame necessarily creates a
+                    // physical A edge; do NOT re-arm as PHYSICAL_A here or the
+                    // Exact2F trigger snapshot/source would be overwritten.
+                    // Keep only the physical/GB-release markers for this run.
                     state.physical_start = Some(current);
                     state.physical_release = None;
                     state.gb_release = None;
                     state.saw_game_a_held = game_a_held;
                     state.result = None;
+                } else {
+                    // Ordinary physical-A tracing remains unchanged.
+                    host_blue_dvtrace_set_arm_source(ARM_SOURCE_PHYSICAL_A);
+                    if host_blue_dvtrace_arm() != 0 {
+                        state.normal_trigger = Some(current);
+                        state.physical_start = Some(current);
+                        state.physical_release = None;
+                        state.gb_release = None;
+                        state.saw_game_a_held = game_a_held;
+                        state.result = None;
+                    }
                 }
             }
 

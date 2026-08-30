@@ -7,11 +7,14 @@
 #define HRAM_SLOT 0x0021B6DCu
 #define DIV_SLOT  0x0021B7B4u
 
-#define PC_SCAN_MIN 0x0021B000u
-#define PC_SCAN_MAX 0x0021C000u
+// Stage 9 direct signature scan found A1C8 once at 0021B8F8 and C8A1 at
+// 0021B890. Stage 10 removes the expensive page scan and samples these two
+// halfwords every host frame to determine whether either behaves like LR35902
+// PC rather than coincidental data.
+#define PC_A_ADDR 0x0021B8F8u
+#define PC_S_ADDR 0x0021B890u
 #define MAP_PC 0xA1C8u
 #define MAP_PC_SWAP 0xC8A1u
-#define MAX_PC_CANDIDATES 4u
 
 #define OFF_ENEMY_SPECIES 0x0FCCu
 #define OFF_ENEMY_DV_ATK_DEF 0x0FD8u
@@ -36,16 +39,19 @@ static u32 div_steps = 0;
 static u8 prev_div = 0;
 static bool have_prev_div = false;
 
-static u32 scan_frames = 0;
-static u32 a1_total_hits = 0;
-static u32 sw_total_hits = 0;
-static u32 a1_addr[MAX_PC_CANDIDATES] = {0};
-static u32 a1_hits[MAX_PC_CANDIDATES] = {0};
-static u32 sw_addr[MAX_PC_CANDIDATES] = {0};
-static u32 sw_hits[MAX_PC_CANDIDATES] = {0};
-static u32 last_a1_rng = 0;
-static u32 last_a1_div = 0;
-static u32 last_a1_addr = 0;
+typedef struct
+{
+    u16 value;
+    u16 prev;
+    u32 samples;
+    u32 changes;
+    u32 rom_range;
+    u32 map_hits;
+    bool have_prev;
+} PcProbe;
+
+static PcProbe probe_a = {0};
+static PcProbe probe_s = {0};
 
 static bool query_span_mapped(u32 start, u32 end)
 {
@@ -74,68 +80,30 @@ static bool div_like_delta(u8 delta)
     return delta >= 14u && delta <= 22u;
 }
 
-static void record_candidate(u32 addr, u32 *addrs, u32 *hits)
+static void sample_pc_probe(u32 addr, u16 signature, PcProbe *p)
 {
-    for (u32 i = 0; i < MAX_PC_CANDIDATES; i++)
-    {
-        if (addrs[i] == addr)
-        {
-            hits[i]++;
-            return;
-        }
-    }
-
-    for (u32 i = 0; i < MAX_PC_CANDIDATES; i++)
-    {
-        if (addrs[i] == 0)
-        {
-            addrs[i] = addr;
-            hits[i] = 1;
-            return;
-        }
-    }
-
-    // Keep the four most frequently recurring addresses if more than four
-    // locations happen to contain the signature over time.
-    u32 min_i = 0;
-    for (u32 i = 1; i < MAX_PC_CANDIDATES; i++)
-    {
-        if (hits[i] < hits[min_i])
-            min_i = i;
-    }
-    if (hits[min_i] <= 1)
-    {
-        addrs[min_i] = addr;
-        hits[min_i] = 1;
-    }
-}
-
-static void scan_pc_signature(void)
-{
-    if (!query_span_mapped(PC_SCAN_MIN, PC_SCAN_MAX - 1u))
+    if (!query_span_mapped(addr, addr + 1u))
         return;
 
-    scan_frames++;
-    for (u32 addr = PC_SCAN_MIN; addr + 1u < PC_SCAN_MAX; addr += 2u)
-    {
-        u16 v = *(vu16 *)addr;
-        if (v == MAP_PC)
-        {
-            a1_total_hits++;
-            record_candidate(addr, a1_addr, a1_hits);
-            last_a1_addr = addr;
-            last_a1_rng = rng_pack;
-            last_a1_div = div_value;
-        }
-        if (v == MAP_PC_SWAP)
-        {
-            sw_total_hits++;
-            record_candidate(addr, sw_addr, sw_hits);
-        }
-    }
+    u16 v = *(vu16 *)addr;
+    p->value = v;
+    p->samples++;
+
+    if (p->have_prev && v != p->prev)
+        p->changes++;
+    p->prev = v;
+    p->have_prev = true;
+
+    // The Japanese Blue ROM executes primarily from 0000-7FFF.  This is not
+    // sufficient by itself to prove a PC, but combined with a high per-frame
+    // change rate and A1C8 recurrence it is a useful discriminator.
+    if (v <= 0x7FFFu)
+        p->rom_range++;
+    if (v == signature)
+        p->map_hits++;
 }
 
-u32 host_blue_stage9_sample(void)
+u32 host_blue_stage10_sample(void)
 {
     status = 0;
     wram = 0;
@@ -202,27 +170,35 @@ u32 host_blue_stage9_sample(void)
         }
     }
 
-    scan_pc_signature();
-    status |= 1u << 4;
+    sample_pc_probe(PC_A_ADDR, MAP_PC, &probe_a);
+    sample_pc_probe(PC_S_ADDR, MAP_PC_SWAP, &probe_s);
+    if (probe_a.samples != 0)
+        status |= 1u << 4;
+    if (probe_s.samples != 0)
+        status |= 1u << 5;
+
     return status;
 }
 
-u32 host_blue_stage9_wram(void) { return wram; }
-u32 host_blue_stage9_hram(void) { return hram; }
-u32 host_blue_stage9_div_host(void) { return div_host; }
-u32 host_blue_stage9_rng_pack(void) { return rng_pack; }
-u32 host_blue_stage9_div_value(void) { return div_value; }
-u32 host_blue_stage9_raw_dv(void) { return raw_dv; }
-u32 host_blue_stage9_div_changes(void) { return div_changes; }
-u32 host_blue_stage9_div_steps(void) { return div_steps; }
+u32 host_blue_stage10_wram(void) { return wram; }
+u32 host_blue_stage10_hram(void) { return hram; }
+u32 host_blue_stage10_div_host(void) { return div_host; }
+u32 host_blue_stage10_rng_pack(void) { return rng_pack; }
+u32 host_blue_stage10_div_value(void) { return div_value; }
+u32 host_blue_stage10_raw_dv(void) { return raw_dv; }
+u32 host_blue_stage10_div_changes(void) { return div_changes; }
+u32 host_blue_stage10_div_steps(void) { return div_steps; }
 
-u32 host_blue_stage9_scan_frames(void) { return scan_frames; }
-u32 host_blue_stage9_a1_total(void) { return a1_total_hits; }
-u32 host_blue_stage9_sw_total(void) { return sw_total_hits; }
-u32 host_blue_stage9_a1_addr(u32 i) { return i < MAX_PC_CANDIDATES ? a1_addr[i] : 0; }
-u32 host_blue_stage9_a1_hits(u32 i) { return i < MAX_PC_CANDIDATES ? a1_hits[i] : 0; }
-u32 host_blue_stage9_sw_addr(u32 i) { return i < MAX_PC_CANDIDATES ? sw_addr[i] : 0; }
-u32 host_blue_stage9_sw_hits(u32 i) { return i < MAX_PC_CANDIDATES ? sw_hits[i] : 0; }
-u32 host_blue_stage9_last_addr(void) { return last_a1_addr; }
-u32 host_blue_stage9_last_rng(void) { return last_a1_rng; }
-u32 host_blue_stage9_last_div(void) { return last_a1_div; }
+u32 host_blue_stage10_a_addr(void) { return PC_A_ADDR; }
+u32 host_blue_stage10_a_value(void) { return probe_a.value; }
+u32 host_blue_stage10_a_samples(void) { return probe_a.samples; }
+u32 host_blue_stage10_a_changes(void) { return probe_a.changes; }
+u32 host_blue_stage10_a_rom(void) { return probe_a.rom_range; }
+u32 host_blue_stage10_a_hits(void) { return probe_a.map_hits; }
+
+u32 host_blue_stage10_s_addr(void) { return PC_S_ADDR; }
+u32 host_blue_stage10_s_value(void) { return probe_s.value; }
+u32 host_blue_stage10_s_samples(void) { return probe_s.samples; }
+u32 host_blue_stage10_s_changes(void) { return probe_s.changes; }
+u32 host_blue_stage10_s_rom(void) { return probe_s.rom_range; }
+u32 host_blue_stage10_s_hits(void) { return probe_s.map_hits; }

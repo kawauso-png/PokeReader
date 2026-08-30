@@ -262,11 +262,25 @@ bool is_citra()
   return out != 0;
 }
 
+// svcQueryMemory succeeds even when the queried address belongs to a FREE
+// virtual-memory region.  Treat only non-FREE/non-RESERVED regions as mapped;
+// otherwise an arbitrary small value such as 0x00010000 can be mistaken for a
+// readable pointer and later dereferenced by Rust.
 static bool query_resolves(u32 addr)
 {
   MemInfo info;
   PageInfo page;
-  return svcQueryMemory(&info, &page, addr) == 0;
+  if (svcQueryMemory(&info, &page, addr) != 0)
+  {
+    return false;
+  }
+
+  if (info.state == MEMSTATE_FREE || info.state == MEMSTATE_RESERVED)
+  {
+    return false;
+  }
+
+  return addr >= info.base_addr && (addr - info.base_addr) < info.size;
 }
 
 bool is_memory_mapped(u32 addr)

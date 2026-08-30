@@ -1,6 +1,8 @@
 #[derive(Clone, Copy, Default)]
 pub struct KFrameStats {
     pub valid: bool,
+    pub phase20_known: bool,
+    pub phase20: u8,
     pub total: u32,
     pub hits: u32,
     pub special_total: u32,
@@ -16,12 +18,14 @@ pub struct KFrameStats {
 }
 
 static mut LIVE: KFrameStats = KFrameStats {
-    valid: false, total: 0, hits: 0, special_total: 0, special_hits: 0,
+    valid: false, phase20_known: false, phase20: 0,
+    total: 0, hits: 0, special_total: 0, special_hits: 0,
     frame_total: 0, frame_hits: 0, ignored: 0, last_k: 0,
     last_div_step: 0, last_gap: 0xFF, last_frame: 0, last_special: false,
 };
 static mut ARM: KFrameStats = KFrameStats {
-    valid: false, total: 0, hits: 0, special_total: 0, special_hits: 0,
+    valid: false, phase20_known: false, phase20: 0,
+    total: 0, hits: 0, special_total: 0, special_hits: 0,
     frame_total: 0, frame_hits: 0, ignored: 0, last_k: 0,
     last_div_step: 0, last_gap: 0xFF, last_frame: 0, last_special: false,
 };
@@ -49,6 +53,8 @@ fn frame_next(prev: u8) -> Option<u8> {
     }
 }
 
+fn marker_k(k: u8) -> bool { k >= 0x1A }
+
 fn allowed(special: bool, k: u8, div_step: u8, gap: u8) -> bool {
     if special {
         matches!((k, div_step, gap),
@@ -73,16 +79,16 @@ pub fn observe(prev_seq: u32, prev_rng: u32, prev_div: u8, prev_frame: u8,
             LIVE.ignored = LIVE.ignored.wrapping_add(1);
             return LIVE;
         }
+
+        // hFrameCounter is diagnostic only.  The predictive class is calibrated
+        // from K itself, so a fresh boot may begin at any frame/seq alignment.
         if let Some(expect) = frame_next(prev_frame) {
             if (1..=5).contains(&frame) {
                 LIVE.frame_total = LIVE.frame_total.wrapping_add(1);
                 if frame == expect { LIVE.frame_hits = LIVE.frame_hits.wrapping_add(1); }
             }
         }
-        if !(1..=5).contains(&frame) {
-            LIVE.ignored = LIVE.ignored.wrapping_add(1);
-            return LIVE;
-        }
+
         let div_step = div.wrapping_sub(prev_div);
         if !matches!(div_step, 0x12 | 0x13) {
             LIVE.ignored = LIVE.ignored.wrapping_add(1);
@@ -93,7 +99,23 @@ pub fn observe(prev_seq: u32, prev_rng: u32, prev_div: u8, prev_frame: u8,
             return LIVE;
         };
         let k = first.wrapping_sub(div);
-        let special = (seq & 3) == 0 && frame == 4;
+        LIVE.last_k = k;
+        LIVE.last_div_step = div_step;
+        LIVE.last_gap = gap;
+
+        // Trace 0040: all 26 K>=1A rows occurred at one seq mod20 residue,
+        // and every occurrence of that residue was K=1A/1B.  Use the first
+        // marker only to learn the residue; validation starts afterwards.
+        if !LIVE.phase20_known {
+            if marker_k(k) {
+                LIVE.phase20 = (seq % 20) as u8;
+                LIVE.phase20_known = true;
+            }
+            LIVE.ignored = LIVE.ignored.wrapping_add(1);
+            return LIVE;
+        }
+
+        let special = (seq % 20) as u8 == LIVE.phase20;
         let hit = allowed(special, k, div_step, gap);
         LIVE.valid = true;
         LIVE.total = LIVE.total.wrapping_add(1);
@@ -102,9 +124,6 @@ pub fn observe(prev_seq: u32, prev_rng: u32, prev_div: u8, prev_frame: u8,
             LIVE.special_total = LIVE.special_total.wrapping_add(1);
             LIVE.special_hits = LIVE.special_hits.wrapping_add(u32::from(hit));
         }
-        LIVE.last_k = k;
-        LIVE.last_div_step = div_step;
-        LIVE.last_gap = gap;
         LIVE.last_special = special;
         LIVE
     }
@@ -126,6 +145,9 @@ mod tests {
         for c in [(0x17,0x13,1),(0x18,0x12,0),(0x18,0x12,1),(0x18,0x13,0),(0x19,0x12,0)] {
             assert!(allowed(false,c.0,c.1,c.2));
         }
+        assert!(marker_k(0x1A));
+        assert!(marker_k(0x1B));
+        assert!(!marker_k(0x19));
         assert!(!allowed(false,0x1B,0x12,0));
         assert!(!allowed(true,0x18,0x12,0));
     }

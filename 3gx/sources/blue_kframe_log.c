@@ -4,6 +4,8 @@
 
 u32 host_blue_kframe_append_csv(
     u32 slot,
+    u32 phase20_known,
+    u32 phase20,
     u32 total,
     u32 hits,
     u32 special_total,
@@ -50,10 +52,12 @@ u32 host_blue_kframe_append_csv(
         return (u32)r;
     }
 
-    char row[256];
+    char row[320];
     int n = snprintf(row, sizeof(row),
-        "kframe_validator,total,hits,special_total,special_hits,frame_total,frame_hits,ignored\n"
-        "KFRAME,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+        "kframe_validator,phase20_known,phase20,total,hits,special_total,special_hits,frame_total,frame_hits,ignored\n"
+        "KFRAME,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu\n",
+        (unsigned long)phase20_known,
+        (unsigned long)phase20,
         (unsigned long)total,
         (unsigned long)hits,
         (unsigned long)special_total,

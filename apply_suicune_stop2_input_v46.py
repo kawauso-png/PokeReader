@@ -129,6 +129,10 @@ replace_once(
 )
 
 # Add a compact self-contained sensitivity section before the Endpoint section.
+# The normalized residual removes 1172 M-cycles for every remaining repeated
+# stop2 frame.  Existing no-input traces 0031-0035 collapse to roughly
+# A=0x36e8..0x36f8 and S=0x36f0..0x36f3, so runs with different Targets and
+# 122/123-frame stop2 lengths can be compared directly.
 replace_once(
     """        let _ = write!(
             line,
@@ -136,16 +140,19 @@ replace_once(
         );""",
     """        let _ = write!(
             line,
-            \"input_probe,status,stop2_state,stop2_div,stop2_ap4,stop2_sp4,key_or,key_frames,total_frames,stop2_resume_repeats,endpoint_state,endpoint_ap4,endpoint_sp4,delta_ap4,delta_sp4\\n\"
+            \"input_probe,status,stop2_state,stop2_div,stop2_ap4,stop2_sp4,key_or,key_frames,total_frames,stop2_resume_repeats,endpoint_state,endpoint_ap4,endpoint_sp4,delta_ap4,delta_sp4,norm_ap4,norm_sp4\\n\"
         );
         pnp::trace_file_write(line.as_bytes());
         line.clear();
         if self.input_stop2_state != 0 && self.endpoint.capture_advance != 0 {
             let delta_ap4 = self.endpoint.ap4.wrapping_sub(self.input_stop2_ap4) & 0x3fff;
             let delta_sp4 = self.endpoint.sp4.wrapping_sub(self.input_stop2_sp4) & 0x3fff;
+            let repeat_m = ((self.input_stop2_resume_repeats as u32 * 1172u32) & 0x3fff) as u16;
+            let norm_ap4 = delta_ap4.wrapping_sub(repeat_m) & 0x3fff;
+            let norm_sp4 = delta_sp4.wrapping_sub(repeat_m) & 0x3fff;
             let _ = write!(
                 line,
-                \"INPUT,OK,{:04X},{:04X},{:04X},{:04X},{:04X},{},{},{},{:04X},{:04X},{:04X},{:04X},{:04X}\\n\\n\",
+                \"INPUT,OK,{:04X},{:04X},{:04X},{:04X},{:04X},{},{},{},{:04X},{:04X},{:04X},{:04X},{:04X},{:04X},{:04X}\\n\\n\",
                 self.input_stop2_state,
                 self.input_stop2_div,
                 self.input_stop2_ap4,
@@ -158,10 +165,12 @@ replace_once(
                 self.endpoint.ap4,
                 self.endpoint.sp4,
                 delta_ap4,
-                delta_sp4
+                delta_sp4,
+                norm_ap4,
+                norm_sp4
             );
         } else {
-            let _ = write!(line, \"INPUT,INCOMPLETE,,,,,,,,,,,,,\\n\\n\");
+            let _ = write!(line, \"INPUT,INCOMPLETE,,,,,,,,,,,,,,,,\\n\\n\");
         }
         pnp::trace_file_write(line.as_bytes());
         line.clear();
@@ -215,12 +224,18 @@ replace_once(
                 self.endpoint.asub,
                 self.endpoint.ssub
             );
+            let delta_ap4 = self.endpoint.ap4.wrapping_sub(self.input_stop2_ap4) & 0x3fff;
+            let delta_sp4 = self.endpoint.sp4.wrapping_sub(self.input_stop2_sp4) & 0x3fff;
+            let repeat_m = ((self.input_stop2_resume_repeats as u32 * 1172u32) & 0x3fff) as u16;
+            let norm_ap4 = delta_ap4.wrapping_sub(repeat_m) & 0x3fff;
+            let norm_sp4 = delta_sp4.wrapping_sub(repeat_m) & 0x3fff;
             pnp::println!(
                 \"IN K{:04X} F{} R{}\",
                 self.input_key_or,
                 self.input_key_frames,
                 self.input_stop2_resume_repeats
-            );""",
+            );
+            pnp::println!(\"NR {:04X}/{:04X}\", norm_ap4, norm_sp4);""",
     "show input stats at endpoint",
 )
 

@@ -15,6 +15,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install endpoint patch dependency
+        run: |
+          apt-get update
+          apt-get install -y python3
+
       - name: Apply deterministic v3.7 Exact-2F execute patch
         run: sh apply_suicune_deterministic_v37.sh
 

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 from pathlib import Path
-import re
 
 p = Path("apply_suicune_early_control_lab_v55.py")
 s = p.read_text()
@@ -10,7 +9,7 @@ end = s.find("# Save one compact lab row", start)
 if start < 0 or end < 0:
     raise SystemExit("v5.5 detector script block not found")
 
-block = r'''# Detect 13 copies of rel26. Insert immediately before the unique Suicune
+block = r"""# Detect 13 copies of rel26. Insert immediately before the unique Suicune
 # result check in Trace::record(). At that point self.len has already been
 # incremented, so the just-sampled entry is entries[self.len - 1]. This avoids
 # ambiguous self.len += 1 occurrences elsewhere (for example LineBuf::write_str).
@@ -47,7 +46,7 @@ t = rep(
     "detect rel26 gate and post transitions",
 )
 
-'''
+"""
 
 s = s[:start] + block + s[end:]
 p.write_text(s)

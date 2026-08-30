@@ -38,14 +38,18 @@ jobs:
       - name: Apply endpoint v4.4 PURETAIL
         run: python3 apply_suicune_endpoint_v44_puretail.py
 
+      - name: Add minimal PURETAIL route counter
+        run: python3 apply_suicune_endpoint_v44_routecount.py
+
       - name: Verify v4.4 markers
         run: |
           grep -q "ENDPOINT_FAST_TAIL" reader_core/src/crystal/hook.rs
+          grep -q "ENDPOINT_FAST_CALLS" reader_core/src/crystal/hook.rs
           grep -q "pc == 0x2f60 || pc == 0x2f68" reader_core/src/crystal/hook.rs
+          grep -q "endpoint_fast_tail_calls()" reader_core/src/crystal/trace.rs
           grep -q "endpoint_fast_tail_start();" reader_core/src/crystal/trace.rs
           grep -q "call_log_stop();" reader_core/src/crystal/trace.rs
           grep -q "EP44 +{} S{:04X}" reader_core/src/crystal/trace.rs
-          grep -q "route: 0" reader_core/src/crystal/trace.rs
           grep -q "fixed_a_frames = 2;" 3gx/sources/main.c
           grep -q "suicune_auto_resume_pending" 3gx/sources/main.c
 

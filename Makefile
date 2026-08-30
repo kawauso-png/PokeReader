@@ -12,7 +12,9 @@ $(LIBPOKEREADER): $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml
 
 out/default.3gx: $(LIBPOKEREADER) $(C_SRCS) $(H_SRCS) $(PHASE_PREP)
-	python3 $(PHASE_PREP)
+	sed -i 's/#define F604_CANDIDATE_ADDR 0x0022F604u/#define F604_CANDIDATE_ADDR 0x0021B608u/' 3gx/sources/blue_dvtrace.c
+	sed -i 's/#define PHASE_PROBE_BASE       0x0022F400u/#define PHASE_PROBE_BASE       0x0021B500u/' 3gx/sources/blue_dvtrace.c
+	sed -i 's/"MEWTWO,9,/"MEWTWO,10,/' 3gx/sources/blue_dvtrace.c
 	make clean -C 3gx
 	make -C 3gx
 	mkdir -p out

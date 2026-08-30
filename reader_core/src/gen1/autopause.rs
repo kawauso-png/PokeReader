@@ -1,7 +1,7 @@
 use super::adaptive_model::AdaptiveStats;
 use super::shiny_forecast::ForecastStats;
 
-const MAX_CANDIDATES: u16 = 8;
+const MAX_NOW_CANDIDATES: u16 = 12;
 
 #[derive(Clone, Copy, Default)]
 pub struct AutoPauseStats {
@@ -36,18 +36,6 @@ fn reset_all(enabled: bool) {
     }
 }
 
-fn clear_latch() {
-    unsafe {
-        LIVE.latched = false;
-        LIVE.target_seq = 0;
-        LIVE.candidates = 0;
-        LIVE.shiny = 0;
-        LIVE.remain = 0;
-        LIVE.base = 0;
-        LIVE.residue20 = 0;
-    }
-}
-
 pub fn observe(
     seq: u32,
     adp: AdaptiveStats,
@@ -55,9 +43,6 @@ pub fn observe(
     enabled: bool,
 ) -> AutoPauseStats {
     unsafe {
-        // Search mode is explicitly armed at the Mewtwo position. Turning it
-        // OFF completely resets a previous fire so the same plugin process can
-        // be re-armed after a save/reset cycle.
         if !enabled {
             reset_all(false);
             return LIVE;
@@ -69,48 +54,30 @@ pub fn observe(
             return LIVE;
         }
 
-        // Any loss of the 80/80 adaptive gate invalidates a future target.
+        // v7.7.1 deliberately stops on the CURRENT sampled state. The top hook
+        // has already observed this GB frame, while the bottom hook has not yet
+        // let another emulated frame through. This avoids future-branch growth.
         if !adp.ready || !fc.valid {
-            clear_latch();
+            LIVE.latched = false;
+            LIVE.remain = 0;
             return LIVE;
         }
 
-        if LIVE.latched {
-            // The target is tied to the learned K family and its 20F residue.
-            // If either changes, discard it rather than pausing on stale math.
-            if adp.base != LIVE.base
-                || adp.residue20 != LIVE.residue20
-                || seq > LIVE.target_seq
-            {
-                clear_latch();
-            }
-        }
-
-        if !LIVE.latched
-            && fc.next_horizon != 0
-            && fc.next_candidates != 0
-            && fc.next_candidates <= MAX_CANDIDATES
-            && fc.next_shiny != 0
-            && fc.target_seq > seq
+        if fc.now_candidates != 0
+            && fc.now_candidates <= MAX_NOW_CANDIDATES
+            && fc.now_shiny != 0
         {
-            LIVE.latched = true;
-            LIVE.target_seq = fc.target_seq;
-            LIVE.candidates = fc.next_candidates;
-            LIVE.shiny = fc.next_shiny;
+            LIVE.latched = false;
+            LIVE.fired = true;
+            LIVE.target_seq = seq;
+            LIVE.candidates = fc.now_candidates;
+            LIVE.shiny = fc.now_shiny;
+            LIVE.remain = 0;
             LIVE.base = adp.base;
             LIVE.residue20 = adp.residue20;
+            FIRE_PENDING = true;
         }
 
-        if LIVE.latched {
-            let delta = LIVE.target_seq.wrapping_sub(seq);
-            LIVE.remain = core::cmp::min(delta, u8::MAX as u32) as u8;
-            if seq == LIVE.target_seq {
-                LIVE.latched = false;
-                LIVE.fired = true;
-                LIVE.remain = 0;
-                FIRE_PENDING = true;
-            }
-        }
         LIVE
     }
 }
@@ -147,64 +114,56 @@ mod tests {
         }
     }
 
-    fn fc(target: u32, candidates: u16, shiny: u8) -> ForecastStats {
+    fn fc(now_candidates: u16, now_shiny: u8) -> ForecastStats {
         ForecastStats {
             valid: true,
             phase_count: 4,
-            now_candidates: 5,
-            now_shiny: 0,
+            now_candidates,
+            now_shiny,
             next_horizon: 6,
-            next_candidates: candidates,
-            next_shiny: shiny,
-            target_seq: target,
+            next_candidates: 40,
+            next_shiny: 1,
+            target_seq: 106,
             overflow: false,
             scan_age: 0,
         }
     }
 
     #[test]
-    fn disabled_mode_never_latches() {
+    fn disabled_mode_never_fires() {
         unsafe { reset_all(false); }
-        let a = adp(0x18, 7);
-        let s = observe(100, a, fc(106, 7, 1), false);
+        let s = observe(100, adp(0x18, 7), fc(6, 1), false);
         assert!(!s.enabled);
-        assert!(!s.latched);
+        assert!(!s.fired);
         assert!(!take_fire());
     }
 
     #[test]
-    fn compact_shiny_set_latches_and_fires_exactly_at_target() {
+    fn current_compact_shiny_set_fires_immediately() {
         unsafe { reset_all(false); }
-        let a = adp(0x18, 7);
-        let s = observe(100, a, fc(106, 7, 1), true);
+        let s = observe(100, adp(0x18, 7), fc(6, 1), true);
         assert!(s.enabled);
-        assert!(s.latched);
-        assert_eq!(s.remain, 6);
-        for seq in 101..106 {
-            assert!(!observe(seq, a, fc(200, 7, 1), true).fired);
-            assert!(!take_fire());
-        }
-        let s = observe(106, a, fc(200, 7, 1), true);
         assert!(s.fired);
+        assert_eq!(s.target_seq, 100);
+        assert_eq!(s.candidates, 6);
+        assert_eq!(s.shiny, 1);
         assert!(take_fire());
         assert!(!take_fire());
     }
 
     #[test]
-    fn wide_or_nonshiny_set_never_latches() {
+    fn future_shiny_does_not_matter_when_now_is_not_shiny() {
         unsafe { reset_all(false); }
-        let a = adp(0x18, 7);
-        assert!(!observe(100, a, fc(105, 9, 1), true).latched);
-        assert!(!observe(101, a, fc(105, 8, 0), true).latched);
+        let s = observe(100, adp(0x18, 7), fc(6, 0), true);
+        assert!(!s.fired);
+        assert!(!take_fire());
     }
 
     #[test]
-    fn model_change_cancels_stale_target() {
+    fn current_set_over_cap_does_not_fire() {
         unsafe { reset_all(false); }
-        let a = adp(0x18, 7);
-        assert!(observe(100, a, fc(106, 7, 1), true).latched);
-        let b = adp(0x0E, 3);
-        assert!(!observe(101, b, ForecastStats { valid: true, ..ForecastStats::default() }, true).latched);
+        let s = observe(100, adp(0x18, 7), fc(13, 1), true);
+        assert!(!s.fired);
         assert!(!take_fire());
     }
 }

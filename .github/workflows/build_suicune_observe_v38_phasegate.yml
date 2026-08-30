@@ -1,0 +1,47 @@
+name: Suicune Observe v3.8 Phase Gate Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "suicune-observe-v38-phasegate"
+
+jobs:
+  build-v38-phasegate:
+    name: Patch and build Suicune Observe v3.8 PG1
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Apply deterministic v3.7 execute patch
+        run: sh apply_suicune_deterministic_v37.sh
+
+      - name: Apply v3.8 clean timing observer
+        run: sh apply_suicune_observe_v38.sh
+
+      - name: Keep benchmark out of execution path
+        run: sh apply_suicune_observe_v38_post.sh
+
+      - name: Apply Exact3F UP + phase gate
+        run: sh apply_suicune_upgate_v38.sh
+
+      - name: Verify PG1 markers
+        run: |
+          grep -q "suicune_target_atick" 3gx/includes/pokereader.h
+          grep -q "SUICUNE_PHASE_PERIOD_TICKS 4481151ULL" 3gx/sources/main.c
+          grep -q "SUICUNE_PHASE_TARGET_TICKS 3350000ULL" 3gx/sources/main.c
+          grep -q "suicune_wait_phase_gate" 3gx/sources/main.c
+          grep -q "fixed_a_frames = 3" 3gx/sources/main.c
+          grep -q "V38PG1" 3gx/sources/main.c
+
+      - name: Build
+        run: make
+
+      - name: Upload v3.8 PG1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-Observe-v38-PG1-Exact3F
+          retention-days: 7
+          path: out/default.3gx

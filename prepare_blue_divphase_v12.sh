@@ -21,7 +21,7 @@ if ! grep -q 'host_blue_phase_tracker_append_csv' "$RUST"; then
     /fn host_blue_gbrelease_valid\(\) -> u32;/ {
         print "    fn host_blue_phase_tracker_append_csv(slot: u32, transitions: u32, fits: u32, subs: u32, lock_prefix: u32, forecast_checks: u32, forecast_hits: u32, resets: u32) -> u32;"
         print "    fn host_blue_kobserver_append_csv(slot: u32, rows: *const k_observer::KObsRow, count: u32, valid_total: u32, invalid_total: u32) -> u32;"
-        print "    fn host_blue_kframe_append_csv(slot: u32, phase20_known: u32, phase20: u32, total: u32, hits: u32, special_total: u32, special_hits: u32, frame_total: u32, frame_hits: u32, ignored: u32) -> u32;"
+        print "    fn host_blue_kframe_append_csv(slot: u32, phase20_known: u32, phase20: u32, total: u32, hits: u32, special_total: u32, special_hits: u32, ignored: u32) -> u32;"
     }
     ' "$RUST" > "$RUST.tmp"
     mv "$RUST.tmp" "$RUST"
@@ -30,7 +30,7 @@ if ! grep -q 'host_blue_kframe_append_csv' "$RUST"; then
     awk '
     { print }
     /fn host_blue_gbrelease_valid\(\) -> u32;/ {
-        print "    fn host_blue_kframe_append_csv(slot: u32, phase20_known: u32, phase20: u32, total: u32, hits: u32, special_total: u32, special_hits: u32, frame_total: u32, frame_hits: u32, ignored: u32) -> u32;"
+        print "    fn host_blue_kframe_append_csv(slot: u32, phase20_known: u32, phase20: u32, total: u32, hits: u32, special_total: u32, special_hits: u32, ignored: u32) -> u32;"
     }
     ' "$RUST" > "$RUST.tmp"
     mv "$RUST.tmp" "$RUST"
@@ -71,8 +71,8 @@ if ! grep -q 'k_observer::observe' "$RUST"; then
         print "            );"
         print "        }"
         print "        let _ = kframe_validator::observe("
-        print "            previous.seq, previous.rng, previous.div, previous.frame,"
-        print "            current.seq, current.rng, current.div, current.frame, phase_usable,"
+        print "            previous.seq, previous.rng, previous.div,"
+        print "            current.seq, current.rng, current.div, phase_usable,"
         print "        );"
     }
     ' "$RUST" > "$RUST.tmp"
@@ -84,8 +84,8 @@ if ! grep -q 'kframe_validator::observe' "$RUST"; then
     /state.last_snapshot = current;/ {
         print "        let phase_usable = current.all_ptrs_ok() && !current.in_mewtwo_battle();"
         print "        let _ = kframe_validator::observe("
-        print "            previous.seq, previous.rng, previous.div, previous.frame,"
-        print "            current.seq, current.rng, current.div, current.frame, phase_usable,"
+        print "            previous.seq, previous.rng, previous.div,"
+        print "            current.seq, current.rng, current.div, phase_usable,"
         print "        );"
     }
     ' "$RUST" > "$RUST.tmp"
@@ -119,8 +119,7 @@ if ! grep -q 'arm_phase = phase_tracker::arm_stats' "$RUST"; then
             print "                if slot != 0 && kf.valid {"
             print "                    let _ = host_blue_kframe_append_csv("
             print "                        slot, u32::from(kf.phase20_known), kf.phase20 as u32,"
-            print "                        kf.total, kf.hits, kf.special_total, kf.special_hits,"
-            print "                        kf.frame_total, kf.frame_hits, kf.ignored,"
+            print "                        kf.total, kf.hits, kf.special_total, kf.special_hits, kf.ignored,"
             print "                    );"
             print "                }"
         }
@@ -141,7 +140,7 @@ if ! grep -q 'KOBS N{} U{} M' "$RUST"; then
         print "        pnp::println!(\"OBS K{:02X} D{:02X} G{}\", phase_show.last_k, phase_show.last_div_step, phase_show.last_gap);"
         print "        pnp::println!(\"KOBS N{} U{} M{:02X} {}%\", kobs.valid_total, kobs.unique, kobs.mode_k, kobs.mode_pct);"
         print "        pnp::println!(\"K20 {} R{:02} H{}/{}\", if kf.phase20_known { \"OK\" } else { \"--\" }, kf.phase20, kf.hits, kf.total);"
-        print "        pnp::println!(\"SP H{}/{} FC{}/{}\", kf.special_hits, kf.special_total, kf.frame_hits, kf.frame_total);"
+        print "        pnp::println!(\"SP H{}/{} I{}\", kf.special_hits, kf.special_total, kf.ignored);"
     }
     { print }
     ' "$RUST" > "$RUST.tmp"

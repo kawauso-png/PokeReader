@@ -53,8 +53,8 @@ replace_once(
 
 replace_once(
     trace,
-    '            line, "\\ncall_index,pc,advance,add,sub,div,cycles,host_tick,mcycle\\n");',
-    '            line, "\\ncall_index,pc,advance,add,sub,div,cycles,host_tick,mcycle,phase_aux_f600\\n");',
+    '        let _ = write!(line, "\\ncall_index,pc,advance,add,sub,div,cycles,host_tick,mcycle\\n");',
+    '        let _ = write!(line, "\\ncall_index,pc,advance,add,sub,div,cycles,host_tick,mcycle,phase_aux_f600\\n");',
     "extend call CSV header",
 )
 

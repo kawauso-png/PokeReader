@@ -146,6 +146,10 @@ void __system_allocateHeaps(PluginHeader *header)
     fake_heap_end = fake_heap_start + __ctru_heap_size;
 }
 
+// Entrypoint. The game starts when this function returns.
+// Japanese Blue must never crash here merely because a generic PokeReader
+// framebuffer/input signature is absent. Missing signatures are therefore
+// treated as optional: skip that patch and let the VC title continue booting.
 void main(void)
 {
     PluginHeader *header = (PluginHeader *)0x07000000;
@@ -162,23 +166,31 @@ void main(void)
     MemInfo info;
     PageInfo out;
     svcQueryMemory(&info, &out, 0x100000);
- 
-    u32 present_buffer_ptr = (u32)memmem((u8*)info.base_addr, info.size, PRESENT_FRAMEBUFFER_BYTES, sizeof(PRESENT_FRAMEBUFFER_BYTES)) - 8;
-    u32 map_input_memory_block = (u32)memmem((u8*)info.base_addr, info.size, MAP_INPUT_BLOCK, sizeof(MAP_INPUT_BLOCK));
 
-    u32 get_screen_branch = *(u32 *)(present_buffer_ptr + 0x20) + 1;
-    u32 *present_buffer_pa = (u32 *)PA_FROM_VA_PTR(present_buffer_ptr);
-    memcpy(present_buffer_pa, DRAW_PATCH, 0x94);
-    present_buffer_pa[7] = get_screen_branch;
-    present_buffer_pa[29] = (u32)run_hook;
-    u32 trampoline_addr = (u32)present_buffer_ptr + (30 * 4);
-    set_trampoline_addr(trampoline_addr);
-    set_route_hook_addr(trampoline_addr + (6 * 4));
+    void *present_match = memmem((u8*)info.base_addr, info.size, PRESENT_FRAMEBUFFER_BYTES, sizeof(PRESENT_FRAMEBUFFER_BYTES));
+    void *input_match = memmem((u8*)info.base_addr, info.size, MAP_INPUT_BLOCK, sizeof(MAP_INPUT_BLOCK));
 
-    u32 *map_input_memory_block_pa = (u32 *)PA_FROM_VA_PTR(map_input_memory_block);
-    memcpy(map_input_memory_block_pa, HID_INPUT_MAP_PATCH, 0x8);
-    map_input_memory_block_pa[0x2] = (u32)map_input_memory_block + (0x4 * 0x4);
-    map_input_memory_block_pa[0x3] = (u32)map_input_hook;
+    if (present_match != NULL)
+    {
+        u32 present_buffer_ptr = (u32)present_match - 8;
+        u32 get_screen_branch = *(u32 *)(present_buffer_ptr + 0x20) + 1;
+        u32 *present_buffer_pa = (u32 *)PA_FROM_VA_PTR(present_buffer_ptr);
+        memcpy(present_buffer_pa, DRAW_PATCH, 0x94);
+        present_buffer_pa[7] = get_screen_branch;
+        present_buffer_pa[29] = (u32)run_hook;
+        u32 trampoline_addr = present_buffer_ptr + (30 * 4);
+        set_trampoline_addr(trampoline_addr);
+        set_route_hook_addr(trampoline_addr + (6 * 4));
+    }
+
+    if (input_match != NULL)
+    {
+        u32 map_input_memory_block = (u32)input_match;
+        u32 *map_input_memory_block_pa = (u32 *)PA_FROM_VA_PTR(map_input_memory_block);
+        memcpy(map_input_memory_block_pa, HID_INPUT_MAP_PATCH, 0x8);
+        map_input_memory_block_pa[0x2] = map_input_memory_block + (0x4 * 0x4);
+        map_input_memory_block_pa[0x3] = (u32)map_input_hook;
+    }
 
     initialize();
     svcInvalidateEntireInstructionCache();

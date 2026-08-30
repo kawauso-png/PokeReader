@@ -13,14 +13,6 @@ def replace_once(old: str, new: str, label: str) -> None:
     s = s.replace(old, new, 1)
 
 
-def replace_first(old: str, new: str, label: str) -> None:
-    global s
-    count = s.count(old)
-    if count < 1:
-        raise SystemExit(f"{label}: no match")
-    s = s.replace(old, new, 1)
-
-
 # v4.7: coarse interval probe.  Instead of pausing at stop2, pause once at
 # Target+16 and let the user hold A all the way to Endpoint.  This tests almost
 # the entire encounter in one run.  If it changes the stop2/Endpoint trajectory,
@@ -54,8 +46,6 @@ replace_once(
     "reset v4.7 fields",
 )
 
-# The old v4.6 stop2 pause is disabled.  We still capture stop2 state/phase so
-# the same normalized residual calculation remains available.
 replace_once(
     """                if !self.input_stop2_pause_requested {
                     self.input_stop2_pause_requested = true;
@@ -67,12 +57,16 @@ replace_once(
     "disable stop2 pause",
 )
 
-# Start the perturbation before the known early branch around rel~29.  trace.rs
-# contains another len increment elsewhere, so intentionally patch the first.
-replace_first(
-    """        self.len += 1;
-""",
-    """        self.len += 1;
+# Insert only in Trace::record, after the TraceEntry has been committed.
+replace_once(
+    """            stick: sdiv_tick(),
+        };
+
+        self.len += 1;""",
+    """            stick: sdiv_tick(),
+        };
+
+        self.len += 1;
 
         if self.probe_active && !self.coarse_pause_requested {
             let rel = self.entries[self.len - 1]
@@ -83,12 +77,10 @@ replace_first(
                 self.coarse_pause_len = self.len;
                 pnp::request_pause();
             }
-        }
-""",
-    "insert coarse pause",
+        }""",
+    "insert coarse pause in record",
 )
 
-# Record stimulus from the first row after the Target+16 pause through Endpoint.
 replace_once(
     """        if self.input_stop2_pause_requested
             && self.input_stop2_pause_len != 0
@@ -103,7 +95,6 @@ replace_once(
     "collect coarse stimulus",
 )
 
-# Replace the old stop2 instruction with the one early coarse instruction.
 replace_once(
     """        if self.input_stop2_pause_requested
             && self.endpoint.capture_advance == 0

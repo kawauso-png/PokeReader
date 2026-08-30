@@ -2,6 +2,7 @@
 LIBPOKEREADER := reader_core/target/armv6k-nintendo-3ds/release/libpokereader.a
 PHASE_PREP := prepare_blue_divphase_v12.sh
 FORECAST_PREP := prepare_blue_forecast_v19.sh
+AUTOPAUSE_PREP := prepare_blue_autopause_v20.sh
 
 R_SRCS := $(shell find reader_core/src -name '*.rs')
 C_SRCS := $(shell find 3gx/sources -name '*.c')
@@ -12,6 +13,7 @@ all: out/default.3gx
 prepare:
 	sh $(PHASE_PREP)
 	sh $(FORECAST_PREP)
+	sh $(AUTOPAUSE_PREP)
 
 $(LIBPOKEREADER): prepare $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml

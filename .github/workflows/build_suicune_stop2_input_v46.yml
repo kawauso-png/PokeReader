@@ -38,8 +38,10 @@ jobs:
       - name: Apply endpoint v4.4 PURETAIL
         run: python3 apply_suicune_endpoint_v44_puretail.py
 
-      - name: Add minimal PURETAIL route counter
-        run: python3 apply_suicune_endpoint_v44_routecount.py
+      # Deliberately DO NOT apply apply_suicune_endpoint_v44_routecount.py.
+      # Even a one-byte counter on every 2F60 can add observer cost before the
+      # DV calls.  v4.6 needs a truly uninstrumented final Random burst.  The
+      # actual raw DV is read from wEnemyMon after it is already locked.
 
       - name: Apply stop2 input probe v4.6
         run: python3 apply_suicune_stop2_input_v46.py
@@ -53,6 +55,7 @@ jobs:
           grep -q "EP46 +{} S{:04X}" reader_core/src/crystal/trace.rs
           grep -q "HOLD BASE/UP/A + R" reader_core/src/crystal/trace.rs
           grep -q "ENDPOINT_FAST_TAIL" reader_core/src/crystal/hook.rs
+          ! grep -q "ENDPOINT_FAST_CALLS" reader_core/src/crystal/hook.rs
           grep -q "fixed_a_frames = 2;" 3gx/sources/main.c
           grep -q "suicune_auto_resume_pending" 3gx/sources/main.c
 

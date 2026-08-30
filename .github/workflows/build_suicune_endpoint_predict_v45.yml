@@ -41,6 +41,9 @@ jobs:
       - name: Add minimal PURETAIL route counter
         run: python3 apply_suicune_endpoint_v44_routecount.py
 
+      - name: Fix v4.5 patch targeting
+        run: python3 fix_suicune_endpoint_predict_v45_patcher.py
+
       - name: Apply v4.5 predictor
         run: python3 apply_suicune_endpoint_predict_v45.py
 

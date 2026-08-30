@@ -16,6 +16,9 @@ extern "C" {
     pub fn is_memory_mapped(addr: u32) -> bool;
     pub fn host_blue_fixed_run_id() -> u32;
     pub fn host_blue_fixed_state() -> u32;
+    pub fn host_blue_game_a_edge() -> u32;
+    pub fn host_blue_game_joy_pressed() -> u32;
+    pub fn host_blue_game_joy_held() -> u32;
 }
 
 #[cfg(feature = "test_stubs")]
@@ -54,4 +57,10 @@ pub mod test_stubs {
     pub extern "C" fn host_blue_fixed_run_id() -> u32 { 0 }
     #[no_mangle]
     pub extern "C" fn host_blue_fixed_state() -> u32 { 0 }
+    #[no_mangle]
+    pub extern "C" fn host_blue_game_a_edge() -> u32 { 0 }
+    #[no_mangle]
+    pub extern "C" fn host_blue_game_joy_pressed() -> u32 { 0 }
+    #[no_mangle]
+    pub extern "C" fn host_blue_game_joy_held() -> u32 { 0 }
 }

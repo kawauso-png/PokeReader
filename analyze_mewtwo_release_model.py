@@ -16,7 +16,7 @@ import argparse
 from collections import defaultdict
 from pathlib import Path
 
-from analyze_mewtwo_d1 import parse_trace, frame_phase_rows, final_model, h2, h4
+from analyze_mewtwo_d1 import parse_trace, release_phases, final_model, h2, h4
 
 SHINY_ATK = {2, 3, 6, 7, 10, 11, 14, 15}
 
@@ -30,16 +30,16 @@ def learn(traces):
     phase, gap, step = defaultdict(set), defaultdict(set), defaultdict(set)
     d2_phase, final_vb_phase = set(), set()
     for t in traces:
-        for i, r in enumerate(frame_phase_rows(t)):
+        for i, r in enumerate(release_phases(t)):
             phase[i].add(r['phase'])
             gap[i].add(r['gap'])
-            step[i].add(r['sample_div_step'])
-        fm = final_model(t)
+            step[i].add(r['step'])
+        _raw, d2, candidates = final_model(t)
         pre_div = h2(t.gb['pre_div'])
-        d2_phase.add((fm['d2'] - pre_div) & 0xFF)
-        for c in fm['candidates']:
-            if c['sub_valid']:
-                final_vb_phase.add(c['vblank_phase'])
+        d2_phase.add((d2 - pre_div) & 0xFF)
+        for c in candidates:
+            if c['valid']:
+                final_vb_phase.add(c['phase'])
     n = max(phase.keys(), default=-1) + 1
     return {
         'phase': [phase[i] for i in range(n)],

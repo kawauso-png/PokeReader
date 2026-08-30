@@ -13,6 +13,14 @@ def replace_once(old: str, new: str, label: str) -> None:
     s = s.replace(old, new, 1)
 
 
+def replace_first(old: str, new: str, label: str) -> None:
+    global s
+    count = s.count(old)
+    if count < 1:
+        raise SystemExit(f"{label}: no match")
+    s = s.replace(old, new, 1)
+
+
 # v4.7: coarse interval probe.  Instead of pausing at stop2, pause once at
 # Target+16 and let the user hold A all the way to Endpoint.  This tests almost
 # the entire encounter in one run.  If it changes the stop2/Endpoint trajectory,
@@ -59,8 +67,9 @@ replace_once(
     "disable stop2 pause",
 )
 
-# Start the perturbation before the known early branch around rel~29.
-replace_once(
+# Start the perturbation before the known early branch around rel~29.  trace.rs
+# contains another len increment elsewhere, so intentionally patch the first.
+replace_first(
     """        self.len += 1;
 """,
     """        self.len += 1;

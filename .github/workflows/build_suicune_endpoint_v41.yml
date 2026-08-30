@@ -1,0 +1,48 @@
+name: Suicune Endpoint Probe v4.1 Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "suicune-endpoint-probe-v41"
+
+jobs:
+  build-endpoint-v41:
+    name: Build Suicune Endpoint Probe v4.1
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Apply deterministic v3.7 Exact-2F execute patch
+        run: sh apply_suicune_deterministic_v37.sh
+
+      - name: Apply v3.8 clean timing observer
+        run: sh apply_suicune_observe_v38.sh
+
+      - name: Keep benchmark out of execution path
+        run: sh apply_suicune_observe_v38_post.sh
+
+      - name: Apply endpoint v4.1 probe
+        run: python3 apply_suicune_endpoint_v41.py
+
+      - name: Verify endpoint markers
+        run: |
+          grep -q "struct EndpointSnapshot" reader_core/src/crystal/trace.rs
+          grep -q "stop2_advance" reader_core/src/crystal/trace.rs
+          grep -q "wrapping_add(13)" reader_core/src/crystal/trace.rs
+          grep -q "wrapping_add(11)" reader_core/src/crystal/trace.rs
+          grep -q "ENDPOINT,OK" reader_core/src/crystal/trace.rs
+          grep -q "fixed_a_frames = 2;" 3gx/sources/main.c
+          grep -q "suicune_auto_resume_pending" 3gx/sources/main.c
+
+      - name: Build
+        run: make
+
+      - name: Upload Endpoint v4.1 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-Endpoint-v41
+          retention-days: 7
+          path: out/default.3gx

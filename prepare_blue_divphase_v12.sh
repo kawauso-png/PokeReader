@@ -5,7 +5,6 @@ RUST=reader_core/src/gen1/mod.rs
 TRACKER=reader_core/src/gen1/phase_tracker.rs
 CTRACE=3gx/sources/blue_dvtrace.c
 
-# Experimental branch integration stays deterministic and title-gated.
 if ! grep -q '^mod phase_tracker;$' "$RUST"; then
     sed -i '1imod phase_tracker;' "$RUST"
 fi
@@ -28,8 +27,6 @@ if ! grep -q 'phase_tracker::mark_arm();' "$RUST"; then
     mv "$RUST.tmp" "$RUST"
 fi
 
-# v7.4.1: do not guess whether a frame is clean from joypad state.  Let the
-# observed DIV step and inferred VBlank Random relation validate the transition.
 if ! grep -q 'phase_usable = current.all_ptrs_ok' "$RUST"; then
     awk '
     { print }
@@ -81,12 +78,12 @@ if ! grep -q 'PH T{} F{} S{}' "$RUST"; then
     mv "$RUST.tmp" "$RUST"
 fi
 
-# Correct v7.4.1 candidate propagation before any Rust compile/test invocation.
+# Deterministic fixes applied before lint/test/build.
 sed -i 's/let prev_sub = c.sample_sub.wrapping_sub(FRAME_SUB_STEP) & 0x3F;/let prev_sub = c.sample_sub;/' "$TRACKER"
+sed -i 's/0x102000,0x10,1411,0x303F00,0x22/0x108000,0x10,1411,0x405000,0x22/' "$TRACKER"
 
 sed -i 's/BLUE MEWTWO RNG v7.3.2 SAFE/BLUE MEWTWO RNG v7.4.1 DIVPHASE/' "$RUST"
 sed -i 's/PRED LOCKED: phase learn/DIVPHASE READ-ONLY/' "$RUST"
 
-# Retire the old 1 KiB discovery scan. Trace fields remain for compatibility.
 sed -i 's/phase_probe_begin(trigger_entry.div);/phase_probe_reset();/' "$CTRACE"
 sed -i 's/^[[:space:]]*write_phase_probe(file, &off);/    \/\* v13: memory probe retired; DIV phase tracker is Rust-only. \*\//g' "$CTRACE"

@@ -127,6 +127,7 @@ pub fn loaded_title() -> &'static Result<LoadedTitle, TitleError> {
             | (LoadedTitle::Y, 5)
             | (LoadedTitle::Transporter, 5)
             | (LoadedTitle::BlueJp, 0)
+            | (LoadedTitle::BlueJp, 1)
             | (LoadedTitle::BlueJp, 1056)
             | (LoadedTitle::CrystalEn, 0)
             | (LoadedTitle::CrystalDe, 0)

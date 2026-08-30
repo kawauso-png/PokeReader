@@ -2,12 +2,19 @@
 #include "title_info.h"
 
 #define BLUE_JP_TITLE_ID 0x0004000000170E00ULL
-#define HOST_SCAN_MIN 0x00200000u
-#define HOST_SCAN_MAX 0x00400000u
-#define CANDIDATE_MIN 0x08000000u
-#define CANDIDATE_MAX 0x14000000u
-#define PAGE_SIZE 0x1000u
-#define PAGES_PER_STEP 4u
+
+// Stage 4 hardware result on Japanese Blue update-version-1:
+//   source slot 0x0021B6CC -> current C000/WRAM backing.
+// Do not hard-code the backing address itself because it may move between boots.
+#define KNOWN_WRAM_SOURCE 0x0021B6CCu
+
+// In the old runtime the HRAM and DIV pointer slots were +0x10 and +0xCC from
+// the WRAM slot respectively. Stage 5 tests whether that structure-relative
+// layout survived even though the whole host-state structure moved.
+#define HRAM_SLOT_DELTA 0x10u
+#define DIV_SLOT_DELTA  0xCCu
+#define HRAM_SLOT (KNOWN_WRAM_SOURCE + HRAM_SLOT_DELTA)
+#define DIV_SLOT  (KNOWN_WRAM_SOURCE + DIV_SLOT_DELTA)
 
 #define OFF_ENEMY_SPECIES 0x0FCCu
 #define OFF_ENEMY_DV_ATK_DEF 0x0FD8u
@@ -16,18 +23,31 @@
 #define OFF_BATTLE_STATE 0x1034u
 #define OFF_OPPONENT 0x1036u
 
-static u32 probe_cursor = HOST_SCAN_MIN;
-static u32 probe_passes = 0;
-static u32 probe_hits = 0;
-static u32 probe_found_source = 0;
-static u32 probe_found_base = 0;
-static u32 probe_found_dv = 0;
-static u32 probe_last_candidate = 0;
+// HRAM pointer semantics used by the old Blue implementation: base corresponds
+// to GB FF80, so FFD3/FFD4/FFD5 are +0x53/+0x54/+0x55.
+#define HRAM_RANDOM_ADD_OFF 0x53u
+#define HRAM_RANDOM_SUB_OFF 0x54u
+#define HRAM_FRAME_OFF      0x55u
+
+static u32 stage5_status = 0;
+static u32 stage5_wram = 0;
+static u32 stage5_hram = 0;
+static u32 stage5_div = 0;
+static u32 stage5_rng_pack = 0;
+static u32 stage5_div_value = 0;
+static u32 stage5_frame_changes = 0;
+static u32 stage5_div_changes = 0;
+static u8 stage5_prev_frame = 0;
+static u8 stage5_prev_div = 0;
+static bool stage5_have_prev_frame = false;
+static bool stage5_have_prev_div = false;
 
 static bool query_span_mapped(u32 start, u32 end)
 {
     MemInfo info;
     PageInfo page;
+    if (end < start)
+        return false;
     if (svcQueryMemory(&info, &page, start) != 0)
         return false;
     if (info.state == MEMSTATE_FREE || info.state == MEMSTATE_RESERVED)
@@ -37,7 +57,7 @@ static bool query_span_mapped(u32 start, u32 end)
     u32 offset = start - info.base_addr;
     if (offset >= info.size)
         return false;
-    return end >= start && (end - info.base_addr) < info.size;
+    return (end - info.base_addr) < info.size;
 }
 
 static bool query_byte_mapped(u32 addr)
@@ -62,70 +82,87 @@ static bool mewtwo_fingerprint(u32 base)
             return false;
     }
 
-    if (*(vu8 *)(base + OFF_ENEMY_SPECIES) != 0x83)
-        return false;
-    if (*(vu8 *)(base + OFF_ENEMY_LEVEL) != 0x46)
-        return false;
-    if (*(vu8 *)(base + OFF_OPPONENT) != 0x83)
-        return false;
-    if (*(vu8 *)(base + OFF_BATTLE_STATE) != 0x01)
-        return false;
-
-    probe_found_dv = ((u32)*(vu8 *)(base + OFF_ENEMY_DV_ATK_DEF) << 8)
-                   | (u32)*(vu8 *)(base + OFF_ENEMY_DV_SPE_SPC);
-    return true;
+    return *(vu8 *)(base + OFF_ENEMY_SPECIES) == 0x83
+        && *(vu8 *)(base + OFF_ENEMY_LEVEL) == 0x46
+        && *(vu8 *)(base + OFF_OPPONENT) == 0x83
+        && *(vu8 *)(base + OFF_BATTLE_STATE) == 0x01;
 }
 
-u32 host_blue_probe_step(void)
+u32 host_blue_stage5_sample(void)
 {
+    stage5_status = 0;
+    stage5_wram = 0;
+    stage5_hram = 0;
+    stage5_div = 0;
+    stage5_rng_pack = 0;
+    stage5_div_value = 0;
+
     if (get_title_id() != BLUE_JP_TITLE_ID)
         return 0;
-    if (probe_found_base != 0)
-        return probe_found_base;
 
-    for (u32 page_index = 0; page_index < PAGES_PER_STEP && probe_found_base == 0; page_index++)
+    // bit 0: WRAM source slot itself is mapped/readable.
+    if (!query_span_mapped(KNOWN_WRAM_SOURCE, KNOWN_WRAM_SOURCE + 3))
+        return stage5_status;
+    stage5_status |= 1u << 0;
+    stage5_wram = *(vu32 *)KNOWN_WRAM_SOURCE;
+
+    // bit 1: current WRAM pointer still resolves to the Mewtwo battle fingerprint.
+    if (mewtwo_fingerprint(stage5_wram))
+        stage5_status |= 1u << 1;
+
+    // bit 2: predicted HRAM slot is mapped/readable.
+    if (query_span_mapped(HRAM_SLOT, HRAM_SLOT + 3))
     {
-        if (probe_cursor >= HOST_SCAN_MAX)
+        stage5_status |= 1u << 2;
+        stage5_hram = *(vu32 *)HRAM_SLOT;
+
+        // bit 3: predicted HRAM pointer exposes FFD3/FFD4/FFD5 bytes safely.
+        if (query_span_mapped(stage5_hram + HRAM_RANDOM_ADD_OFF,
+                              stage5_hram + HRAM_FRAME_OFF))
         {
-            probe_cursor = HOST_SCAN_MIN;
-            probe_passes++;
-            probe_hits = 0;
+            u8 add = *(vu8 *)(stage5_hram + HRAM_RANDOM_ADD_OFF);
+            u8 sub = *(vu8 *)(stage5_hram + HRAM_RANDOM_SUB_OFF);
+            u8 frame = *(vu8 *)(stage5_hram + HRAM_FRAME_OFF);
+            stage5_rng_pack = ((u32)add << 16) | ((u32)sub << 8) | (u32)frame;
+            stage5_status |= 1u << 3;
+
+            if (stage5_have_prev_frame && frame != stage5_prev_frame)
+                stage5_frame_changes++;
+            stage5_prev_frame = frame;
+            stage5_have_prev_frame = true;
         }
-
-        u32 page_start = probe_cursor;
-        u32 page_end = page_start + PAGE_SIZE - 1;
-        if (page_end >= HOST_SCAN_MAX)
-            page_end = HOST_SCAN_MAX - 1;
-
-        if (query_span_mapped(page_start, page_end))
-        {
-            for (u32 src = page_start; src + 3 <= page_end; src += 4)
-            {
-                u32 candidate = *(vu32 *)src;
-                if (candidate < CANDIDATE_MIN || candidate >= CANDIDATE_MAX)
-                    continue;
-
-                probe_hits++;
-                probe_last_candidate = candidate;
-
-                if (mewtwo_fingerprint(candidate))
-                {
-                    probe_found_source = src;
-                    probe_found_base = candidate;
-                    break;
-                }
-            }
-        }
-
-        probe_cursor = page_start + PAGE_SIZE;
     }
 
-    return probe_found_base;
+    // bit 4: predicted DIV slot is mapped/readable.
+    if (query_span_mapped(DIV_SLOT, DIV_SLOT + 3))
+    {
+        stage5_status |= 1u << 4;
+        stage5_div = *(vu32 *)DIV_SLOT;
+
+        // bit 5: predicted DIV pointer itself is readable.
+        if (query_byte_mapped(stage5_div))
+        {
+            u8 div = *(vu8 *)stage5_div;
+            stage5_div_value = div;
+            stage5_status |= 1u << 5;
+
+            if (stage5_have_prev_div && div != stage5_prev_div)
+                stage5_div_changes++;
+            stage5_prev_div = div;
+            stage5_have_prev_div = true;
+        }
+    }
+
+    return stage5_status;
 }
 
-u32 host_blue_probe_cursor(void) { return probe_cursor; }
-u32 host_blue_probe_passes(void) { return probe_passes; }
-u32 host_blue_probe_hits(void) { return probe_hits; }
-u32 host_blue_probe_source(void) { return probe_found_source; }
-u32 host_blue_probe_candidate(void) { return probe_found_base != 0 ? probe_found_base : probe_last_candidate; }
-u32 host_blue_probe_dv(void) { return probe_found_dv; }
+u32 host_blue_stage5_wram_source(void) { return KNOWN_WRAM_SOURCE; }
+u32 host_blue_stage5_wram(void) { return stage5_wram; }
+u32 host_blue_stage5_hram_slot(void) { return HRAM_SLOT; }
+u32 host_blue_stage5_hram(void) { return stage5_hram; }
+u32 host_blue_stage5_div_slot(void) { return DIV_SLOT; }
+u32 host_blue_stage5_div(void) { return stage5_div; }
+u32 host_blue_stage5_rng_pack(void) { return stage5_rng_pack; }
+u32 host_blue_stage5_div_value(void) { return stage5_div_value; }
+u32 host_blue_stage5_frame_changes(void) { return stage5_frame_changes; }
+u32 host_blue_stage5_div_changes(void) { return stage5_div_changes; }

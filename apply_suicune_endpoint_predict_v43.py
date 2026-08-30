@@ -13,18 +13,23 @@ def replace_once(old: str, new: str, label: str) -> None:
     s = s.replace(old, new, 1)
 
 
-# Store the endpoint-only prediction next to the captured state.  v4.3 does
-# not use any Target->DV long-range model: it starts solely from DV-2.
-replace_once(
-    "    pub keys: u16,\n}",
-    """    pub keys: u16,
+# Store the endpoint-only prediction next to the captured state. Target the
+# EndpointSnapshot struct itself because TraceEntry also has a `keys` field.
+marker = "pub struct EndpointSnapshot {"
+start = s.find(marker)
+if start < 0:
+    raise SystemExit("EndpointSnapshot not found")
+end = s.find("\n}", start)
+if end < 0:
+    raise SystemExit("EndpointSnapshot closing brace not found")
+block = s[start:end]
+if "pred_route" in block:
+    raise SystemExit("endpoint prediction fields already present")
+s = s[:end] + """
     pub pred_route: u8,
     pub pred_raw: u16,
     pub pred_item1: u8,
-    pub pred_item2: u8,
-}""",
-    "endpoint prediction fields",
-)
+    pub pred_item2: u8,""" + s[end:]
 
 # The divider phase representation is rDIV*64 + mcycle (mod 16384).
 # Constants below are measured/derived in M-cycles after LIGHTTAIL removes the
@@ -69,21 +74,17 @@ fn ep43_random(state: u16, aphase: u16) -> (u16, u16) {
 }
 
 fn ep43_predict(mut state: u16, mut ap4: u16, mut sp4: u16) -> (u8, u16, u8, u8) {
-    // Endpoint is DV-2. Advance exactly two ordinary VBlank RNG updates.
     for _ in 0..2 {
         ap4 = ep43_phase_add(ap4, EP43_FRAME_M);
         sp4 = ep43_phase_add(sp4, EP43_FRAME_M);
         state = ep43_update(state, ep43_div(ap4), ep43_div(sp4));
     }
 
-    // First held-item RNG call.  The A read is 11752 M-cycles after the final
-    // VBlank A read; the paired S read follows 11 M-cycles later.
     let item1_a = ep43_phase_add(ap4, EP43_VBLANK_A_TO_RANDOM_A);
     let (after_item1, item1_s) = ep43_random(state, item1_a);
     let item1 = after_item1 as u8;
 
     if item1 < 0xc0 {
-        // No held item: item1 + DV1 + DV2 = three calls total.
         let dv1_a = ep43_phase_add(item1_s, EP43_ROUTE3_ITEM_TO_DV1_M);
         let (after_dv1, dv1_s) = ep43_random(after_item1, dv1_a);
         let dv_hi = after_dv1 as u8;
@@ -92,7 +93,6 @@ fn ep43_predict(mut state: u16, mut ap4: u16, mut sp4: u16) -> (u8, u16, u8, u8)
         let raw = ((dv_hi as u16) << 8) | after_dv2 as u8 as u16;
         (3, raw, item1, 0)
     } else {
-        // Held-item branch: a second item RNG precedes the two DV calls.
         let item2_a = ep43_phase_add(item1_s, EP43_ROUTE4_ITEM1_TO_ITEM2_M);
         let (after_item2, item2_s) = ep43_random(after_item1, item2_a);
         let item2 = after_item2 as u8;
@@ -115,8 +115,6 @@ pub enum TraceState {""",
     "endpoint prediction functions",
 )
 
-# Calculate immediately from the frozen DV-2 snapshot, before resume can
-# change any game state.
 replace_once(
     """            self.endpoint.keys = current.keys;
 
@@ -136,8 +134,6 @@ replace_once(
     "compute endpoint prediction",
 )
 
-# Append prediction fields to the endpoint CSV row. Existing frame/call
-# sections are unchanged.
 replace_once(
     "endpoint,status,stop2_advance,stop2_offset,expected_dv_advance,pause_advance,capture_advance,capture_offset,state,div,ap4,sp4,asub,ssub,atick,stick,keys\\n",
     "endpoint,status,stop2_advance,stop2_offset,expected_dv_advance,pause_advance,capture_advance,capture_offset,state,div,ap4,sp4,asub,ssub,atick,stick,keys,pred_route,pred_raw,pred_item1,pred_item2\\n",
@@ -162,7 +158,6 @@ replace_once(
     "endpoint csv args",
 )
 
-# Distinguish predictor build and show the value while frozen at DV-2.
 replace_once(
     '                "EP42 +{} S{:04X}",',
     '                "EP43 +{} S{:04X}",',

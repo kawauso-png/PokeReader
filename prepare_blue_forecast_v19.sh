@@ -88,6 +88,10 @@ fi
 # searching farther ahead within the 16F horizon.
 sed -i 's/out.next_horizon == 0 && e.1 != 0 {/out.next_horizon == 0 \&\& e.1 != 0 \&\& e.0 <= 8 {/' "$FCMOD"
 
+# Trace 0042 reaches the observed PRE through the calibrated -8M event-side
+# skew and the rel9 anomaly branch, not the nominal p0=44 primary path.
+sed -i 's/run_event_path(0x0E, 0xC7, 44, 0)/run_event_path(0x0E, 0xC7, 36, 9)/' "$FCMOD"
+
 sed -i 's/BLUE MEWTWO RNG v7.5.1 ADAPT/BLUE MEWTWO RNG v7.6.0 FCST/' "$RUST"
 sed -i 's/ADAPTIVE ENVELOPE READ-ONLY/SHINY FORECAST READ-ONLY/' "$RUST"
 

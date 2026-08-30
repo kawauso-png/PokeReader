@@ -5,6 +5,8 @@ use core::{
 };
 use num_enum::IntoPrimitive;
 
+const BLUE_JP_TITLE_ID: u64 = 0x0004_0000_0017_0E00;
+
 /// A button that can be pressed by a user.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, IntoPrimitive)]
 #[repr(u32)]
@@ -46,13 +48,30 @@ impl BitOr for Button {
 }
 
 pub fn is_just_pressed(io_bits: impl Into<u32>) -> bool {
-    let is_pressed = unsafe { bindings::host_is_just_pressed(io_bits.into()) };
-    is_pressed != 0
+    let bits = io_bits.into();
+    let title = unsafe { bindings::host_get_game_title_id() };
+
+    // For Japanese VC Blue, A calibration must follow the Game Boy game's own
+    // joypad edge, not the 3DS-side HID edge. Mewtwo requires A1 to talk and A2
+    // after the cry/text to actually start battle; sampling hJoyPressed/hJoyHeld
+    // makes A2 visible even when the overlay misses the physical release/press.
+    if title == BLUE_JP_TITLE_ID && bits == Button::A as u32 {
+        return unsafe { bindings::host_blue_game_a_edge() } != 0;
+    }
+
+    unsafe { bindings::host_is_just_pressed(bits) } != 0
 }
 
 pub fn is_pressing(io_bits: impl Into<u32>) -> bool {
     let current_keys = unsafe { bindings::get_current_keys() };
     (current_keys & io_bits.into()) != 0
+}
+
+pub fn blue_game_joy() -> (u8, u8) {
+    (
+        unsafe { bindings::host_blue_game_joy_pressed() } as u8,
+        unsafe { bindings::host_blue_game_joy_held() } as u8,
+    )
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

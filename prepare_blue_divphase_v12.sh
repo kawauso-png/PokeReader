@@ -2,6 +2,7 @@
 set -eu
 
 RUST=reader_core/src/gen1/mod.rs
+KOBS=reader_core/src/gen1/k_observer.rs
 CTRACE=3gx/sources/blue_dvtrace.c
 
 if ! grep -q '^mod phase_tracker;$' "$RUST"; then
@@ -99,6 +100,9 @@ if ! grep -q 'KOBS N{} U{} M' "$RUST"; then
     ' "$RUST" > "$RUST.tmp"
     mv "$RUST.tmp" "$RUST"
 fi
+
+# Rust requires the address-of access to this mutable static to be explicitly unsafe.
+sed -i 's/core::ptr::addr_of!(ARM_ROWS) as \*const KObsRow/unsafe { core::ptr::addr_of!(ARM_ROWS) as *const KObsRow }/' "$KOBS"
 
 sed -i 's/BLUE MEWTWO RNG v7.3.2 SAFE/BLUE MEWTWO RNG v7.4.3 KOBS/' "$RUST"
 sed -i 's/PRED LOCKED: phase learn/K OBSERVER READ-ONLY/' "$RUST"

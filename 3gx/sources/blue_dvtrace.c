@@ -9,19 +9,22 @@
 #define HRAM_SLOT 0x0021B6DCu
 #define DIV_SLOT  0x0021B7B4u
 
-// Read-only candidate for the VC emulator M-cycle subphase counter. Crystal
-// traces strongly suggest this address exposes a 0..63 M-cycle phase, but Blue
-// must validate that independently. v8 only logs it; no prediction or control
-// decision is allowed to depend on it.
+// v8 read-only candidate. Blue mapped this address, but trace 0035 showed 00
+// on every sample, so v9 keeps it only as a reference while probing nearby.
 #define F604_CANDIDATE_ADDR 0x0022F604u
 
+// v9 bounded read-only discovery window. The scan runs only after an Exact2F
+// arm, captures 16 snapshots, then stops. It never affects prediction/control.
+#define PHASE_PROBE_BASE       0x0022F400u
+#define PHASE_PROBE_LEN        0x400u
+#define PHASE_PROBE_SNAPSHOTS  16u
+
 // Two lightweight LR35902-PC candidates recovered on real hardware in the
-// earlier Stage 9/10 probes. v7 records both; it never scans memory while the
-// critical Mewtwo transition is running.
+// earlier Stage 9/10 probes.
 #define PC_A_ADDR 0x0021B8F8u
 #define PC_S_ADDR 0x0021B890u
 
-#define OFF_SOUND_CH5      0x002Au  // C02A = wChannelSoundIDs + CHAN5
+#define OFF_SOUND_CH5      0x002Au
 #define OFF_SOUND_CH6      0x002Bu
 #define OFF_SOUND_CH7      0x002Cu
 #define OFF_SOUND_CH8      0x002Du
@@ -31,14 +34,14 @@
 #define OFF_ENEMY_LEVEL    0x0FDAu
 #define OFF_BATTLE_STATE   0x1034u
 #define OFF_OPPONENT       0x1036u
-#define OFF_LOW_HEALTH     0x1083u  // D083 = wLowHealthAlarm in Japanese R/B
+#define OFF_LOW_HEALTH     0x1083u
 
 // HRAM base is FF80.
-#define HRAM_JOY_PRESSED_OFF 0x33u  // FFB3
-#define HRAM_JOY_HELD_OFF    0x34u  // FFB4
-#define HRAM_ADD_OFF         0x53u  // FFD3
-#define HRAM_SUB_OFF         0x54u  // FFD4
-#define HRAM_FRAME_OFF       0x55u  // FFD5
+#define HRAM_JOY_PRESSED_OFF 0x33u
+#define HRAM_JOY_HELD_OFF    0x34u
+#define HRAM_ADD_OFF         0x53u
+#define HRAM_SUB_OFF         0x54u
+#define HRAM_FRAME_OFF       0x55u
 
 #define TRACE_LEN 512u
 #define TRACE_MASK (TRACE_LEN - 1u)
@@ -88,10 +91,16 @@ static u32 live_div_ptr = 0;
 static u32 live_joy_pressed = 0;
 static u32 live_joy_held = 0;
 
-// Mapping is queried once per plugin lifetime. The hot sampling path then does
-// at most one volatile byte read from F604 and never scans/sleeps/writes.
 static bool f604_checked = false;
 static bool f604_mapped = false;
+
+// Discovery state: 16 KiB static storage, no heap allocation and no file I/O
+// while the Mewtwo transition is running.
+static bool phase_probe_mapped = false;
+static bool phase_probe_active = false;
+static u8 phase_probe_count = 0;
+static u8 phase_probe_values[PHASE_PROBE_SNAPSHOTS][PHASE_PROBE_LEN] = {{0}};
+static u8 phase_probe_divs[PHASE_PROBE_SNAPSHOTS] = {0};
 
 static bool armed = false;
 static u32 pending_arm_source = ARM_SOURCE_UNKNOWN;
@@ -136,6 +145,42 @@ static bool query_span_mapped(u32 start, u32 end)
     return (end - info.base_addr) < info.size;
 }
 
+static void phase_probe_reset(void)
+{
+    phase_probe_mapped = false;
+    phase_probe_active = false;
+    phase_probe_count = 0;
+    memset(phase_probe_values, 0, sizeof(phase_probe_values));
+    memset(phase_probe_divs, 0, sizeof(phase_probe_divs));
+}
+
+static void phase_probe_capture(u8 div)
+{
+    if (!phase_probe_active || phase_probe_count >= PHASE_PROBE_SNAPSHOTS)
+        return;
+
+    u8 idx = phase_probe_count;
+    for (u32 i = 0; i < PHASE_PROBE_LEN; i++)
+        phase_probe_values[idx][i] = *(vu8 *)(PHASE_PROBE_BASE + i);
+    phase_probe_divs[idx] = div;
+    phase_probe_count++;
+
+    if (phase_probe_count >= PHASE_PROBE_SNAPSHOTS)
+        phase_probe_active = false;
+}
+
+static void phase_probe_begin(u8 div)
+{
+    phase_probe_reset();
+    phase_probe_mapped = query_span_mapped(
+        PHASE_PROBE_BASE, PHASE_PROBE_BASE + PHASE_PROBE_LEN - 1u);
+    if (!phase_probe_mapped)
+        return;
+
+    phase_probe_active = true;
+    phase_probe_capture(div); // snapshot 0 belongs to the Exact2F trigger sample
+}
+
 static DvTraceEntry entry_at(u32 seq)
 {
     DvTraceEntry e = trace_buf[seq & TRACE_MASK];
@@ -160,7 +205,6 @@ static bool shiny_from_raw(u16 raw)
 
 static bool wait_audio_active(DvTraceEntry e)
 {
-    // WaitForSoundToFinish checks CHAN5, CHAN6 and CHAN8 (not CHAN7).
     return (u8)(e.snd5 | e.snd6 | e.snd8) != 0;
 }
 
@@ -187,7 +231,7 @@ static void write_bytes(Handle file, u64 *offset, const char *s, u32 len)
 
 static void write_meta_row(Handle file, u64 *off)
 {
-    char line[1800];
+    char line[2000];
     u32 trigger_to_battle = delta_or_zero(trigger_seq, battle_seq);
     u32 physical_to_battle = delta_or_zero(physical_a_seq, battle_seq);
     u32 game_to_battle = delta_or_zero(game_a_seq, battle_seq);
@@ -196,12 +240,14 @@ static void write_meta_row(Handle file, u64 *off)
         "meta,version,title_id,arm_source,trigger_seq,physical_a_seq,game_a_seq,battle_seq,trigger_to_battle,physical_to_battle,game_to_battle,"
         "opponent_seq,opponent_rel,audio_start_seq,audio_start_rel,audio_end_seq,audio_end_rel,dvwrite_seq,dvwrite_rel,raw_dv,shiny,"
         "lowhealth_trigger,lowhealth_bit7_seen,wram,hram,div_ptr,pc_a_addr,pc_s_addr,f604_addr,f604_mapped,"
+        "phase_probe_base,phase_probe_len,phase_probe_mapped,phase_probe_samples,"
         "trigger_rng_add,trigger_rng_sub,trigger_frame,trigger_div,trigger_f604,trigger_f604_valid,trigger_lowhealth,trigger_snd5,trigger_snd6,trigger_snd7,trigger_snd8,"
         "pre_rng_add,pre_rng_sub,pre_frame,pre_div,pre_f604,pre_f604_valid,dvwrite_rng_add,dvwrite_rng_sub,dvwrite_frame,dvwrite_div,dvwrite_f604,dvwrite_f604_valid,"
         "battle_rng_add,battle_rng_sub,battle_frame,battle_div,battle_f604,battle_f604_valid,d2_c0,d2_c1,add2_match\n"
-        "MEWTWO,8,%016llX,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,"
+        "MEWTWO,9,%016llX,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,"
         "%lu,%ld,%lu,%ld,%lu,%ld,%lu,%ld,%04X,%u,"
         "%02X,%u,%08lX,%08lX,%08lX,%08X,%08X,%08X,%u,"
+        "%08X,%u,%u,%u,"
         "%02X,%02X,%02X,%02X,%02X,%u,%02X,%02X,%02X,%02X,%02X,"
         "%02X,%02X,%02X,%02X,%02X,%u,%02X,%02X,%02X,%02X,%02X,%u,"
         "%02X,%02X,%02X,%02X,%02X,%u,%02X,%02X,%u\n",
@@ -226,6 +272,8 @@ static void write_meta_row(Handle file, u64 *off)
         (unsigned long)battle_entry.hram,
         (unsigned long)battle_entry.div_ptr,
         PC_A_ADDR, PC_S_ADDR, F604_CANDIDATE_ADDR, f604_mapped ? 1u : 0u,
+        PHASE_PROBE_BASE, PHASE_PROBE_LEN,
+        phase_probe_mapped ? 1u : 0u, phase_probe_count,
         (u8)(trigger_entry.rng >> 8), (u8)trigger_entry.rng,
         trigger_entry.frame, trigger_entry.div, trigger_entry.f604_raw, trigger_entry.f604_valid,
         trigger_entry.low_health, trigger_entry.snd5, trigger_entry.snd6, trigger_entry.snd7, trigger_entry.snd8,
@@ -238,6 +286,69 @@ static void write_meta_row(Handle file, u64 *off)
         d2_c0, d2_c1, add2_matches ? 1u : 0u);
     if (n > 0)
         write_bytes(file, off, line, (u32)n);
+}
+
+static void write_phase_probe(Handle file, u64 *off)
+{
+    const char *hdr =
+        "phase_probe,address,transitions,step20_matches,divrule_matches,range0_63,changes,"
+        "v00,v01,v02,v03,v04,v05,v06,v07,v08,v09,v10,v11,v12,v13,v14,v15\n";
+    write_bytes(file, off, hdr, (u32)strlen(hdr));
+
+    u32 transitions = phase_probe_count > 0 ? (u32)phase_probe_count - 1u : 0u;
+    char row[384];
+    for (u32 i = 0; i < PHASE_PROBE_LEN; i++)
+    {
+        u32 step20 = 0;
+        u32 divrule = 0;
+        u32 range = 0;
+        u32 changes = 0;
+
+        for (u32 j = 0; j < phase_probe_count; j++)
+        {
+            u8 cur = phase_probe_values[j][i];
+            if (cur <= 0x3Fu)
+                range++;
+            if (j == 0)
+                continue;
+
+            u8 prev = phase_probe_values[j - 1u][i];
+            if ((cur & 0x3Fu) == (u8)(((prev & 0x3Fu) + 20u) & 0x3Fu))
+                step20++;
+            if (cur != prev)
+                changes++;
+
+            u8 observed_div_step = (u8)(phase_probe_divs[j] - phase_probe_divs[j - 1u]);
+            u8 expected_div_step = (u8)(0x12u + (((prev & 0x3Fu) >= 44u) ? 1u : 0u));
+            if (observed_div_step == expected_div_step)
+                divrule++;
+        }
+
+        int n = snprintf(
+            row, sizeof(row), "PHASE,%08lX,%lu,%lu,%lu,%lu,%lu",
+            (unsigned long)(PHASE_PROBE_BASE + i),
+            (unsigned long)transitions,
+            (unsigned long)step20,
+            (unsigned long)divrule,
+            (unsigned long)range,
+            (unsigned long)changes);
+        if (n < 0)
+            continue;
+        u32 used = (u32)n;
+        for (u32 j = 0; j < PHASE_PROBE_SNAPSHOTS && used + 4u < sizeof(row); j++)
+        {
+            n = snprintf(row + used, sizeof(row) - used, ",%02X", phase_probe_values[j][i]);
+            if (n < 0)
+                break;
+            used += (u32)n;
+        }
+        if (used + 2u < sizeof(row))
+        {
+            row[used++] = '\n';
+            row[used] = '\0';
+        }
+        write_bytes(file, off, row, used);
+    }
 }
 
 static void save_csv(void)
@@ -336,6 +447,8 @@ static void save_csv(void)
         if (n > 0)
             write_bytes(file, &off, row, (u32)n);
     }
+
+    write_phase_probe(file, &off);
 
     FSFILE_Flush(file);
     FSFILE_Close(file);
@@ -452,6 +565,9 @@ u32 host_blue_dvtrace_sample(void)
 
     if (armed)
     {
+        // The probe is finite: after snapshot 15 this is a no-op forever.
+        phase_probe_capture(div);
+
         if (opponent_seq == 0 && opponent == 0x83)
             opponent_seq = trace_seq;
 
@@ -507,10 +623,11 @@ u32 host_blue_dvtrace_arm(void)
     trigger_entry = entry_at(trigger_seq);
     baseline_dv = (u16)live_raw_dv;
 
-    // Clear all per-arm edge markers. v7.3.5 intentionally preserved the
-    // Exact2F trigger, but game_a_seq could still display a stale prior value.
-    physical_a_seq = 0;
-    game_a_seq = 0;
+    // Preserve the physical marker for the ordinary PHYSICAL_A path. Exact2F
+    // marks physical A on the following sample. Only its stale GAME_A marker
+    // needs clearing here.
+    if (active_arm_source == ARM_SOURCE_EXACT2F)
+        game_a_seq = 0;
     opponent_seq = 0;
     audio_start_seq = 0;
     audio_end_seq = 0;
@@ -521,6 +638,12 @@ u32 host_blue_dvtrace_arm(void)
     memset(&battle_entry, 0, sizeof(battle_entry));
     save_slot = save_error = 0;
     add2_matches = false;
+
+    if (active_arm_source == ARM_SOURCE_EXACT2F)
+        phase_probe_begin(trigger_entry.div);
+    else
+        phase_probe_reset();
+
     return trigger_seq;
 }
 
@@ -540,6 +663,7 @@ u32 host_blue_dvtrace_finalize(void)
 
     save_csv();
     armed = false;
+    phase_probe_active = false;
     return battle_seq;
 }
 

@@ -138,12 +138,24 @@ fn predict_one(rng: u32, div: u8, candidate: Candidate) -> (u32, u8, Candidate) 
 }
 
 impl Tracker {
-    fn seed(&mut self, seq: u32, clean: bool, count_reset: bool) {
-        let checks = self.forecast_checks;
-        let hits = self.forecast_hits;
-        let resets = self.resets.wrapping_add(u16::from(count_reset));
-        let arm_stats = self.arm_stats;
+    fn preserve_and_clear(&mut self, seq: u32, clean: bool, count_reset: bool) {
+        self.count = 0;
+        self.transitions = 0;
+        self.last_seq = seq;
+        self.last_clean = clean;
+        self.forecast_valid = false;
+        self.forecast_rng = 0;
+        self.forecast_div = 0;
+        self.lock_prefix = 0;
+        if count_reset {
+            self.resets = self.resets.wrapping_add(1);
+        }
+    }
 
+    fn seed(&mut self, seq: u32, clean: bool, count_reset: bool) {
+        if count_reset {
+            self.resets = self.resets.wrapping_add(1);
+        }
         let mut n = 0usize;
         for sample_sub in 0u8..64u8 {
             let mut offset = OFFSET_MIN;
@@ -164,10 +176,6 @@ impl Tracker {
         self.forecast_rng = 0;
         self.forecast_div = 0;
         self.lock_prefix = 0;
-        self.forecast_checks = checks;
-        self.forecast_hits = hits;
-        self.resets = resets;
-        self.arm_stats = arm_stats;
     }
 
     fn sub_count(&self) -> u8 {
@@ -253,18 +261,27 @@ impl Tracker {
         div: u8,
         clean: bool,
     ) -> TrackerStats {
+        if !clean {
+            if self.last_clean || self.count != 0 || self.transitions != 0 {
+                self.preserve_and_clear(seq, false, true);
+            } else {
+                self.last_seq = seq;
+                self.last_clean = false;
+            }
+            return self.stats();
+        }
+
         if self.count == 0 {
-            self.seed(seq, clean, false);
+            self.seed(seq, true, false);
             return self.stats();
         }
 
         let consecutive = prev_seq != 0
             && seq == prev_seq.wrapping_add(1)
             && self.last_seq == prev_seq
-            && self.last_clean
-            && clean;
+            && self.last_clean;
         if !consecutive {
-            self.seed(seq, clean, true);
+            self.seed(seq, true, true);
             return self.stats();
         }
 
@@ -273,18 +290,18 @@ impl Tracker {
             if self.forecast_rng == (rng & 0xFFFF00) && self.forecast_div == div {
                 self.forecast_hits = self.forecast_hits.wrapping_add(1);
             } else {
-                self.seed(seq, clean, true);
+                self.seed(seq, true, true);
                 return self.stats();
             }
         }
 
         let Some((first, gap)) = infer_vblank(prev_rng, rng) else {
-            self.seed(seq, clean, true);
+            self.seed(seq, true, true);
             return self.stats();
         };
         let div_step = div.wrapping_sub(prev_div);
         if !matches!(div_step, 0x12 | 0x13) {
-            self.seed(seq, clean, true);
+            self.seed(seq, true, true);
             return self.stats();
         }
 
@@ -310,13 +327,13 @@ impl Tracker {
 
         self.count = write;
         if self.count == 0 {
-            self.seed(seq, clean, true);
+            self.seed(seq, true, true);
             return self.stats();
         }
 
         self.transitions = self.transitions.wrapping_add(1);
         self.last_seq = seq;
-        self.last_clean = clean;
+        self.last_clean = true;
         self.rebuild_forecast(rng, div);
         self.stats()
     }
@@ -411,5 +428,31 @@ mod tests {
                 assert_eq!(stats.lock_prefix, 3);
             }
         }
+    }
+
+    #[test]
+    fn active_input_does_not_reseed_every_frame() {
+        let mut tracker = Tracker {
+            candidates: [EMPTY_CANDIDATE; MAX_CANDIDATES],
+            count: 0,
+            transitions: 0,
+            last_seq: 0,
+            last_clean: false,
+            forecast_valid: false,
+            forecast_rng: 0,
+            forecast_div: 0,
+            lock_prefix: 0,
+            forecast_checks: 0,
+            forecast_hits: 0,
+            resets: 0,
+            arm_stats: TrackerStats::default(),
+        };
+        tracker.seed(1, true, false);
+        let _ = tracker.observe(1, 0, 0, 2, 0, 0, false);
+        let resets = tracker.resets;
+        assert_eq!(tracker.count, 0);
+        let _ = tracker.observe(2, 0, 0, 3, 0, 0, false);
+        assert_eq!(tracker.resets, resets);
+        assert_eq!(tracker.count, 0);
     }
 }

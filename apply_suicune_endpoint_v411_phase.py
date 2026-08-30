@@ -65,10 +65,29 @@ replace_once(
     "extend call CSV format",
 )
 
+# Anchor the value insertion to the call-row loop's closing block so the
+# similar Deep-row formatter remains untouched.
 replace_once(
     trace,
-    "                e.host_tick,\n                e.mcycle\n            );",
-    "                e.host_tick,\n                e.mcycle,\n                e.phase_aux\n            );",
+    """                e.div,
+                e.cycles,
+                e.host_tick,
+                e.mcycle
+            );
+            pnp::trace_file_write(line.as_bytes());
+        }
+
+        // Third section:""",
+    """                e.div,
+                e.cycles,
+                e.host_tick,
+                e.mcycle,
+                e.phase_aux
+            );
+            pnp::trace_file_write(line.as_bytes());
+        }
+
+        // Third section:""",
     "write F600 call field",
 )
 

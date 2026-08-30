@@ -9,6 +9,13 @@ const WHITE: u32 = 0xFFFFFF;
 const YELLOW: u32 = 0xFFFF00;
 const MAX_A_TO_BATTLE_HOST_FRAMES: u32 = 120;
 
+// Japanese Blue uses the same Gen-I Random_ path as pokered:
+// two rDIV reads are 44 T-cycles apart inside Random_, and the first rDIV read
+// of the second back-to-back BattleRandom is 480 T-cycles after the first one.
+const RANDOM_DIV_READ_GAP_T: u16 = 44;
+const DV_CALL_GAP_T: u16 = 480;
+const DIV_T_CYCLES: u16 = 256;
+
 static mut HOST_FRAME: u32 = 0;
 
 extern "C" {
@@ -26,10 +33,7 @@ extern "C" {
     fn host_blue_dvtrace_dvwrite_div() -> u32;
     fn host_blue_dvtrace_pre_rng() -> u32;
     fn host_blue_dvtrace_pre_div() -> u32;
-    fn host_blue_dvtrace_d2_pair() -> u32;
     fn host_blue_dvtrace_add2_match() -> u32;
-    fn host_blue_dvtrace_two_call_ok() -> u32;
-    fn host_blue_dvtrace_solve() -> u32;
     fn host_blue_dvtrace_save_slot() -> u32;
     fn host_blue_dvtrace_save_error() -> u32;
 }
@@ -61,16 +65,57 @@ struct ResultPair {
     fixed_run_id: u32,
 }
 
+#[derive(Clone, Copy)]
+struct ThreeCallAnalysis {
+    valid: bool,
+    frame_ticks: u16,
+    configs: u16,
+    call0_min: u8,
+    call0_max: u8,
+    dv1_min: u8,
+    dv1_max: u8,
+    dv2_min: u8,
+    dv2_max: u8,
+    dv2_tick_min: u16,
+    dv2_tick_max: u16,
+    pre_add_min: u8,
+    pre_add_max: u8,
+    pre_sub_min: u8,
+    pre_sub_max: u8,
+}
+
+impl Default for ThreeCallAnalysis {
+    fn default() -> Self {
+        Self {
+            valid: false,
+            frame_ticks: 0,
+            configs: 0,
+            call0_min: 0xff,
+            call0_max: 0,
+            dv1_min: 0xff,
+            dv1_max: 0,
+            dv2_min: 0xff,
+            dv2_max: 0,
+            dv2_tick_min: u16::MAX,
+            dv2_tick_max: 0,
+            pre_add_min: 0xff,
+            pre_add_max: 0,
+            pre_sub_min: 0xff,
+            pre_sub_max: 0,
+        }
+    }
+}
+
 struct RunState {
     last_snapshot: Snapshot,
-    a_pending: Option<Snapshot>,
-    last_valid_2f: Option<Snapshot>,
+    dialogue_a: Option<Snapshot>,
+    dialogue_seen: bool,
+    final_a: Option<Snapshot>,
+    final_armed: bool,
     fixed_target: Option<Snapshot>,
     fixed_run_id: u32,
     result: Option<ResultPair>,
     was_battle: bool,
-    valid_2f: u32,
-    reject_1f: u32,
     completed_runs: u32,
 }
 
@@ -83,29 +128,47 @@ static mut RUN_STATE: RunState = RunState {
         div: 0,
         raw_dv: 0,
     },
-    a_pending: None,
-    last_valid_2f: None,
+    dialogue_a: None,
+    dialogue_seen: false,
+    final_a: None,
+    final_armed: false,
     fixed_target: None,
     fixed_run_id: 0,
     result: None,
     was_battle: false,
-    valid_2f: 0,
-    reject_1f: 0,
     completed_runs: 0,
 };
 
 pub fn init_blue() {}
 
+fn reset_encounter_stage(state: &mut RunState) {
+    state.dialogue_a = None;
+    state.dialogue_seen = false;
+    state.final_a = None;
+    state.final_armed = false;
+    state.fixed_target = None;
+    state.fixed_run_id = 0;
+}
+
 // Called by the C pause loop immediately before the audited exact-2F run.
+// v3 deliberately accepts this only after the first conversation A was seen:
+// the exact run is the SECOND A, the one that actually starts the battle.
 #[no_mangle]
 pub extern "C" fn blue_capture_target(run_id: u32) -> u32 {
     unsafe {
         let s = RUN_STATE.last_snapshot;
-        if s.all_ptrs_ok() && !s.in_mewtwo_battle() && s.seq != 0 {
+        if RUN_STATE.dialogue_seen
+            && !RUN_STATE.final_armed
+            && s.all_ptrs_ok()
+            && !s.in_mewtwo_battle()
+            && s.seq != 0
+        {
             let q = host_blue_dvtrace_arm();
             if q == 0 {
                 return 0;
             }
+            RUN_STATE.final_a = Some(s);
+            RUN_STATE.final_armed = true;
             RUN_STATE.fixed_target = Some(s);
             RUN_STATE.fixed_run_id = run_id;
             RUN_STATE.result = None;
@@ -138,19 +201,177 @@ fn sample() -> Snapshot {
     }
 }
 
+fn add_of(rng: u32) -> u8 {
+    ((rng >> 16) & 0xff) as u8
+}
+
+fn sub_of(rng: u32) -> u8 {
+    ((rng >> 8) & 0xff) as u8
+}
+
+fn frame_of(rng: u32) -> u8 {
+    (rng & 0xff) as u8
+}
+
+fn update_range_u8(min: &mut u8, max: &mut u8, value: u8) {
+    *min = (*min).min(value);
+    *max = (*max).max(value);
+}
+
+fn update_range_u16(min: &mut u16, max: &mut u16, value: u16) {
+    *min = (*min).min(value);
+    *max = (*max).max(value);
+}
+
+fn carry_add(a: u8, b: u8, carry: u8) -> u8 {
+    ((a as u16 + b as u16 + carry as u16) > 0xff) as u8
+}
+
+fn sub_result(a: u8, b: u8, carry: u8) -> u8 {
+    a.wrapping_sub(b).wrapping_sub(carry)
+}
+
+fn borrow_sub(a: u8, b: u8, carry: u8) -> u8 {
+    ((a as u16) < b as u16 + carry as u16) as u8
+}
+
+fn occurrence_before(value: u8, start: u8, limit: u16) -> Option<u16> {
+    let base = value.wrapping_sub(start) as u16;
+    if base <= limit {
+        Some(base)
+    } else if base + 256 <= limit {
+        Some(base + 256)
+    } else {
+        None
+    }
+}
+
+// Solve the final host frame under the model supported by this trial:
+//   one ordinary Random_ update + two back-to-back DV BattleRandom calls.
+// The DV pair is solved with exact instruction timing. We do not assume the
+// incoming carry to the ordinary call or first DV call; all valid branches are
+// retained and reported as ranges.
+fn analyze_three_call(
+    pre_rng: u32,
+    pre_div: u8,
+    final_rng: u32,
+    final_div: u8,
+    raw_dv: u16,
+) -> ThreeCallAnalysis {
+    let mut out = ThreeCallAnalysis::default();
+    let pre_add = add_of(pre_rng);
+    let pre_sub = sub_of(pre_rng);
+    let final_add = add_of(final_rng);
+    let final_sub = sub_of(final_rng);
+    let dv2 = (raw_dv >> 8) as u8; // CFD8 = second BattleRandom output
+    let dv1 = raw_dv as u8; // CFD9 = first BattleRandom output
+
+    if final_add != dv2 {
+        return out;
+    }
+
+    // Consecutive presented GB frames advance DIV by 0x12/0x13 modulo 256,
+    // i.e. 274/275 real rDIV ticks. The +256 restores the hidden wrap.
+    out.frame_ticks = 256 + final_div.wrapping_sub(pre_div) as u16;
+
+    for phase in 0..256u16 {
+        let dv_call_delta = (phase + DV_CALL_GAP_T) / DIV_T_CYCLES;
+        let phase2 = (phase + DV_CALL_GAP_T) % DIV_T_CYCLES;
+        let y1_inc = ((phase + RANDOM_DIV_READ_GAP_T) / DIV_T_CYCLES) as u8;
+        let y2_inc = ((phase2 + RANDOM_DIV_READ_GAP_T) / DIV_T_CYCLES) as u8;
+
+        for first_in_carry in 0..=1u8 {
+            for second_in_carry in 0..=1u8 {
+                let x2 = dv2.wrapping_sub(dv1).wrapping_sub(second_in_carry);
+                let x1 = x2.wrapping_sub(dv_call_delta as u8);
+                let y1 = x1.wrapping_add(y1_inc);
+                let y2 = x2.wrapping_add(y2_inc);
+
+                let before_add = dv1.wrapping_sub(x1).wrapping_sub(first_in_carry);
+                let add_carry1 = carry_add(before_add, x1, first_in_carry);
+                let add_carry2 = carry_add(dv1, x2, second_in_carry);
+
+                let after_first_sub = final_sub.wrapping_add(y2).wrapping_add(add_carry2);
+                let before_sub = after_first_sub.wrapping_add(y1).wrapping_add(add_carry1);
+
+                // Carry entering the second BattleRandom is exactly the borrow
+                // flag left by the first Random_ SBC.
+                if borrow_sub(before_sub, y1, add_carry1) != second_in_carry {
+                    continue;
+                }
+                if sub_result(before_sub, y1, add_carry1) != after_first_sub {
+                    continue;
+                }
+                if sub_result(after_first_sub, y2, add_carry2) != final_sub {
+                    continue;
+                }
+
+                // Fit exactly one ordinary Random_ call from the preceding host
+                // frame sample to the state immediately before the DV pair.
+                for ordinary_in_carry in 0..=1u8 {
+                    let x0 = before_add
+                        .wrapping_sub(pre_add)
+                        .wrapping_sub(ordinary_in_carry);
+                    let add_carry0 = carry_add(pre_add, x0, ordinary_in_carry);
+
+                    for y0_inc in 0..=1u8 {
+                        let y0 = x0.wrapping_add(y0_inc);
+                        if sub_result(pre_sub, y0, add_carry0) != before_sub {
+                            continue;
+                        }
+
+                        let Some(dv1_tick) = occurrence_before(x1, pre_div, out.frame_ticks) else {
+                            continue;
+                        };
+                        let dv2_tick = dv1_tick + dv_call_delta;
+                        if dv2_tick > out.frame_ticks {
+                            continue;
+                        }
+                        let Some(call0_tick) = occurrence_before(x0, pre_div, dv1_tick) else {
+                            continue;
+                        };
+                        if call0_tick > dv1_tick {
+                            continue;
+                        }
+
+                        out.valid = true;
+                        out.configs = out.configs.saturating_add(1);
+                        update_range_u8(&mut out.call0_min, &mut out.call0_max, x0);
+                        update_range_u8(&mut out.dv1_min, &mut out.dv1_max, x1);
+                        update_range_u8(&mut out.dv2_min, &mut out.dv2_max, x2);
+                        update_range_u16(&mut out.dv2_tick_min, &mut out.dv2_tick_max, dv2_tick);
+                        update_range_u8(&mut out.pre_add_min, &mut out.pre_add_max, before_add);
+                        update_range_u8(&mut out.pre_sub_min, &mut out.pre_sub_max, before_sub);
+                    }
+                }
+            }
+        }
+    }
+
+    out
+}
+
 fn draw_snapshot(label: &str, s: Snapshot) {
-    let add = ((s.rng >> 16) & 0xFF) as u8;
-    let sub = ((s.rng >> 8) & 0xFF) as u8;
-    let frame = (s.rng & 0xFF) as u8;
-    pnp::println!("{} H{} Q{} R{:02X}{:02X}", label, s.host_frame, s.seq, add, sub);
-    pnp::println!("  F{:02X} D{:02X}", frame, s.div);
+    pnp::println!(
+        "{} H{} Q{} R{:02X}{:02X} D{:02X}",
+        label,
+        s.host_frame,
+        s.seq,
+        add_of(s.rng),
+        sub_of(s.rng),
+        s.div
+    );
 }
 
 fn draw_rng(label: &str, rng: u32, div: u8) {
-    let add = ((rng >> 16) & 0xFF) as u8;
-    let sub = ((rng >> 8) & 0xFF) as u8;
-    let frame = (rng & 0xFF) as u8;
-    pnp::println!("{} R{:02X}{:02X} F{:02X} D{:02X}", label, add, sub, frame, div);
+    pnp::println!(
+        "{} R{:02X}{:02X} F{:02X} D{:02X}",
+        label,
+        add_of(rng),
+        sub_of(rng),
+        frame_of(rng),
+        div
+    );
 }
 
 fn choose_trigger(state: &RunState, battle: Snapshot) -> Option<(Snapshot, u32)> {
@@ -159,12 +380,7 @@ fn choose_trigger(state: &RunState, battle: Snapshot) -> Option<(Snapshot, u32)>
             return Some((s, state.fixed_run_id));
         }
     }
-    if let Some(s) = state.last_valid_2f {
-        if battle.host_frame.wrapping_sub(s.host_frame) <= MAX_A_TO_BATTLE_HOST_FRAMES {
-            return Some((s, 0));
-        }
-    }
-    if let Some(s) = state.a_pending {
+    if let Some(s) = state.final_a {
         if battle.host_frame.wrapping_sub(s.host_frame) <= MAX_A_TO_BATTLE_HOST_FRAMES {
             return Some((s, 0));
         }
@@ -184,27 +400,24 @@ pub fn run_frame() {
         state.last_snapshot = current;
         let in_battle = current.in_mewtwo_battle();
 
-        // Ordinary A calibration: arm the DV logger on the fresh physical A
-        // edge. Exact-2F runs are armed separately by blue_capture_target().
-        if !in_battle && pnp::is_just_pressed(Button::A) {
-            let _ = host_blue_dvtrace_arm();
-            state.a_pending = Some(current);
+        // A battle -> non-battle transition is a clean retry boundary.
+        if state.was_battle && !in_battle {
+            reset_encounter_stage(state);
             state.result = None;
-        } else if !in_battle {
-            if let Some(start) = state.a_pending {
-                if current.host_frame == start.host_frame.wrapping_add(1) {
-                    if pnp::is_pressing(Button::A) {
-                        state.last_valid_2f = Some(start);
-                        state.valid_2f = state.valid_2f.wrapping_add(1);
-                    } else {
-                        state.reject_1f = state.reject_1f.wrapping_add(1);
-                    }
-                }
-                // Keep a_pending as the ordinary-A trigger until battle or a
-                // generous timeout; it is also useful when the human holds A
-                // for longer than exactly two displayed frames.
-                if current.host_frame.wrapping_sub(start.host_frame) > MAX_A_TO_BATTLE_HOST_FRAMES {
-                    state.a_pending = None;
+        }
+
+        // Mewtwo interaction has two distinct A presses:
+        // A1 talks to Mewtwo and shows the cry/text; A2 actually starts battle.
+        if !in_battle && pnp::is_just_pressed(Button::A) {
+            if !state.dialogue_seen {
+                state.dialogue_seen = true;
+                state.dialogue_a = Some(current);
+                state.result = None;
+            } else if !state.final_armed {
+                if host_blue_dvtrace_arm() != 0 {
+                    state.final_a = Some(current);
+                    state.final_armed = true;
+                    state.result = None;
                 }
             }
         }
@@ -220,17 +433,11 @@ pub fn run_frame() {
                 state.completed_runs = state.completed_runs.wrapping_add(1);
             }
             state.fixed_target = None;
-            state.last_valid_2f = None;
-            state.a_pending = None;
         }
         state.was_battle = in_battle;
 
-        let add = ((current.rng >> 16) & 0xFF) as u8;
-        let sub = ((current.rng >> 8) & 0xFF) as u8;
-        let frame = (current.rng & 0xFF) as u8;
         let fixed = pnp::blue_fixed_state();
-
-        pnp::println!(color = BLUE, "BLUE MEWTWO HUNT LAB v2");
+        pnp::println!(color = BLUE, "BLUE MEWTWO HUNT LAB v3");
         pnp::println!(
             color = if current.all_ptrs_ok() { GREEN } else { RED },
             "PTR3 {} H{} Q{}",
@@ -238,7 +445,13 @@ pub fn run_frame() {
             current.host_frame,
             current.seq
         );
-        pnp::println!("NOW R{:02X}{:02X} F{:02X} D{:02X}", add, sub, frame, current.div);
+        pnp::println!(
+            "NOW R{:02X}{:02X} F{:02X} D{:02X}",
+            add_of(current.rng),
+            sub_of(current.rng),
+            frame_of(current.rng),
+            current.div
+        );
         pnp::println!(
             "FIX id{} rem{} p{} a{}",
             pnp::blue_fixed_run_id(),
@@ -246,7 +459,6 @@ pub fn run_frame() {
             if fixed.pending { 1 } else { 0 },
             if fixed.physical_a { 1 } else { 0 }
         );
-        pnp::println!("2F ok{} / 1F rej{}", state.valid_2f, state.reject_1f);
 
         if let Some(result) = state.result {
             let shiny = shiny_from_raw(result.battle.raw_dv);
@@ -257,45 +469,46 @@ pub fn run_frame() {
                 result.battle.raw_dv,
                 if shiny { "SHINY" } else { "normal" }
             );
-            draw_snapshot("T", result.trigger);
+            draw_snapshot("A2", result.trigger);
             draw_snapshot("B", result.battle);
 
             let tq = host_blue_dvtrace_trigger_seq();
             let wq = host_blue_dvtrace_dvwrite_seq();
             let bq = host_blue_dvtrace_battle_seq();
+            let dw_rng = host_blue_dvtrace_dvwrite_rng();
+            let dw_div = host_blue_dvtrace_dvwrite_div() as u8;
+            let pre_rng = host_blue_dvtrace_pre_rng();
+            let pre_div = host_blue_dvtrace_pre_div() as u8;
+
             if wq != 0 {
                 pnp::println!(color = GREEN, "DVWRITE Q{} lag{}", wq, bq.wrapping_sub(wq));
-                draw_rng(
-                    "DW",
-                    host_blue_dvtrace_dvwrite_rng(),
-                    host_blue_dvtrace_dvwrite_div() as u8,
-                );
-                draw_rng(
-                    "PRE",
-                    host_blue_dvtrace_pre_rng(),
-                    host_blue_dvtrace_pre_div() as u8,
-                );
+                draw_rng("DW", dw_rng, dw_div);
+                draw_rng("PRE", pre_rng, pre_div);
+
+                let a = analyze_three_call(pre_rng, pre_div, dw_rng, dw_div, result.battle.raw_dv);
+                if a.valid && host_blue_dvtrace_add2_match() != 0 {
+                    pnp::println!(color = GREEN, "3CALL FIT YES branches{}", a.configs);
+                    pnp::println!(
+                        "R0 {:02X}-{:02X} D1 {:02X}-{:02X}",
+                        a.call0_min,
+                        a.call0_max,
+                        a.dv1_min,
+                        a.dv1_max
+                    );
+                    pnp::println!("D2 {:02X}-{:02X} frame{}t", a.dv2_min, a.dv2_max, a.frame_ticks);
+                    pnp::println!("DV2 pos +{}-{} ticks", a.dv2_tick_min, a.dv2_tick_max);
+                    pnp::println!(
+                        "preDV R{:02X}-{:02X}/{:02X}-{:02X}",
+                        a.pre_add_min,
+                        a.pre_add_max,
+                        a.pre_sub_min,
+                        a.pre_sub_max
+                    );
+                } else {
+                    pnp::println!(color = YELLOW, "3CALL FIT NO - need hook");
+                }
             } else {
                 pnp::println!(color = RED, "DVWRITE not isolated");
-            }
-
-            let pair = host_blue_dvtrace_d2_pair();
-            pnp::println!(
-                "DV2 rDIV {:02X}/{:02X} A2{}",
-                (pair >> 8) & 0xFF,
-                pair & 0xFF,
-                if host_blue_dvtrace_add2_match() != 0 { "Y" } else { "N" }
-            );
-
-            if host_blue_dvtrace_two_call_ok() != 0 {
-                let s = host_blue_dvtrace_solve();
-                let d1 = (s >> 24) & 0xFF;
-                let d2 = (s >> 16) & 0xFF;
-                let gap = (s >> 8) & 0xFF;
-                pnp::println!(color = GREEN, "2CALL YES d{:02X}>{:02X} g{}", d1, d2, gap);
-                pnp::println!("flags c{}{} q{}{}", (s >> 3) & 1, (s >> 2) & 1, (s >> 1) & 1, s & 1);
-            } else {
-                pnp::println!(color = YELLOW, "2CALL NO: earlier calls same frame");
             }
 
             let slot = host_blue_dvtrace_save_slot();
@@ -309,13 +522,28 @@ pub fn run_frame() {
             );
             pnp::println!("trace Q{} -> Q{} FID{}", tq, bq, result.fixed_run_id);
         } else if state.fixed_target.is_some() {
-            pnp::println!(color = GREEN, "Exact2F target captured");
+            pnp::println!(color = GREEN, "A2 Exact2F target captured");
+        } else if state.final_armed {
+            pnp::println!(color = GREEN, "A2 battle A captured");
+            if let Some(s) = state.final_a {
+                draw_snapshot("A2", s);
+            }
+            pnp::println!("Hands off; waiting battle");
+        } else if state.dialogue_seen {
+            pnp::println!(color = GREEN, "A1 dialogue captured");
+            if let Some(s) = state.dialogue_a {
+                draw_snapshot("A1", s);
+            }
+            pnp::println!(color = YELLOW, "NEXT A is the battle A2");
+            pnp::println!("Calibration: press A normally");
+            pnp::println!("Exact: pause here, A+Y then L");
         } else {
-            pnp::println!("CAL: stand before Mewtwo");
-            pnp::println!("Press A normally -> battle");
+            pnp::println!("STEP1: face Mewtwo, press A");
+            pnp::println!("Wait for Mewtwo cry/text");
+            pnp::println!("STEP2: press A again -> battle");
         }
 
-        pnp::println!(color = YELLOW, "HUNT LOCKED: DV call learning");
+        pnp::println!(color = YELLOW, "HUNT LOCKED: final-A learning");
     }
 }
 
@@ -330,5 +558,25 @@ mod tests {
         }
         assert!(!shiny_from_raw(0x1AAA));
         assert!(!shiny_from_raw(0x2BAA));
+    }
+
+    #[test]
+    fn observed_ad40_frame_has_three_call_fit() {
+        // Hardware trial: PRE A375 D12 -> DW AD6C D24, DV AD40.
+        let a = analyze_three_call(0xA37514, 0x12, 0xAD6C13, 0x24, 0xAD40);
+        assert!(a.valid);
+        assert_eq!(a.frame_ticks, 274);
+        assert_eq!(a.call0_min, 0x30);
+        assert_eq!(a.call0_max, 0x32);
+        assert_eq!(a.dv1_min, 0x6A);
+        assert_eq!(a.dv1_max, 0x6B);
+        assert_eq!(a.dv2_min, 0x6C);
+        assert_eq!(a.dv2_max, 0x6C);
+        assert_eq!(a.dv2_tick_min, 90);
+        assert_eq!(a.dv2_tick_max, 90);
+        assert_eq!(a.pre_add_min, 0xD4);
+        assert_eq!(a.pre_add_max, 0xD6);
+        assert_eq!(a.pre_sub_min, 0x43);
+        assert_eq!(a.pre_sub_max, 0x45);
     }
 }

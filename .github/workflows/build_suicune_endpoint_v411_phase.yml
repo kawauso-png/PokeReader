@@ -1,0 +1,55 @@
+name: Suicune Endpoint Probe v4.1.1 Phase Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "suicune-endpoint-probe-v411-phase"
+
+jobs:
+  build-endpoint-v411:
+    name: Build Suicune Endpoint Probe v4.1.1 Phase
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install patch dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+
+      - name: Apply deterministic v3.7 Exact-2F execute patch
+        run: sh apply_suicune_deterministic_v37.sh
+
+      - name: Apply v3.8 clean timing observer
+        run: sh apply_suicune_observe_v38.sh
+
+      - name: Keep benchmark out of execution path
+        run: sh apply_suicune_observe_v38_post.sh
+
+      - name: Apply endpoint v4.1 probe
+        run: python3 apply_suicune_endpoint_v41.py
+
+      - name: Apply v4.1.1 F600 phase logger
+        run: python3 apply_suicune_endpoint_v411_phase.py
+
+      - name: Verify phase markers
+        run: |
+          grep -q "struct EndpointSnapshot" reader_core/src/crystal/trace.rs
+          grep -q "CRYSTAL_PHASE_AUX_ADDR" reader_core/src/crystal/hook.rs
+          grep -q "phase_aux_f600" reader_core/src/crystal/trace.rs
+          grep -q "pub phase_aux: u32" reader_core/src/crystal/hook.rs
+          grep -q "wrapping_add(11)" reader_core/src/crystal/trace.rs
+          grep -q "fixed_a_frames = 2;" 3gx/sources/main.c
+
+      - name: Build
+        run: make
+
+      - name: Upload Endpoint v4.1.1 Phase artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-Endpoint-v411-Phase
+          retention-days: 7
+          path: out/default.3gx

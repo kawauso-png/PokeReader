@@ -3,6 +3,7 @@ set -eu
 
 RUST=reader_core/src/gen1/mod.rs
 CTRACE=3gx/sources/blue_dvtrace.c
+FCMOD=reader_core/src/gen1/shiny_forecast.rs
 
 if ! grep -q '^mod shiny_forecast;$' "$RUST"; then
     sed -i '1imod shiny_forecast;' "$RUST"
@@ -97,6 +98,19 @@ if ! grep -q 'let arm_fc = shiny_forecast::arm_stats' "$RUST"; then
     { print }
     ' "$RUST" > "$RUST.tmp"
     mv "$RUST.tmp" "$RUST"
+fi
+
+# scan_full leaves RAW_BITS at its final +16F evaluation.  Re-evaluate the
+# current trigger state before snapshotting ARM_BITS so actual_hit tests NOW.
+if ! grep -q 'let arm_n = seed_current' "$FCMOD"; then
+    awk '
+    /for i in 0\.\.RAW_WORDS \{ ARM_BITS\[i\] = RAW_BITS\[i\]; \}/ {
+        print "        let arm_n = seed_current(rng, div, frame);"
+        print "        let _ = evaluate_states(arm_n);"
+    }
+    { print }
+    ' "$FCMOD" > "$FCMOD.tmp"
+    mv "$FCMOD.tmp" "$FCMOD"
 fi
 
 sed -i 's/BLUE MEWTWO RNG v7.5.1 ADAPT/BLUE MEWTWO RNG v7.6.0 FCST/' "$RUST"

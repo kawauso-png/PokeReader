@@ -1,6 +1,5 @@
 .PHONY: all clean lint test
 LIBPOKEREADER := reader_core/target/armv6k-nintendo-3ds/release/libpokereader.a
-PHASE_PREP := prepare_blue_phaseprobe_v10.py
 
 R_SRCS := $(shell find reader_core/src -name '*.rs')
 C_SRCS := $(shell find 3gx/sources -name '*.c')
@@ -11,10 +10,13 @@ all: out/default.3gx
 $(LIBPOKEREADER): $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml
 
-out/default.3gx: $(LIBPOKEREADER) $(C_SRCS) $(H_SRCS) $(PHASE_PREP)
+out/default.3gx: $(LIBPOKEREADER) $(C_SRCS) $(H_SRCS)
+	# v12 phase-fit validation build: no memory-window probe. Keep only the
+	# lightweight existing sample path, retain 48 pre-trigger rows, and bump CSV.
 	sed -i 's/#define F604_CANDIDATE_ADDR 0x0022F604u/#define F604_CANDIDATE_ADDR 0x0021B608u/' 3gx/sources/blue_dvtrace.c
-	sed -i 's/#define PHASE_PROBE_BASE       0x0022F400u/#define PHASE_PROBE_BASE       0x088B2C00u/' 3gx/sources/blue_dvtrace.c
-	sed -i 's/"MEWTWO,9,/"MEWTWO,11,/' 3gx/sources/blue_dvtrace.c
+	sed -i 's/trigger_seq > 8u ? trigger_seq - 8u : 1u/trigger_seq > 48u ? trigger_seq - 48u : 1u/' 3gx/sources/blue_dvtrace.c
+	sed -i 's/phase_probe_begin(trigger_entry.div);/phase_probe_reset();/' 3gx/sources/blue_dvtrace.c
+	sed -i 's/"MEWTWO,9,/"MEWTWO,12,/' 3gx/sources/blue_dvtrace.c
 	make clean -C 3gx
 	make -C 3gx
 	mkdir -p out

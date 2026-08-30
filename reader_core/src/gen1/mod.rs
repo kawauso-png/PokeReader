@@ -11,26 +11,29 @@ const MAX_A_TO_BATTLE_HOST_FRAMES: u32 = 120;
 static mut HOST_FRAME: u32 = 0;
 
 extern "C" {
-    fn host_blue_stage9_sample() -> u32;
-    fn host_blue_stage9_wram() -> u32;
-    fn host_blue_stage9_hram() -> u32;
-    fn host_blue_stage9_div_host() -> u32;
-    fn host_blue_stage9_rng_pack() -> u32;
-    fn host_blue_stage9_div_value() -> u32;
-    fn host_blue_stage9_raw_dv() -> u32;
-    fn host_blue_stage9_div_changes() -> u32;
-    fn host_blue_stage9_div_steps() -> u32;
+    fn host_blue_stage10_sample() -> u32;
+    fn host_blue_stage10_wram() -> u32;
+    fn host_blue_stage10_hram() -> u32;
+    fn host_blue_stage10_div_host() -> u32;
+    fn host_blue_stage10_rng_pack() -> u32;
+    fn host_blue_stage10_div_value() -> u32;
+    fn host_blue_stage10_raw_dv() -> u32;
+    fn host_blue_stage10_div_changes() -> u32;
+    fn host_blue_stage10_div_steps() -> u32;
 
-    fn host_blue_stage9_scan_frames() -> u32;
-    fn host_blue_stage9_a1_total() -> u32;
-    fn host_blue_stage9_sw_total() -> u32;
-    fn host_blue_stage9_a1_addr(i: u32) -> u32;
-    fn host_blue_stage9_a1_hits(i: u32) -> u32;
-    fn host_blue_stage9_sw_addr(i: u32) -> u32;
-    fn host_blue_stage9_sw_hits(i: u32) -> u32;
-    fn host_blue_stage9_last_addr() -> u32;
-    fn host_blue_stage9_last_rng() -> u32;
-    fn host_blue_stage9_last_div() -> u32;
+    fn host_blue_stage10_a_addr() -> u32;
+    fn host_blue_stage10_a_value() -> u32;
+    fn host_blue_stage10_a_samples() -> u32;
+    fn host_blue_stage10_a_changes() -> u32;
+    fn host_blue_stage10_a_rom() -> u32;
+    fn host_blue_stage10_a_hits() -> u32;
+
+    fn host_blue_stage10_s_addr() -> u32;
+    fn host_blue_stage10_s_value() -> u32;
+    fn host_blue_stage10_s_samples() -> u32;
+    fn host_blue_stage10_s_changes() -> u32;
+    fn host_blue_stage10_s_rom() -> u32;
+    fn host_blue_stage10_s_hits() -> u32;
 }
 
 #[derive(Clone, Copy, Default)]
@@ -95,13 +98,13 @@ fn shiny_from_raw(raw: u16) -> bool {
 }
 
 fn sample() -> Snapshot {
-    let status = unsafe { host_blue_stage9_sample() };
+    let status = unsafe { host_blue_stage10_sample() };
     Snapshot {
         host_frame: unsafe { HOST_FRAME },
         status,
-        rng: unsafe { host_blue_stage9_rng_pack() },
-        div: unsafe { host_blue_stage9_div_value() } as u8,
-        raw_dv: unsafe { host_blue_stage9_raw_dv() } as u16,
+        rng: unsafe { host_blue_stage10_rng_pack() },
+        div: unsafe { host_blue_stage10_div_value() } as u8,
+        raw_dv: unsafe { host_blue_stage10_raw_dv() } as u16,
     }
 }
 
@@ -157,21 +160,32 @@ pub fn run_frame() {
         }
         state.was_battle = in_battle;
 
-        let wram = host_blue_stage9_wram();
-        let hram = host_blue_stage9_hram();
-        let div_host = host_blue_stage9_div_host();
-        let dchg = host_blue_stage9_div_changes();
-        let dsteps = host_blue_stage9_div_steps();
-        let frames = host_blue_stage9_scan_frames();
-        let a1_total = host_blue_stage9_a1_total();
-        let sw_total = host_blue_stage9_sw_total();
+        let wram = host_blue_stage10_wram();
+        let hram = host_blue_stage10_hram();
+        let div_host = host_blue_stage10_div_host();
+        let dchg = host_blue_stage10_div_changes();
+        let dsteps = host_blue_stage10_div_steps();
 
-        pnp::println!(color = BLUE, "BLUE RECOVERED STAGE9 PCSCAN");
+        let aa = host_blue_stage10_a_addr();
+        let av = host_blue_stage10_a_value() as u16;
+        let an = host_blue_stage10_a_samples();
+        let ac = host_blue_stage10_a_changes();
+        let ar = host_blue_stage10_a_rom();
+        let ah = host_blue_stage10_a_hits();
+
+        let sa = host_blue_stage10_s_addr();
+        let sv = host_blue_stage10_s_value() as u16;
+        let sn = host_blue_stage10_s_samples();
+        let sc = host_blue_stage10_s_changes();
+        let sr = host_blue_stage10_s_rom();
+        let sh = host_blue_stage10_s_hits();
+
+        pnp::println!(color = BLUE, "BLUE RECOVERED STAGE10 PCVAL");
         pnp::println!(
             color = if current.all_ptrs_ok() { GREEN } else { RED },
             "PTR3 {} ST{:02X}",
             if current.all_ptrs_ok() { "OK" } else { "NO" },
-            current.status & 0x1F
+            current.status & 0x3F
         );
         pnp::println!("W {:08X} H {:08X}", wram, hram);
         pnp::println!("D {:08X}", div_host);
@@ -182,40 +196,15 @@ pub fn run_frame() {
         pnp::println!("NOW R{:02X}{:02X} F{:02X} D{:02X}", add, sub, frame, current.div);
         pnp::println!("DIV ch{} ds{}", dchg, dsteps);
 
-        pnp::println!("SCAN 0021B000-0021BFFF");
-        pnp::println!(
-            color = if a1_total != 0 { GREEN } else { WHITE },
-            "A1C8 total {} / F{}",
-            a1_total,
-            frames
-        );
-        for i in 0..3u32 {
-            let addr = host_blue_stage9_a1_addr(i);
-            let hits = host_blue_stage9_a1_hits(i);
-            if addr != 0 {
-                pnp::println!(color = GREEN, "A{} {:08X} h{}", i, addr, hits);
-            }
-        }
-        pnp::println!("C8A1 total {}", sw_total);
-        if sw_total != 0 {
-            let addr = host_blue_stage9_sw_addr(0);
-            let hits = host_blue_stage9_sw_hits(0);
-            pnp::println!("S0 {:08X} h{}", addr, hits);
-        }
+        pnp::println!(color = GREEN, "A {:08X} v{:04X}", aa, av);
+        pnp::println!("A n{} ch{} rom{}", an, ac, ar);
+        pnp::println!("A A1C8 hits {}", ah);
 
-        if a1_total != 0 {
-            let last_addr = host_blue_stage9_last_addr();
-            let last_rng = host_blue_stage9_last_rng();
-            let last_div = host_blue_stage9_last_div() as u8;
-            let la = ((last_rng >> 16) & 0xFF) as u8;
-            let ls = ((last_rng >> 8) & 0xFF) as u8;
-            let lf = (last_rng & 0xFF) as u8;
-            pnp::println!("LAST {:08X}", last_addr);
-            pnp::println!("MAP R{:02X}{:02X} F{:02X} D{:02X}", la, ls, lf, last_div);
-        } else {
-            pnp::println!("Stand still 10 sec");
-        }
+        pnp::println!("S {:08X} v{:04X}", sa, sv);
+        pnp::println!("S n{} ch{} rom{}", sn, sc, sr);
+        pnp::println!("S C8A1 hits {}", sh);
 
+        pnp::println!("Move around 5s, then stand 5s");
         pnp::println!("2F ok{} / 1F rej{}", state.valid_2f, state.reject_1f);
 
         if in_battle {

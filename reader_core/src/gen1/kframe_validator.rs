@@ -7,27 +7,24 @@ pub struct KFrameStats {
     pub hits: u32,
     pub special_total: u32,
     pub special_hits: u32,
-    pub frame_total: u32,
-    pub frame_hits: u32,
     pub ignored: u32,
     pub last_k: u8,
     pub last_div_step: u8,
     pub last_gap: u8,
-    pub last_frame: u8,
     pub last_special: bool,
 }
 
 static mut LIVE: KFrameStats = KFrameStats {
     valid: false, phase20_known: false, phase20: 0,
     total: 0, hits: 0, special_total: 0, special_hits: 0,
-    frame_total: 0, frame_hits: 0, ignored: 0, last_k: 0,
-    last_div_step: 0, last_gap: 0xFF, last_frame: 0, last_special: false,
+    ignored: 0, last_k: 0, last_div_step: 0, last_gap: 0xFF,
+    last_special: false,
 };
 static mut ARM: KFrameStats = KFrameStats {
     valid: false, phase20_known: false, phase20: 0,
     total: 0, hits: 0, special_total: 0, special_hits: 0,
-    frame_total: 0, frame_hits: 0, ignored: 0, last_k: 0,
-    last_div_step: 0, last_gap: 0xFF, last_frame: 0, last_special: false,
+    ignored: 0, last_k: 0, last_div_step: 0, last_gap: 0xFF,
+    last_special: false,
 };
 
 fn rng_add(rng: u32) -> u8 { ((rng >> 16) & 0xFF) as u8 }
@@ -43,14 +40,6 @@ fn infer_vblank(prev_rng: u32, current_rng: u32) -> Option<(u8, u8)> {
     let second = sub0.wrapping_sub(sub1).wrapping_sub(carry);
     let gap = second.wrapping_sub(first);
     if gap <= 1 { Some((first, gap)) } else { None }
-}
-
-fn frame_next(prev: u8) -> Option<u8> {
-    match prev {
-        1 => Some(5),
-        2..=5 => Some(prev - 1),
-        _ => None,
-    }
 }
 
 fn marker_k(k: u8) -> bool { k >= 0x1A }
@@ -71,22 +60,12 @@ fn allowed(special: bool, k: u8, div_step: u8, gap: u8) -> bool {
     }
 }
 
-pub fn observe(prev_seq: u32, prev_rng: u32, prev_div: u8, prev_frame: u8,
-               seq: u32, rng: u32, div: u8, frame: u8, usable: bool) -> KFrameStats {
+pub fn observe(prev_seq: u32, prev_rng: u32, prev_div: u8,
+               seq: u32, rng: u32, div: u8, usable: bool) -> KFrameStats {
     unsafe {
-        LIVE.last_frame = frame;
         if !usable || prev_seq == 0 || seq != prev_seq.wrapping_add(1) {
             LIVE.ignored = LIVE.ignored.wrapping_add(1);
             return LIVE;
-        }
-
-        // hFrameCounter is diagnostic only.  The predictive class is calibrated
-        // from K itself, so a fresh boot may begin at any frame/seq alignment.
-        if let Some(expect) = frame_next(prev_frame) {
-            if (1..=5).contains(&frame) {
-                LIVE.frame_total = LIVE.frame_total.wrapping_add(1);
-                if frame == expect { LIVE.frame_hits = LIVE.frame_hits.wrapping_add(1); }
-            }
         }
 
         let div_step = div.wrapping_sub(prev_div);
@@ -106,6 +85,8 @@ pub fn observe(prev_seq: u32, prev_rng: u32, prev_div: u8, prev_frame: u8,
         // Trace 0040: all 26 K>=1A rows occurred at one seq mod20 residue,
         // and every occurrence of that residue was K=1A/1B.  Use the first
         // marker only to learn the residue; validation starts afterwards.
+        // This makes the model boot-agnostic: no absolute seq or frame value is
+        // assumed across launches.
         if !LIVE.phase20_known {
             if marker_k(k) {
                 LIVE.phase20 = (seq % 20) as u8;
@@ -150,14 +131,5 @@ mod tests {
         assert!(!marker_k(0x19));
         assert!(!allowed(false,0x1B,0x12,0));
         assert!(!allowed(true,0x18,0x12,0));
-    }
-
-    #[test]
-    fn standing_frame_cycle_is_1_5_4_3_2() {
-        assert_eq!(frame_next(1),Some(5));
-        assert_eq!(frame_next(5),Some(4));
-        assert_eq!(frame_next(4),Some(3));
-        assert_eq!(frame_next(3),Some(2));
-        assert_eq!(frame_next(2),Some(1));
     }
 }

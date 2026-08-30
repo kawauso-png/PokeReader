@@ -22,6 +22,8 @@ extern "C" {
     fn host_blue_dvtrace_mark_physical_a();
     fn host_blue_dvtrace_mark_game_a();
     fn host_blue_dvtrace_seq() -> u32;
+    fn host_blue_dvtrace_rng() -> u32;
+    fn host_blue_dvtrace_div() -> u32;
     fn host_blue_dvtrace_raw_dv() -> u32;
     fn host_blue_dvtrace_trigger_seq() -> u32;
     fn host_blue_dvtrace_physical_a_seq() -> u32;
@@ -33,7 +35,14 @@ extern "C" {
 
     fn host_blue_gbrelease_reset();
     fn host_blue_gbrelease_mark();
-    fn host_blue_gbrelease_append_csv(slot: u32) -> u32;
+    fn host_blue_gbrelease_append_csv(
+        slot: u32,
+        pre_seq: u32,
+        pre_rng: u32,
+        pre_div: u32,
+        phase_offset: u32,
+        dvhigh_first_div: u32,
+    ) -> u32;
     fn host_blue_gbrelease_seq() -> u32;
     fn host_blue_gbrelease_valid() -> u32;
 }
@@ -43,6 +52,8 @@ struct Snapshot {
     host_frame: u32,
     seq: u32,
     status: u32,
+    rng: u32,
+    div: u8,
     raw_dv: u16,
 }
 
@@ -62,6 +73,10 @@ struct ResultInfo {
     physical_start: Option<Snapshot>,
     physical_release: Option<Snapshot>,
     gb_release: Option<Snapshot>,
+    final_pre: Option<Snapshot>,
+    phase_offset: u8,
+    dvhigh_first_div: u8,
+    phase_valid: bool,
     fixed_run_id: u32,
     source: u32,
 }
@@ -86,6 +101,8 @@ static mut RUN_STATE: RunState = RunState {
         host_frame: 0,
         seq: 0,
         status: 0,
+        rng: 0,
+        div: 0,
         raw_dv: 0,
     },
     normal_trigger: None,
@@ -101,8 +118,9 @@ static mut RUN_STATE: RunState = RunState {
     saw_game_a_held: false,
 };
 
-// Intentionally empty. v7.3 FastRNG froze at boot because it created a raw
-// SVC thread here. The safe-marker build adds no startup work at all.
+// Intentionally empty. The abandoned FastRNG experiment created a raw SVC
+// thread at startup and froze the VC opening. v7.3.2 keeps the v7.2 safety
+// property: no Blue-specific work is started here.
 pub fn init_blue() {}
 
 #[no_mangle]
@@ -140,6 +158,8 @@ fn sample() -> Snapshot {
         host_frame: unsafe { HOST_FRAME },
         seq: unsafe { host_blue_dvtrace_seq() },
         status,
+        rng: unsafe { host_blue_dvtrace_rng() },
+        div: unsafe { host_blue_dvtrace_div() } as u8,
         raw_dv: unsafe { host_blue_dvtrace_raw_dv() } as u16,
     }
 }
@@ -153,6 +173,23 @@ fn source_name(source: u32) -> &'static str {
     }
 }
 
+// For the second DV BattleRandom, hRandomAdd enters as the raw low byte and the
+// normal battle path enters Random_ with carry=1. Therefore its first rDIV byte
+// is high-low-1. Subtracting the immediately preceding sampled DIV gives the
+// unfolded final-frame phase class modulo 256. Existing traces 0011-0020 fall
+// into decimal offsets 90, 91 or 94.
+fn microphase(raw: u16, pre_div: u8) -> (u8, u8) {
+    let low = raw as u8;
+    let high = (raw >> 8) as u8;
+    let dvhigh_first_div = high.wrapping_sub(low).wrapping_sub(1);
+    let phase_offset = dvhigh_first_div.wrapping_sub(pre_div);
+    (phase_offset, dvhigh_first_div)
+}
+
+fn known_phase(phase: u8) -> bool {
+    matches!(phase, 90 | 91 | 94)
+}
+
 pub fn run_frame() {
     pnp::set_print_max_len(31);
     unsafe {
@@ -162,6 +199,7 @@ pub fn run_frame() {
 
     unsafe {
         let state = &mut RUN_STATE;
+        let previous = state.last_snapshot;
         state.last_snapshot = current;
         let in_battle = current.in_mewtwo_battle();
 
@@ -201,9 +239,8 @@ pub fn run_frame() {
                 host_blue_dvtrace_mark_game_a();
             }
 
-            // Traces 0011-0022 established this as the authoritative anchor:
-            // the GB-side hJoyHeld.A 1->0 transition was exactly 9 sampled
-            // frames before Mewtwo DV write in 12/12 trials.
+            // The first GB-side hJoyHeld.A 1->0 transition is the authoritative
+            // release anchor. Critical path remains a tiny copy only.
             if state.physical_start.is_some() {
                 if game_a_held {
                     state.saw_game_a_held = true;
@@ -214,8 +251,6 @@ pub fn run_frame() {
                     && !game_a_held
                 {
                     state.gb_release = Some(current);
-                    // Safe v7.3.1 marker: copy already-sampled seq/RNG/DIV only.
-                    // No thread, hook, scan, sleep or I/O happens here.
                     host_blue_gbrelease_mark();
                 }
             }
@@ -229,12 +264,26 @@ pub fn run_frame() {
         if in_battle && !state.was_battle {
             let finalized = host_blue_dvtrace_finalize();
             if finalized != 0 {
-                // blue_dvtrace_finalize() has already completed the ordinary
-                // CSV and left the timing-critical transition. Appending the
-                // release marker here cannot perturb the generated Mewtwo DV.
+                // `previous` is the ordinary host sample immediately before the
+                // battle/DV sample. Classification and SD I/O happen only now,
+                // after the Mewtwo DVs have already been generated.
+                let pre_ok = previous.seq != 0 && previous.seq.wrapping_add(1) == current.seq;
+                let (phase_offset, dvhigh_first_div) = if pre_ok {
+                    microphase(current.raw_dv, previous.div)
+                } else {
+                    (0, 0)
+                };
+
                 let slot = host_blue_dvtrace_save_slot();
-                if slot != 0 {
-                    let _ = host_blue_gbrelease_append_csv(slot);
+                if slot != 0 && pre_ok {
+                    let _ = host_blue_gbrelease_append_csv(
+                        slot,
+                        previous.seq,
+                        previous.rng,
+                        previous.div as u32,
+                        phase_offset as u32,
+                        dvhigh_first_div as u32,
+                    );
                 }
 
                 let fixed_run_id = if state.fixed_target.is_some() {
@@ -247,6 +296,10 @@ pub fn run_frame() {
                     physical_start: state.physical_start,
                     physical_release: state.physical_release,
                     gb_release: state.gb_release,
+                    final_pre: if pre_ok { Some(previous) } else { None },
+                    phase_offset,
+                    dvhigh_first_div,
+                    phase_valid: pre_ok,
                     fixed_run_id,
                     source: host_blue_dvtrace_arm_source(),
                 });
@@ -256,7 +309,7 @@ pub fn run_frame() {
         }
         state.was_battle = in_battle;
 
-        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v7.3.1 SAFE");
+        pnp::println!(color = BLUE, "BLUE MEWTWO RNG v7.3.2 SAFE");
         pnp::println!(
             color = if current.all_ptrs_ok() { GREEN } else { RED },
             "SYSTEM {}",
@@ -304,6 +357,20 @@ pub fn run_frame() {
                 pnp::println!(color = RED, "GB RELEASE MISSED");
             }
 
+            if result.phase_valid {
+                pnp::println!(
+                    color = if known_phase(result.phase_offset) { GREEN } else { YELLOW },
+                    "PHASE +{} D{:02X}",
+                    result.phase_offset,
+                    result.dvhigh_first_div
+                );
+                if let Some(pre) = result.final_pre {
+                    pnp::println!("PRE Q{} DIV {:02X}", pre.seq, pre.div);
+                }
+            } else {
+                pnp::println!(color = RED, "PHASE PRE MISSED");
+            }
+
             if pq != 0 && gq >= pq && bq >= gq {
                 pnp::println!("GAME->DV {}F", bq.wrapping_sub(gq));
             }
@@ -328,14 +395,14 @@ pub fn run_frame() {
             if result.fixed_run_id != 0 {
                 pnp::println!("Exact2F run {}", result.fixed_run_id);
             }
-            pnp::println!(color = YELLOW, "SAFE RELEASE MICROPHASE");
+            pnp::println!(color = YELLOW, "SAFE / POSTCLASS");
         } else if state.fixed_target.is_some() {
             pnp::println!(color = GREEN, "EXACT2F ARMED");
         } else {
             pnp::println!("FINAL-A AUTO TRACK");
             pnp::println!("GB RELEASE 9F ANCHOR");
             pnp::println!("NO THREAD / NO FAST HOOK");
-            pnp::println!(color = YELLOW, "PRED LOCKED: microphase");
+            pnp::println!(color = YELLOW, "PRED LOCKED: phase learn");
         }
     }
 }
@@ -358,5 +425,19 @@ mod tests {
         assert_eq!(source_name(ARM_SOURCE_GAME_A), "GAME");
         assert_eq!(source_name(ARM_SOURCE_EXACT2F), "EXACT2F");
         assert_eq!(source_name(ARM_SOURCE_PHYSICAL_A), "PHYS");
+    }
+
+    #[test]
+    fn known_microphase_regressions() {
+        // Trace 0011: raw B67F, final-pre DIV DC -> +90.
+        assert_eq!(microphase(0xB67F, 0xDC), (90, 0x36));
+        // Trace 0013: raw 746E, final-pre DIV A7 -> +94.
+        assert_eq!(microphase(0x746E, 0xA7), (94, 0x05));
+        // Trace 0020: raw AD5D, final-pre DIV F4 -> +91.
+        assert_eq!(microphase(0xAD5D, 0xF4), (91, 0x4F));
+        assert!(known_phase(90));
+        assert!(known_phase(91));
+        assert!(known_phase(94));
+        assert!(!known_phase(92));
     }
 }

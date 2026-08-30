@@ -9,6 +9,12 @@
 #define HRAM_SLOT 0x0021B6DCu
 #define DIV_SLOT  0x0021B7B4u
 
+// Read-only candidate for the VC emulator M-cycle subphase counter. Crystal
+// traces strongly suggest this address exposes a 0..63 M-cycle phase, but Blue
+// must validate that independently. v8 only logs it; no prediction or control
+// decision is allowed to depend on it.
+#define F604_CANDIDATE_ADDR 0x0022F604u
+
 // Two lightweight LR35902-PC candidates recovered on real hardware in the
 // earlier Stage 9/10 probes. v7 records both; it never scans memory while the
 // critical Mewtwo transition is running.
@@ -54,6 +60,8 @@ typedef struct
     u16 pc_a;
     u16 pc_s;
     u8 div;
+    u8 f604_raw;
+    u8 f604_valid;
     u8 frame;
     u8 joy_pressed;
     u8 joy_held;
@@ -79,6 +87,11 @@ static u32 live_hram = 0;
 static u32 live_div_ptr = 0;
 static u32 live_joy_pressed = 0;
 static u32 live_joy_held = 0;
+
+// Mapping is queried once per plugin lifetime. The hot sampling path then does
+// at most one volatile byte read from F604 and never scans/sleeps/writes.
+static bool f604_checked = false;
+static bool f604_mapped = false;
 
 static bool armed = false;
 static u32 pending_arm_source = ARM_SOURCE_UNKNOWN;
@@ -174,7 +187,7 @@ static void write_bytes(Handle file, u64 *offset, const char *s, u32 len)
 
 static void write_meta_row(Handle file, u64 *off)
 {
-    char line[1600];
+    char line[1800];
     u32 trigger_to_battle = delta_or_zero(trigger_seq, battle_seq);
     u32 physical_to_battle = delta_or_zero(physical_a_seq, battle_seq);
     u32 game_to_battle = delta_or_zero(game_a_seq, battle_seq);
@@ -182,16 +195,16 @@ static void write_meta_row(Handle file, u64 *off)
         line, sizeof(line),
         "meta,version,title_id,arm_source,trigger_seq,physical_a_seq,game_a_seq,battle_seq,trigger_to_battle,physical_to_battle,game_to_battle,"
         "opponent_seq,opponent_rel,audio_start_seq,audio_start_rel,audio_end_seq,audio_end_rel,dvwrite_seq,dvwrite_rel,raw_dv,shiny,"
-        "lowhealth_trigger,lowhealth_bit7_seen,wram,hram,div_ptr,pc_a_addr,pc_s_addr,"
-        "trigger_rng_add,trigger_rng_sub,trigger_frame,trigger_div,trigger_lowhealth,trigger_snd5,trigger_snd6,trigger_snd7,trigger_snd8,"
-        "pre_rng_add,pre_rng_sub,pre_frame,pre_div,dvwrite_rng_add,dvwrite_rng_sub,dvwrite_frame,dvwrite_div,"
-        "battle_rng_add,battle_rng_sub,battle_frame,battle_div,d2_c0,d2_c1,add2_match\n"
-        "MEWTWO,7,%016llX,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,"
+        "lowhealth_trigger,lowhealth_bit7_seen,wram,hram,div_ptr,pc_a_addr,pc_s_addr,f604_addr,f604_mapped,"
+        "trigger_rng_add,trigger_rng_sub,trigger_frame,trigger_div,trigger_f604,trigger_f604_valid,trigger_lowhealth,trigger_snd5,trigger_snd6,trigger_snd7,trigger_snd8,"
+        "pre_rng_add,pre_rng_sub,pre_frame,pre_div,pre_f604,pre_f604_valid,dvwrite_rng_add,dvwrite_rng_sub,dvwrite_frame,dvwrite_div,dvwrite_f604,dvwrite_f604_valid,"
+        "battle_rng_add,battle_rng_sub,battle_frame,battle_div,battle_f604,battle_f604_valid,d2_c0,d2_c1,add2_match\n"
+        "MEWTWO,8,%016llX,%lu,%lu,%lu,%lu,%lu,%lu,%lu,%lu,"
         "%lu,%ld,%lu,%ld,%lu,%ld,%lu,%ld,%04X,%u,"
-        "%02X,%u,%08lX,%08lX,%08lX,%08X,%08X,"
-        "%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,"
-        "%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X,"
-        "%02X,%02X,%02X,%02X,%02X,%02X,%u\n",
+        "%02X,%u,%08lX,%08lX,%08lX,%08X,%08X,%08X,%u,"
+        "%02X,%02X,%02X,%02X,%02X,%u,%02X,%02X,%02X,%02X,%02X,"
+        "%02X,%02X,%02X,%02X,%02X,%u,%02X,%02X,%02X,%02X,%02X,%u,"
+        "%02X,%02X,%02X,%02X,%02X,%u,%02X,%02X,%u\n",
         (unsigned long long)BLUE_JP_TITLE_ID,
         (unsigned long)active_arm_source,
         (unsigned long)trigger_seq,
@@ -212,13 +225,16 @@ static void write_meta_row(Handle file, u64 *off)
         (unsigned long)battle_entry.wram,
         (unsigned long)battle_entry.hram,
         (unsigned long)battle_entry.div_ptr,
-        PC_A_ADDR, PC_S_ADDR,
+        PC_A_ADDR, PC_S_ADDR, F604_CANDIDATE_ADDR, f604_mapped ? 1u : 0u,
         (u8)(trigger_entry.rng >> 8), (u8)trigger_entry.rng,
-        trigger_entry.frame, trigger_entry.div, trigger_entry.low_health,
-        trigger_entry.snd5, trigger_entry.snd6, trigger_entry.snd7, trigger_entry.snd8,
+        trigger_entry.frame, trigger_entry.div, trigger_entry.f604_raw, trigger_entry.f604_valid,
+        trigger_entry.low_health, trigger_entry.snd5, trigger_entry.snd6, trigger_entry.snd7, trigger_entry.snd8,
         (u8)(pre_entry.rng >> 8), (u8)pre_entry.rng, pre_entry.frame, pre_entry.div,
+        pre_entry.f604_raw, pre_entry.f604_valid,
         (u8)(dvwrite_entry.rng >> 8), (u8)dvwrite_entry.rng, dvwrite_entry.frame, dvwrite_entry.div,
+        dvwrite_entry.f604_raw, dvwrite_entry.f604_valid,
         (u8)(battle_entry.rng >> 8), (u8)battle_entry.rng, battle_entry.frame, battle_entry.div,
+        battle_entry.f604_raw, battle_entry.f604_valid,
         d2_c0, d2_c1, add2_matches ? 1u : 0u);
     if (n > 0)
         write_bytes(file, off, line, (u32)n);
@@ -280,7 +296,7 @@ static void save_csv(void)
     write_meta_row(file, &off);
 
     const char *hdr =
-        "seq,rel,rng_add,rng_sub,frame,div,raw_dv,joy_pressed,joy_held,phys_keys,phys_a,low_health,snd5,snd6,snd7,snd8,"
+        "seq,rel,rng_add,rng_sub,frame,div,f604_raw,f604_valid,raw_dv,joy_pressed,joy_held,phys_keys,phys_a,low_health,snd5,snd6,snd7,snd8,"
         "pc_a,pc_s,species,opponent,battle,level,wram,hram,div_ptr,"
         "is_trigger,is_physical_a,is_game_a,is_opponent,is_audio_start,is_audio_end,is_pre,is_dvwrite,is_battle\n";
     write_bytes(file, &off, hdr, (u32)strlen(hdr));
@@ -290,7 +306,7 @@ static void save_csv(void)
     if (last - first >= TRACE_LEN)
         first = last - TRACE_LEN + 1u;
 
-    char row[512];
+    char row[560];
     for (u32 seq = first; seq <= last; seq++)
     {
         DvTraceEntry e = entry_at(seq);
@@ -299,10 +315,10 @@ static void save_csv(void)
         s32 rel = (s32)e.seq - (s32)trigger_seq;
         int n = snprintf(
             row, sizeof(row),
-            "%lu,%ld,%02X,%02X,%02X,%02X,%04X,%02X,%02X,%08lX,%u,%02X,%02X,%02X,%02X,%02X,%04X,%04X,"
+            "%lu,%ld,%02X,%02X,%02X,%02X,%02X,%u,%04X,%02X,%02X,%08lX,%u,%02X,%02X,%02X,%02X,%02X,%04X,%04X,"
             "%02X,%02X,%02X,%02X,%08lX,%08lX,%08lX,%u,%u,%u,%u,%u,%u,%u,%u,%u\n",
             (unsigned long)e.seq, (long)rel,
-            (u8)(e.rng >> 8), (u8)e.rng, e.frame, e.div, e.raw_dv,
+            (u8)(e.rng >> 8), (u8)e.rng, e.frame, e.div, e.f604_raw, e.f604_valid, e.raw_dv,
             e.joy_pressed, e.joy_held, (unsigned long)e.phys_keys,
             (e.phys_keys & KEY_A) ? 1u : 0u,
             e.low_health, e.snd5, e.snd6, e.snd7, e.snd8,
@@ -341,6 +357,12 @@ u32 host_blue_dvtrace_sample(void)
         !query_span_mapped(DIV_SLOT, DIV_SLOT + 3u))
         return 0;
 
+    if (!f604_checked)
+    {
+        f604_mapped = query_span_mapped(F604_CANDIDATE_ADDR, F604_CANDIDATE_ADDR);
+        f604_checked = true;
+    }
+
     u32 wram = *(vu32 *)WRAM_SLOT;
     u32 hram = *(vu32 *)HRAM_SLOT;
     u32 divp = *(vu32 *)DIV_SLOT;
@@ -355,6 +377,13 @@ u32 host_blue_dvtrace_sample(void)
     u8 sub = *(vu8 *)(hram + HRAM_SUB_OFF);
     u8 frame = *(vu8 *)(hram + HRAM_FRAME_OFF);
     u8 div = *(vu8 *)divp;
+    u8 f604_raw = 0;
+    u8 f604_valid = 0;
+    if (f604_mapped)
+    {
+        f604_raw = *(vu8 *)F604_CANDIDATE_ADDR;
+        f604_valid = 1u;
+    }
     u8 species = *(vu8 *)(wram + OFF_ENEMY_SPECIES);
     u8 opponent = *(vu8 *)(wram + OFF_OPPONENT);
     u8 battle = *(vu8 *)(wram + OFF_BATTLE_STATE);
@@ -404,6 +433,8 @@ u32 host_blue_dvtrace_sample(void)
         .pc_a = pc_a,
         .pc_s = pc_s,
         .div = div,
+        .f604_raw = f604_raw,
+        .f604_valid = f604_valid,
         .frame = frame,
         .joy_pressed = joy_pressed,
         .joy_held = joy_held,
@@ -476,6 +507,10 @@ u32 host_blue_dvtrace_arm(void)
     trigger_entry = entry_at(trigger_seq);
     baseline_dv = (u16)live_raw_dv;
 
+    // Clear all per-arm edge markers. v7.3.5 intentionally preserved the
+    // Exact2F trigger, but game_a_seq could still display a stale prior value.
+    physical_a_seq = 0;
+    game_a_seq = 0;
     opponent_seq = 0;
     audio_start_seq = 0;
     audio_end_seq = 0;

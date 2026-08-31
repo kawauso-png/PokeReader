@@ -105,7 +105,9 @@ sed -i 's/autopause::observe(current.seq, adp, fc, auto_enabled)/autopause::obse
 
 # An Exact2F arm snapshot must use the logical sequence paired with its sampled
 # RNG/DIV, not the host trace counter.
-sed -i 's/shiny_forecast::mark_arm(s.seq, s.rng, s.div/shiny_forecast::mark_arm(MODEL_LAST_SEQ, s.rng, s.div/g' "$RUST"
+sed -i '/shiny_forecast::mark_arm(/,/^[[:space:]]*);/ {
+    s/s.seq, s.rng, s.div/MODEL_LAST_SEQ, s.rng, s.div/
+}' "$RUST"
 
 # Make the two counters visible on hardware.  H may advance on a duplicate host
 # sample while G intentionally holds; CSP should no longer be reset by that.

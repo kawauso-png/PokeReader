@@ -68,6 +68,8 @@ jobs:
         run: python3 apply_suicune_early_adaptive_v58.py
       - name: Apply v6.0 live phase probe
         run: python3 apply_suicune_live_phase_v60.py
+      - name: Minimize v6.0 gate observer
+        run: python3 apply_suicune_live_phase_v60_min.py
       - name: Verify v6.0 markers
         run: |
           grep -q "profile_slots\[6\] = {8, 8, 8, 9, 9, 9}" 3gx/sources/main.c
@@ -80,6 +82,7 @@ jobs:
           grep -q "EARLY,V60" reader_core/src/crystal/trace.rs
           grep -q "endpoint_tail_sample_count" reader_core/src/crystal/hook.rs
           grep -q "tail_index,pc,div" reader_core/src/crystal/trace.rs
+          ! grep -q "early_live_state" reader_core/src/crystal/trace.rs
           ! grep -q "host_suicune_endpoint_pause_request" 3gx/sources/main.c
       - name: Build
         run: make

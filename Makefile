@@ -24,6 +24,7 @@ MOLTRES_VCRESET_CFIX_PREP := prepare_blue_moltres_vcreset_cfix_v38.sh
 ARTICUNO_CAL_PREP := prepare_blue_articuno_cal_v39.sh
 ARTICUNO_AUTO_PREP := prepare_blue_articuno_auto_v40.sh
 ARTICUNO_ADPFIX_PREP := prepare_blue_articuno_adpfix_v41.sh
+ARTICUNO_COLDNPC_PREP := prepare_blue_articuno_coldnpc_v42.sh
 
 R_SRCS := $(shell find reader_core/src -name '*.rs')
 C_SRCS := $(shell find 3gx/sources -name '*.c')
@@ -56,6 +57,7 @@ prepare:
 	sh $(ARTICUNO_CAL_PREP)
 	sh $(ARTICUNO_AUTO_PREP)
 	sh $(ARTICUNO_ADPFIX_PREP)
+	sh $(ARTICUNO_COLDNPC_PREP)
 
 $(LIBPOKEREADER): prepare $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml

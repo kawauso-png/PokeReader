@@ -82,13 +82,16 @@ jobs:
         run: python3 apply_suicune_practical_shiny_v64.py
       - name: Verify v6.4 markers
         run: |
-          grep -q "PRACTICAL_LANE_LEN: usize = 730" reader_core/src/crystal/trace.rs
-          grep -q "PRACT,V64" reader_core/src/crystal/trace.rs
-          grep -q "fn practical_score" reader_core/src/crystal/trace.rs
-          grep -q "fn practical_monitor" reader_core/src/crystal/trace.rs
-          grep -q "PATH MISS" reader_core/src/crystal/trace.rs
-          grep -q "suicune_practical_search_enabled" reader_core/src/pnp/input.rs
-          grep -q "suicune_delay_frames_requested = 0" 3gx/sources/main.c
+          grep -q "pub const SEARCH_HORIZON: u32 = 131072" reader_core/src/crystal/practical.rs
+          grep -q "pub const MAX_SEARCH_CANDIDATES: usize = 8" reader_core/src/crystal/practical.rs
+          grep -q "pub const MIN_SUPPORT_WEIGHT: u8 = 4" reader_core/src/crystal/practical.rs
+          grep -q "source: 86" reader_core/src/crystal/practical.rs
+          grep -q "PRACTICAL,V64" reader_core/src/crystal/trace.rs
+          grep -q "fn search_practical_targets" reader_core/src/crystal/trace.rs
+          grep -q "fn practical_wait_monitor" reader_core/src/crystal/trace.rs
+          grep -q "fn practical_fail" reader_core/src/crystal/trace.rs
+          grep -q "v6.4 practical shiny future search/cancel" 3gx/sources/main.c
+          grep -q "search_suicune_practical_targets" 3gx/includes/pokereader.h
           grep -q "POSTFP,V63" reader_core/src/crystal/trace.rs
           grep -q "PREFP,V62" reader_core/src/crystal/trace.rs
           grep -q "ACT,V61C" reader_core/src/crystal/trace.rs

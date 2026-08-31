@@ -15,6 +15,7 @@ ADAPT_SPECIAL_PREP := prepare_blue_adaptive_special_v29.sh
 DIVDIAG_PREP := prepare_blue_divdiag_v30.sh
 NPC_RESYNC_PREP := prepare_blue_npc_resync_v31.sh
 NPC_RESYNC_FIX_PREP := prepare_blue_npc_resync_fix_v32.sh
+NPC_LOCALBASE_PREP := prepare_blue_npc_localbase_v33.sh
 
 R_SRCS := $(shell find reader_core/src -name '*.rs')
 C_SRCS := $(shell find 3gx/sources -name '*.c')
@@ -38,6 +39,7 @@ prepare:
 	sh $(DIVDIAG_PREP)
 	sh $(NPC_RESYNC_PREP)
 	sh $(NPC_RESYNC_FIX_PREP)
+	sh $(NPC_LOCALBASE_PREP)
 
 $(LIBPOKEREADER): prepare $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml

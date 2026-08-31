@@ -160,12 +160,13 @@ sed -i 's/BLUE LEGEND RNG v8.4 ART CAL/BLUE LEGEND RNG v8.4.1 ART AUTO/' "$RUST"
 sed -i 's/ARTICUNO CAL + VCRST/ARTICUNO AUTO + VCRST/' "$RUST"
 sed -i 's/"LEGEND,39,/"LEGEND,40,/' "$CTRACE"
 
-# Build-time guards.
+# Build-time guards. v41 may already have advanced the visible banner/schema on
+# a repeated prepare pass, so accept both v40 and v41 final forms.
 grep -q 'ARTICUNO_AUTO_MODEL_V40' "$FCMOD"
 grep -q 'collect_articuno_event' "$FCMOD"
 grep -q 'articuno_trace0016_path_and_raw_are_covered' "$FCMOD"
 ! grep -q 'ARTICUNO_CAL_FORECAST_LOCK' "$FCMOD"
 grep -q 'host_blue_legend_target_id() <= 3u' "$MAIN"
 grep -q 'ARTICUNO_AUTO_UI_V40' "$RUST"
-grep -q 'BLUE LEGEND RNG v8.4.1 ART AUTO' "$RUST"
-grep -q '"LEGEND,40,' "$CTRACE"
+grep -Eq 'BLUE LEGEND RNG v8\.4\.1 ART AUTO|BLUE LEGEND RNG v8\.4\.2 ART ADP' "$RUST"
+grep -Eq '"LEGEND,40,|"LEGEND,41,' "$CTRACE"

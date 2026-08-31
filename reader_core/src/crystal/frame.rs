@@ -18,6 +18,7 @@ use once_cell::unsync::Lazy;
 enum CrystalView {
     MainMenu,
     Rng,
+    Boot,
     Party,
     Wild,
     Egg,
@@ -35,11 +36,13 @@ struct PersistedState {
     party_menu: SubMenu,
     help_menu: HelpMenu,
     mem_view: super::memview::MemView,
+    boot: super::boottrace::BootTrace,
     trace: super::trace::Trace,
 }
 
 const MENU: &[MenuOption<CrystalView>] = &[
     MenuOption::new(CrystalView::Rng, "RNG"),
+    MenuOption::new(CrystalView::Boot, "Boot"),
     MenuOption::new(CrystalView::Party, "Party"),
     MenuOption::new(CrystalView::Wild, "Wild"),
     MenuOption::new(CrystalView::Egg, "Egg"),
@@ -57,14 +60,14 @@ unsafe fn get_state() -> &'static mut PersistedState {
         party_menu: SubMenu::new(1, 6),
         help_menu: HelpMenu::default(),
         mem_view: super::memview::MemView::default(),
+        boot: super::boottrace::BootTrace::default(),
         trace: super::trace::Trace::default(),
         main_menu: Menu::new(MENU),
     });
     Lazy::force_mut(&mut STATE)
 }
 
-
-/// Invoked directly from the C pause loop by Y+X.  This is intentionally not
+/// Invoked directly from the C pause loop by Y+X. This is intentionally not
 /// deferred to run_frame(): deferring would lose the exact Target state and
 /// only see Target+1 after resume.
 pub fn arm_suicune_probe() {
@@ -81,6 +84,11 @@ pub fn run_frame() {
     // This is safe as long as this is guaranteed to run single threaded.
     // A lock hinders performance too much on a 3ds.
     let state = unsafe { get_state() };
+
+    // Capture the presented frame before the legacy 01FF/0101 detector resets
+    // PokeReader's logical RNG_ADVANCE. BootTrace therefore preserves both the
+    // real boot-side state and the artificial epoch boundary used by old tools.
+    state.boot.record_frame(&reader);
 
     state.frame = match (measured_div(), reader.rng_state()) {
         (0x0101, 0x01ff) => {
@@ -109,6 +117,7 @@ pub fn run_frame() {
             let (save, code) = state.trace.save_status();
             pnp::println!("Save {} {:08X}", save, code);
         }
+        CrystalView::Boot => state.boot.draw(&reader, is_locked),
         CrystalView::Wild => draw_pkx(&reader.wild()),
         CrystalView::Party => {
             let slot = state.party_menu.update_and_draw(is_locked);

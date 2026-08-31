@@ -24,6 +24,6 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Blue-Legend-v8.2.4-Adaptive-SpecialFix
+          name: PokeReader-Blue-Legend-v8.2.5-DivDiag
           retention-days: 3
           path: out/default.3gx

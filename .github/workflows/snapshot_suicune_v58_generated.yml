@@ -46,6 +46,7 @@ jobs:
           retention-days: 2
           path: |
             3gx/sources/main.c
+            reader_core/src/crystal/hook.rs
             reader_core/src/crystal/trace.rs
             reader_core/src/pnp/bindings.rs
             reader_core/src/pnp/input.rs

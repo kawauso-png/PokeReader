@@ -1,0 +1,51 @@
+name: Snapshot Suicune v5.8 Generated Sources
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "suicune-dual-investigation-v59"
+
+jobs:
+  snapshot-v58-generated:
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - run: sh apply_suicune_deterministic_v37.sh
+      - run: sh apply_suicune_observe_v38.sh
+      - run: sh apply_suicune_observe_v38_post.sh
+      - run: python3 apply_suicune_endpoint_v41.py
+      - run: python3 apply_suicune_endpoint_v42_lighttail.py
+      - run: python3 apply_suicune_endpoint_v44_puretail.py
+      - run: python3 apply_suicune_endpoint_v44_routecount.py
+      - run: python3 apply_suicune_start_signature_v48.py
+      - run: python3 apply_suicune_resume_phase_lock_v49.py
+      - run: python3 fix_suicune_start_phase_v50_patch.py
+      - run: python3 apply_suicune_start_phase_lock_v50.py
+      - run: python3 fix_suicune_vblank_context_v52_patch.py
+      - run: python3 apply_suicune_vblank_context_v52.py
+      - run: python3 apply_suicune_vblank_context_freeze_v52.py
+      - run: python3 apply_suicune_vblank_context_v53.py
+      - run: python3 apply_suicune_startsig_preserve_v54.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch2.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch3.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch4.py
+      - run: python3 apply_suicune_early_control_lab_v55.py
+      - run: python3 apply_suicune_early_profile_v56.py
+      - run: python3 apply_suicune_early_mapper_v57.py
+      - run: python3 apply_suicune_early_adaptive_v58.py
+      - name: Upload generated sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: Suicune-v58-generated-sources
+          retention-days: 2
+          path: |
+            3gx/sources/main.c
+            reader_core/src/crystal/trace.rs
+            reader_core/src/pnp/bindings.rs
+            reader_core/src/pnp/input.rs

@@ -64,11 +64,11 @@ sed -i 's/CAL AUTO LOCKED/AUTO LOCKED - NEED 1 TRACE/' "$RUST"
 sed -i 's/"LEGEND,37,/"LEGEND,39,/' "$CTRACE"
 
 # Guards: fail build preparation if an upstream patch changed a critical anchor.
-# Downstream v40 Articuno Auto intentionally changes the title and Auto-Hunt
-# gate. Accept those two final forms so repeated make lint/test/build prepare
-# passes remain idempotent in the same Actions workspace.
+# Downstream v40/v41 Articuno builds intentionally change the title and Auto-Hunt
+# gate. Accept those final forms so repeated make lint/test/build prepare passes
+# remain idempotent in the same Actions workspace.
 grep -q 'static u32 blue_legend_target = 2u;' "$CTRACE"
 grep -q 'ARTICUNO_CAL_FORECAST_LOCK' "$FCMOD"
-grep -Eq 'BLUE LEGEND RNG v8\.4 ART CAL|BLUE LEGEND RNG v8\.4\.1 ART AUTO' "$RUST"
+grep -Eq 'BLUE LEGEND RNG v8\.4 ART CAL|BLUE LEGEND RNG v8\.4\.1 ART AUTO|BLUE LEGEND RNG v8\.4\.2 ART ADP' "$RUST"
 grep -q 'ARTICUNO: EXACT2F TRACE' "$RUST"
 grep -Eq 'host_blue_legend_target_id\(\) <= 1u \|\| host_blue_legend_target_id\(\) == 3u|host_blue_legend_target_id\(\) <= 3u' "$MAIN"

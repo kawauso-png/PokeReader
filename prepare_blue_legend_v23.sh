@@ -56,7 +56,7 @@ if ! grep -q '^static void write_legend_target_row' "$CTRACE"; then
         print "{"
         print "    char line[160];"
         print "    int n = snprintf(line, sizeof(line),"
-        print "        \"legend_target,id,name,species,level\\nTARGET,%lu,%s,%02X,%u\\n\"," 
+        print "        \"legend_target,id,name,species,level\\nTARGET,%lu,%s,%02X,%u\\n\","
         print "        (unsigned long)blue_legend_target, blue_legend_target_name(),"
         print "        (unsigned int)host_blue_legend_target_species(),"
         print "        (unsigned int)host_blue_legend_target_level());"
@@ -124,33 +124,29 @@ if ! grep -q 'fn host_blue_legend_target_id' "$RUST"; then
     mv "$RUST.tmp" "$RUST"
 fi
 
-if ! grep -q '^fn legend_target_name' "$RUST"; then
+if ! grep -q 'let legend_target = unsafe' "$RUST"; then
     awk '
-    /pub fn run_frame\(\) \{/ {
-        print "fn legend_target_name(id: u32) -> &\x27static str {"
-        print "    match id {"
+    /let current = sample\(\);/ {
+        print
+        print "    let legend_target = unsafe { host_blue_legend_target_id() };"
+        print "    let legend_name = match legend_target {"
         print "        0 => \"MEWTWO\","
         print "        1 => \"ZAPDOS\","
         print "        2 => \"ARTICUNO\","
         print "        3 => \"MOLTRES\","
         print "        _ => \"UNKNOWN\","
-        print "    }"
-        print "}"
-        print ""
+        print "    };"
+        next
     }
     { print }
     ' "$RUST" > "$RUST.tmp"
     mv "$RUST.tmp" "$RUST"
 fi
 
-if ! grep -q 'let legend_target = unsafe' "$RUST"; then
-    sed -i '/let current = sample();/a\    let legend_target = unsafe { host_blue_legend_target_id() };' "$RUST"
-fi
-
 if ! grep -q 'TARGET {}  </>@PAUSE' "$RUST"; then
     awk '
     /if let Some\(result\) = state.result \{/ {
-        print "        pnp::println!(color = BLUE, \"TARGET {}  </>@PAUSE\", legend_target_name(legend_target));"
+        print "        pnp::println!(color = BLUE, \"TARGET {}  </>@PAUSE\", legend_name);"
         print "        if legend_target != 0 {"
         print "            pnp::println!(color = YELLOW, \"CALIBRATE: EXACT2F ONLY\");"
         print "        }"

@@ -1,0 +1,39 @@
+name: Crystal Breeding RNG v1 Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "crystal-breeding-rng-v1"
+
+jobs:
+  build-breeding-v1:
+    name: Patch and build Crystal Breeding RNG v1
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Apply breeding RNG v1 patch
+        run: python3 apply_crystal_breeding_rng_v1.py
+
+      - name: Format Rust sources
+        run: cargo fmt --manifest-path reader_core/Cargo.toml -- --check
+
+      - name: Verify breeding markers
+        run: |
+          grep -q "arm_breeding_probe" 3gx/sources/main.c
+          grep -q "egg_trace_%04lu.csv" 3gx/sources/main.c
+          grep -q "BreedProbe" reader_core/src/crystal/breeding.rs
+          grep -q "egg_raw_dvs" reader_core/src/crystal/reader.rs
+
+      - name: Build
+        run: make
+
+      - name: Upload 3GX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Crystal-Breeding-RNG-v1
+          retention-days: 7
+          path: out/default.3gx

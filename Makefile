@@ -18,6 +18,7 @@ NPC_RESYNC_FIX_PREP := prepare_blue_npc_resync_fix_v32.sh
 NPC_LOCALBASE_PREP := prepare_blue_npc_localbase_v33.sh
 MOLTRES_PROB_RESCUE_PREP := prepare_blue_moltres_prob_rescue_v34.sh
 MOLTRES_PROB_RESET_PREP := prepare_blue_moltres_prob_reset_v35.sh
+MOLTRES_NOWFRAME_PREP := prepare_blue_moltres_nowframe_v36.sh
 
 R_SRCS := $(shell find reader_core/src -name '*.rs')
 C_SRCS := $(shell find 3gx/sources -name '*.c')
@@ -44,6 +45,7 @@ prepare:
 	sh $(NPC_LOCALBASE_PREP)
 	sh $(MOLTRES_PROB_RESCUE_PREP)
 	sh $(MOLTRES_PROB_RESET_PREP)
+	sh $(MOLTRES_NOWFRAME_PREP)
 
 $(LIBPOKEREADER): prepare $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml

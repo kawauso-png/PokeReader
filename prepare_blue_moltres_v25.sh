@@ -76,12 +76,27 @@ if ! grep -q 'collect_battle_moltres' "$FCMOD"; then
 fi
 
 # Divert only Moltres to its 17F profile; Mewtwo and the validated Zapdos path
-# remain byte-for-byte on their existing forecast paths.
+# remain byte-for-byte on their existing forecast paths. collect_event has a
+# two-line signature, so insert after the second signature line.
 if ! grep -q 'LEGEND_TARGET_ID == 3' "$FCMOD"; then
-    sed -i '/unsafe fn collect_event(add: u8, div: u8, phase: u8, frame: u8,/a\    if unsafe { LEGEND_TARGET_ID } == 3 {\
-        unsafe { collect_moltres_event(add, div, phase, count, shiny_count); }\
-        return;\
-    }' "$FCMOD"
+    awk '
+    /unsafe fn collect_event\(add: u8, div: u8, phase: u8, frame: u8,/ {
+        print
+        in_event_sig = 1
+        next
+    }
+    in_event_sig {
+        print
+        print "    if LEGEND_TARGET_ID == 3 {"
+        print "        collect_moltres_event(add, div, phase, count, shiny_count);"
+        print "        return;"
+        print "    }"
+        in_event_sig = 0
+        next
+    }
+    { print }
+    ' "$FCMOD" > "$FCMOD.tmp"
+    mv "$FCMOD.tmp" "$FCMOD"
 fi
 
 # Enable Y+X Auto Hunt for Mewtwo, Zapdos and Moltres. Articuno remains locked

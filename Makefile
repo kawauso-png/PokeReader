@@ -13,6 +13,7 @@ MOLTRES_GBSEQ_PREP := prepare_blue_moltres_gbseq_v27.sh
 ADAPT_BADROWS_PREP := prepare_blue_adaptive_badrows_v28.sh
 ADAPT_SPECIAL_PREP := prepare_blue_adaptive_special_v29.sh
 DIVDIAG_PREP := prepare_blue_divdiag_v30.sh
+NPC_RESYNC_PREP := prepare_blue_npc_resync_v31.sh
 
 R_SRCS := $(shell find reader_core/src -name '*.rs')
 C_SRCS := $(shell find 3gx/sources -name '*.c')
@@ -34,6 +35,7 @@ prepare:
 	sh $(ADAPT_BADROWS_PREP)
 	sh $(ADAPT_SPECIAL_PREP)
 	sh $(DIVDIAG_PREP)
+	sh $(NPC_RESYNC_PREP)
 
 $(LIBPOKEREADER): prepare $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml

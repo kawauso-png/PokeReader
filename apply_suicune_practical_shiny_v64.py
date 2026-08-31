@@ -8,8 +8,8 @@ PARTS = [
     Path("apply_suicune_practical_shiny_v64_payload_0.txt"),
     Path("apply_suicune_practical_shiny_v64_payload_1.txt"),
 ]
-EXPECTED_PAYLOAD_SHA256 = "b9958a780b7c5d75d3c1bd45597e0e5fd7d2c6ba7bdaced5ff64d83c830949d2"
-EXPECTED_SCRIPT_SHA256 = "455d5d4e516612051311afcfe59c34c2a3a63ccb1a78faa460078c4b2d7e1744"
+EXPECTED_PAYLOAD_SHA256 = "d068c8bdf81aed79b152796e07ce241d5ea0c4aad4d39b36bfa703b6226a593b"
+EXPECTED_SCRIPT_SHA256 = "9ed5d557a900c34736d4717f63be9d8b2c02052d54bd8ca4650e940abd1f2f9d"
 
 payload = "".join(p.read_text().strip() for p in PARTS).encode("ascii")
 if hashlib.sha256(payload).hexdigest() != EXPECTED_PAYLOAD_SHA256:

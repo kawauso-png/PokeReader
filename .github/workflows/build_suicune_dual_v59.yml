@@ -1,0 +1,65 @@
+name: Suicune Dual Investigation v5.9 Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "suicune-dual-investigation-v59"
+
+jobs:
+  build-dual-v59:
+    name: Build Suicune Dual Investigation v5.9
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - run: sh apply_suicune_deterministic_v37.sh
+      - run: sh apply_suicune_observe_v38.sh
+      - run: sh apply_suicune_observe_v38_post.sh
+      - run: python3 apply_suicune_endpoint_v41.py
+      - run: python3 apply_suicune_endpoint_v42_lighttail.py
+      - run: python3 apply_suicune_endpoint_v44_puretail.py
+      - run: python3 apply_suicune_endpoint_v44_routecount.py
+      - run: python3 apply_suicune_start_signature_v48.py
+      - run: python3 apply_suicune_resume_phase_lock_v49.py
+      - run: python3 fix_suicune_start_phase_v50_patch.py
+      - run: python3 apply_suicune_start_phase_lock_v50.py
+      - run: python3 fix_suicune_vblank_context_v52_patch.py
+      - run: python3 apply_suicune_vblank_context_v52.py
+      - run: python3 apply_suicune_vblank_context_freeze_v52.py
+      - run: python3 apply_suicune_vblank_context_v53.py
+      - run: python3 apply_suicune_startsig_preserve_v54.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch2.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch3.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch4.py
+      - run: python3 apply_suicune_early_control_lab_v55.py
+      - run: python3 apply_suicune_early_profile_v56.py
+      - run: python3 apply_suicune_early_mapper_v57.py
+      - run: python3 apply_suicune_early_adaptive_v58.py
+      - name: Apply v5.9 dual investigation
+        run: python3 apply_suicune_dual_v59.py
+      - name: Verify v5.9 markers
+        run: |
+          grep -q "endpoint_slots\[4\] = {0, 4, 8, 12}" 3gx/sources/main.c
+          grep -q "suicune_endpoint_gate_pending" 3gx/sources/main.c
+          grep -q "request_suicune_endpoint_pause" reader_core/src/pnp/input.rs
+          grep -q "ENDPOINT_TAIL_SAMPLE_COUNT" reader_core/src/crystal/hook.rs
+          grep -q "endpoint_tail_sample_count" reader_core/src/crystal/trace.rs
+          grep -q "EPC,V59" reader_core/src/crystal/trace.rs
+          grep -q "PLAN,V59" reader_core/src/crystal/trace.rs
+          grep -q "MAP,V59" reader_core/src/crystal/trace.rs
+          grep -q "EARLY,V59" reader_core/src/crystal/trace.rs
+          grep -q '0 => "A"' reader_core/src/crystal/trace.rs
+          grep -q "suicune_early_profile_next = (suicune_early_profile_next + 1) % 10" 3gx/sources/main.c
+      - name: Build
+        run: make
+      - name: Upload v5.9 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-Dual-Investigation-v59
+          retention-days: 7
+          path: out/default.3gx

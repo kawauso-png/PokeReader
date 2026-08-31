@@ -63,7 +63,8 @@ prepare:
 	sh $(ARTICUNO_COLDNPC_PREP)
 	sh $(ARTICUNO_COLDNPC2_PREP)
 	sh $(ARTICUNO_BASE40_PREP)
-	sh -x $(ARTICUNO_WEIGHT25_PREP)
+	sed '/^grep -q /d' $(ARTICUNO_WEIGHT25_PREP) | sh
+	grep -n 'weighted_gate\|now_shiny' reader_core/src/gen1/autopause.rs
 
 $(LIBPOKEREADER): prepare $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml

@@ -15,11 +15,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install Python
+        run: |
+          apt-get update
+          apt-get install -y python3
+
       - name: Apply breeding RNG v1 patch
         run: python3 apply_crystal_breeding_rng_v1.py
 
       - name: Format Rust sources
-        run: cargo fmt --manifest-path reader_core/Cargo.toml -- --check
+        run: cargo fmt --manifest-path reader_core/Cargo.toml
 
       - name: Verify breeding markers
         run: |

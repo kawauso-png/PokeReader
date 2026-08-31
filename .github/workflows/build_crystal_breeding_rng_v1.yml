@@ -21,7 +21,9 @@ jobs:
           apt-get install -y python3
 
       - name: Apply breeding RNG v1 patch
-        run: python3 apply_crystal_breeding_rng_v1.py
+        run: |
+          python3 apply_crystal_breeding_rng_v1.py
+          python3 apply_crystal_breeding_jp_addresses_v1.py
 
       - name: Format Rust sources
         run: cargo fmt --manifest-path reader_core/Cargo.toml
@@ -32,6 +34,7 @@ jobs:
           grep -q "egg_trace_%04lu.csv" 3gx/sources/main.c
           grep -q "BreedProbe" reader_core/src/crystal/breeding.rs
           grep -q "egg_raw_dvs" reader_core/src/crystal/reader.rs
+          grep -q "egg_ptr: 0xdef1" reader_core/src/crystal/reader.rs
 
       - name: Build
         run: make

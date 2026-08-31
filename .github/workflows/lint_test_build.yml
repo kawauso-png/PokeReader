@@ -18,11 +18,15 @@ jobs:
       - name: Lint
         run: make lint
       - name: Reset after lint
-        run: git reset --hard HEAD
+        run: |
+          git -c safe.directory="$GITHUB_WORKSPACE" reset --hard HEAD
+          git -c safe.directory="$GITHUB_WORKSPACE" clean -fd
       - name: Test
         run: make test
       - name: Reset after test
-        run: git reset --hard HEAD
+        run: |
+          git -c safe.directory="$GITHUB_WORKSPACE" reset --hard HEAD
+          git -c safe.directory="$GITHUB_WORKSPACE" clean -fd
       - name: Build
         run: make
       - name: Upload Artifacts

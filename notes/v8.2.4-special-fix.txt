@@ -1,0 +1,8 @@
+v8.2.4 Adaptive special transition fix
+
+Hardware diagnostics from two separate live captures at TARGET MOLTRES reproduced the same two failing special-residue rows while H remained 78/80 and S4 D16 stayed locked:
+
+BAD1 d03 s12 g1 r00*
+BAD2 d04 s12 g0 r00*
+
+v8.2.4 adds only these exact two tuples to allowed_special(). READY remains strict at H80/80.

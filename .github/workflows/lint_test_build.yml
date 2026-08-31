@@ -34,6 +34,6 @@ jobs:
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Blue-Legend-v8.4.3-Articuno-ColdNPC
+          name: PokeReader-Blue-Legend-v8.4.4-Articuno-ColdNPC2
           retention-days: 3
           path: out/default.3gx

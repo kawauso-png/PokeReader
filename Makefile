@@ -27,7 +27,7 @@ ARTICUNO_ADPFIX_PREP := prepare_blue_articuno_adpfix_v41.sh
 ARTICUNO_COLDNPC_PREP := prepare_blue_articuno_coldnpc_v42.sh
 ARTICUNO_COLDNPC2_PREP := prepare_blue_articuno_coldnpc2_v43.sh
 ARTICUNO_BASE40_PREP := prepare_blue_articuno_base40_v44.sh
-ARTICUNO_WEIGHT25_PREP := prepare_blue_articuno_weight25_v45.sh
+ARTICUNO_WEIGHT25_PREP := prepare_blue_articuno_weight25_apply_v46.sh
 
 R_SRCS := $(shell find reader_core/src -name '*.rs')
 C_SRCS := $(shell find 3gx/sources -name '*.c')
@@ -63,8 +63,7 @@ prepare:
 	sh $(ARTICUNO_COLDNPC_PREP)
 	sh $(ARTICUNO_COLDNPC2_PREP)
 	sh $(ARTICUNO_BASE40_PREP)
-	sed '/^grep -q /d' $(ARTICUNO_WEIGHT25_PREP) | sh
-	grep -n 'weighted_gate\|now_shiny' reader_core/src/gen1/autopause.rs
+	sh $(ARTICUNO_WEIGHT25_PREP)
 
 $(LIBPOKEREADER): prepare $(R_SRCS)
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml

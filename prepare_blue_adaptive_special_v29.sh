@@ -13,33 +13,37 @@ CTRACE=3gx/sources/blue_dvtrace.c
 # Keep READY at 80/80; only add these exact observed transition classes.
 
 if ! grep -q '(0x04, 0x12, 0)' "$ADPMOD"; then
-    python3 - "$ADPMOD" <<'PY'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1])
-s = p.read_text()
-old = '''        (0x02, 0x13, 1) |\n        (0x03, 0x12, 0) |\n        (0x03, 0x13, 0))'''
-new = '''        (0x02, 0x13, 1) |\n        (0x03, 0x12, 0) |\n        (0x03, 0x12, 1) |\n        (0x03, 0x13, 0) |\n        (0x04, 0x12, 0))'''
-if old not in s:
-    raise SystemExit('allowed_special pattern not found')
-p.write_text(s.replace(old, new, 1))
-PY
+    awk '
+    /\(0x03, 0x12, 0\) \|/ {
+        print
+        print "        (0x03, 0x12, 1) |"
+        next
+    }
+    /\(0x03, 0x13, 0\)\)/ {
+        print "        (0x03, 0x13, 0) |"
+        print "        (0x04, 0x12, 0))"
+        next
+    }
+    { print }
+    ' "$ADPMOD" > "$ADPMOD.tmp"
+    mv "$ADPMOD.tmp" "$ADPMOD"
 fi
 
 # Add regression assertions so later model edits cannot silently drop either
 # hardware-observed special transition.
 if ! grep -q 'hardware_special_rows_r00' "$ADPMOD"; then
-    python3 - "$ADPMOD" <<'PY'
-from pathlib import Path
-import sys
-p = Path(sys.argv[1])
-s = p.read_text()
-needle = '''    #[test]\n    fn ready_threshold_requires_full_clean_window() {'''
-insert = '''    #[test]\n    fn hardware_special_rows_r00_are_accepted() {\n        assert!(allowed_special(0x03, 0x12, 1));\n        assert!(allowed_special(0x04, 0x12, 0));\n    }\n\n'''
-if needle not in s:
-    raise SystemExit('test insertion point not found')
-p.write_text(s.replace(needle, insert + needle, 1))
-PY
+    awk '
+    /    fn ready_threshold_requires_full_clean_window\(\) \{/ {
+        print "    #[test]"
+        print "    fn hardware_special_rows_r00_are_accepted() {"
+        print "        assert!(allowed_special(0x03, 0x12, 1));"
+        print "        assert!(allowed_special(0x04, 0x12, 0));"
+        print "    }"
+        print ""
+    }
+    { print }
+    ' "$ADPMOD" > "$ADPMOD.tmp"
+    mv "$ADPMOD.tmp" "$ADPMOD"
 fi
 
 sed -i 's/BLUE LEGEND RNG v8.2.3 BADROW/BLUE LEGEND RNG v8.2.4 SPFIX/' "$RUST"

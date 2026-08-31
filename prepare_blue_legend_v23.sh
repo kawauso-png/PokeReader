@@ -72,8 +72,12 @@ if ! grep -q 'write_legend_target_row(file, &off);' "$CTRACE"; then
     sed -i '/write_meta_row(file, &off);/a\    write_legend_target_row(file, \&off);' "$CTRACE"
 fi
 
-# Generalize file name and metadata label for the four-target tool.
-sed -i 's/mewtwo_trace_/legend_trace_/g' "$CTRACE"
+# Generalize file name for the main trace AND every post-battle appender
+# (GB-release, phase, K observer, boot capture, adaptive, forecast). Keeping all
+# writers on one path is required or the calibration sections split apart.
+for f in 3gx/sources/blue_*.c; do
+    [ -f "$f" ] && sed -i 's/mewtwo_trace_/legend_trace_/g' "$f"
+done
 sed -i 's/"MEWTWO,22,/"LEGEND,23,/' "$CTRACE"
 
 # ---------------------------------------------------------------------------
@@ -143,10 +147,10 @@ if ! grep -q 'let legend_target = unsafe' "$RUST"; then
     mv "$RUST.tmp" "$RUST"
 fi
 
-if ! grep -q 'TARGET {}  </>@PAUSE' "$RUST"; then
+if ! grep -q 'TARGET {}  DPAD<>@PAUSE' "$RUST"; then
     awk '
     /if let Some\(result\) = state.result \{/ {
-        print "        pnp::println!(color = BLUE, \"TARGET {}  </>@PAUSE\", legend_name);"
+        print "        pnp::println!(color = BLUE, \"TARGET {}  DPAD<>@PAUSE\", legend_name);"
         print "        if legend_target != 0 {"
         print "            pnp::println!(color = YELLOW, \"CALIBRATE: EXACT2F ONLY\");"
         print "        }"

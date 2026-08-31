@@ -93,54 +93,33 @@ if "latest_pre_vblank_ring" not in t:
         + t[end:]
     )
 
-# v5.2 already owns the frozen heavy VBlank context fields. Put the small
-# per-encounter PRE ring beside them.
+# v5.2 owns several frozen STARTSIG fields, and later generated patches add
+# more fields around them. Match only the unique field line so v6.2 does not
+# depend on adjacency to any specific previous patch.
 t = rep(
     t,
+    '''    startsig_vb_stack: [u32; 8],''',
     '''    startsig_vb_stack: [u32; 8],
-    /// Row shown first in the on screen table.''',
-    '''    startsig_vb_stack: [u32; 8],
-    pre_vblank_ring: PreVBlankRing,
-    /// Row shown first in the on screen table.''',
+    pre_vblank_ring: PreVBlankRing,''',
     "add trace pre-ring field",
 )
 
 t = rep(
     t,
+    '''            startsig_vb_stack: [0; 8],''',
     '''            startsig_vb_stack: [0; 8],
-            cursor: 0,''',
-    '''            startsig_vb_stack: [0; 8],
-            pre_vblank_ring: PreVBlankRing::EMPTY,
-            cursor: 0,''',
+            pre_vblank_ring: PreVBlankRing::EMPTY,''',
     "init trace pre-ring",
 )
 
-# Snapshot exactly at Y+X. The lightweight hook ring keeps rolling even if the
-# old heavy context gate is stale/frozen, so PRE does not inherit STARTSIG's
-# occasional stale context behavior.
+# Snapshot exactly at Y+X. Match only the stable capture-gate call; fields
+# around it changed several times between v5.2 and v6.1c.
 t = rep(
     t,
-    '''        self.startsig_vb_stack = vb.stack;
-        set_vblank_context_capture(false);
-        self.probe_target = ProbeTarget {''',
-    '''        self.startsig_vb_stack = vb.stack;
-        set_vblank_context_capture(false);
-        self.pre_vblank_ring = latest_pre_vblank_ring();
-        self.probe_target = ProbeTarget {''',
+    '''        set_vblank_context_capture(false);''',
+    '''        set_vblank_context_capture(false);
+        self.pre_vblank_ring = latest_pre_vblank_ring();''',
     "snapshot pre-ring at Y+X",
-)
-
-# Legacy trace arm should never reuse a previous encounter's PRE row.
-t = rep(
-    t,
-    '''        self.probe_session = false;
-        self.probe_result = None;
-        deep_log_clear();''',
-    '''        self.probe_session = false;
-        self.probe_result = None;
-        self.pre_vblank_ring = PreVBlankRing::EMPTY;
-        deep_log_clear();''',
-    "clear pre-ring for legacy arm",
 )
 
 helper = r'''

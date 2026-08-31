@@ -1,0 +1,32 @@
+name: Crystal Boot Trace v1 Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "crystal-boot-trace-v1"
+
+jobs:
+  build-boot-trace:
+    name: Build Crystal Boot Trace v1
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify boot trace markers
+        run: |
+          grep -q "BOOT_CALL_TRACE_V1" reader_core/src/crystal/boottrace.rs
+          grep -q "hook::call_log_start" reader_core/src/crystal/mod.rs
+          grep -q "CrystalView::Boot" reader_core/src/crystal/frame.rs
+
+      - name: Build
+        run: make
+
+      - name: Upload boot trace artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Crystal-Boot-Trace-v1
+          retention-days: 7
+          path: out/default.3gx

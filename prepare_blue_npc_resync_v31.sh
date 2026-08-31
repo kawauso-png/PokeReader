@@ -112,6 +112,7 @@ static mut NPC_LAST_RESET_SEQ: u32 = 0;' "$ADPMOD"
         getline; print
         getline; print
         getline; print
+        getline; print
         print "        if cold_ready {"
         print "            NPC_LOCK_VALID = true;"
         print "            NPC_LOCK_BASE = s.base;"
@@ -142,10 +143,11 @@ static mut NPC_LAST_RESET_SEQ: u32 = 0;' "$ADPMOD"
     mv "$ADPMOD.tmp" "$ADPMOD"
 fi
 
-# High-frequency NPC mode: future projection is only 8F. AutoPause still fires
-# only on CURRENT state, so a future NPC call cannot invalidate a latched target.
-sed -i 's/const HORIZON: u8 = 16;/const HORIZON: u8 = 8;/' "$FCMOD"
-sed -i 's/const SCAN_EVERY: u8 = 8;/const SCAN_EVERY: u8 = 4;/' "$FCMOD"
+# High-frequency NPC mode: only CURRENT/+1/+2 matter. Full scan every GB frame,
+# eliminating stale NOW candidates while keeping 3DS load much lower than the
+# old 16F projection.
+sed -i 's/const HORIZON: u8 = 16;/const HORIZON: u8 = 2;/' "$FCMOD"
+sed -i 's/const SCAN_EVERY: u8 = 8;/const SCAN_EVERY: u8 = 1;/' "$FCMOD"
 
 # Overlay NPC resync status.
 if ! grep -q 'NPC L{} R{} C{} {}' "$RUST"; then

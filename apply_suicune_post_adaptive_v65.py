@@ -30,8 +30,8 @@ old_status = '''        } else if self.practical_miss != 0 {
             pnp::println!("S64 MISS {}", self.practical_miss);
         } else if self.practical_active {
 '''
-new_status = '''        } else if self.practical_miss != 0 && self.probe_session {
-            pnp::println!("S65 LEARN {}", self.practical_miss);
+new_status = '''        } else if self.practical_miss == 1 && self.probe_active {
+            pnp::println!("S65 LEARN 1");
         } else if self.practical_miss != 0 {
             pnp::println!("S65 MISS {}", self.practical_miss);
         } else if self.practical_active {

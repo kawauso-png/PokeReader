@@ -1,6 +1,7 @@
 use core::fmt::Write;
 
 use super::{
+    game_lib::gb_mem,
     hook::{
         adiv_subtick, adiv_tick, call_log_count, call_log_entry, call_log_stop, measured_div,
         rng_advance, sdiv_subtick, CALL_LOG_LEN,
@@ -9,24 +10,23 @@ use super::{
 };
 use crate::pnp;
 
-/// Keep the earliest presented frames from process start. 4096 frames is about
-/// 68 seconds at GB/CGB speed, enough for a controlled cold-boot -> Continue
-/// experiment while keeping the diagnostic branch reasonably small.
+/// Earliest presented frames from VC process start. 4096 frames is roughly
+/// 68 seconds, enough for cold boot -> title -> Continue -> map experiments.
 const MAX_BOOT_FRAMES: usize = 4096;
 
-/// JP VC host pointer to the emulated FF80-FFFF HRAM block. This is the same
-/// pointer already used by the existing Crystal deep probe. Boot v2 samples a
-/// few bytes after each presented frame so we can distinguish physical 3DS
-/// input from the key edge that Crystal actually consumed.
-const CRYSTAL_HRAM_PTR: u32 = 0x0022f6d8;
-const H_VBLANK: u32 = 0x13;          // FF93
-const H_MAP_ENTRY_METHOD: u32 = 0x14; // FF94
-const H_JOYPAD_PRESSED: u32 = 0x18;  // FF98
-const H_JOYPAD_DOWN: u32 = 0x19;     // FF99
-const H_JOY_PRESSED: u32 = 0x1c;     // FF9C
-const H_JOY_DOWN: u32 = 0x1d;        // FF9D
-const H_JOY_LAST: u32 = 0x1e;        // FF9E
-const H_IN_MENU: u32 = 0x1f;         // FF9F
+// Crystal HRAM addresses from pret/pokecrystal ram/hram.asm.
+// Read these through the verified GB-memory dispatcher instead of assuming
+// anything about the emulator's host-side HRAM pointer layout.
+const H_VBLANK: u32 = 0xff92;
+const H_MAP_ENTRY_METHOD: u32 = 0xff93;
+const H_JOYPAD_PRESSED: u32 = 0xff97;
+const H_JOYPAD_DOWN: u32 = 0xff98;
+const H_JOY_PRESSED: u32 = 0xff9b;
+const H_JOY_DOWN: u32 = 0xff9c;
+const H_JOY_LAST: u32 = 0xff9d;
+const H_IN_MENU: u32 = 0xff9e;
+const H_RANDOM_ADD: u32 = 0xffe1;
+const H_RANDOM_SUB: u32 = 0xffe2;
 
 #[derive(Clone, Copy)]
 struct BootHram {
@@ -39,6 +39,8 @@ struct BootHram {
     joy_down: u8,
     joy_last: u8,
     in_menu: u8,
+    random_add: u8,
+    random_sub: u8,
 }
 
 impl BootHram {
@@ -52,25 +54,24 @@ impl BootHram {
         joy_down: 0,
         joy_last: 0,
         in_menu: 0,
+        random_add: 0,
+        random_sub: 0,
     };
 }
 
 fn read_boot_hram() -> BootHram {
-    let base = pnp::read::<u32>(CRYSTAL_HRAM_PTR);
-    if !pnp::is_memory_mapped(base) || !pnp::is_memory_mapped(base.wrapping_add(H_IN_MENU)) {
-        return BootHram::EMPTY;
-    }
-
     BootHram {
         valid: 1,
-        vblank: pnp::read::<u8>(base.wrapping_add(H_VBLANK)),
-        map_entry: pnp::read::<u8>(base.wrapping_add(H_MAP_ENTRY_METHOD)),
-        joypad_pressed: pnp::read::<u8>(base.wrapping_add(H_JOYPAD_PRESSED)),
-        joypad_down: pnp::read::<u8>(base.wrapping_add(H_JOYPAD_DOWN)),
-        joy_pressed: pnp::read::<u8>(base.wrapping_add(H_JOY_PRESSED)),
-        joy_down: pnp::read::<u8>(base.wrapping_add(H_JOY_DOWN)),
-        joy_last: pnp::read::<u8>(base.wrapping_add(H_JOY_LAST)),
-        in_menu: pnp::read::<u8>(base.wrapping_add(H_IN_MENU)),
+        vblank: gb_mem::read_u8(H_VBLANK),
+        map_entry: gb_mem::read_u8(H_MAP_ENTRY_METHOD),
+        joypad_pressed: gb_mem::read_u8(H_JOYPAD_PRESSED),
+        joypad_down: gb_mem::read_u8(H_JOYPAD_DOWN),
+        joy_pressed: gb_mem::read_u8(H_JOY_PRESSED),
+        joy_down: gb_mem::read_u8(H_JOY_DOWN),
+        joy_last: gb_mem::read_u8(H_JOY_LAST),
+        in_menu: gb_mem::read_u8(H_IN_MENU),
+        random_add: gb_mem::read_u8(H_RANDOM_ADD),
+        random_sub: gb_mem::read_u8(H_RANDOM_SUB),
     }
 }
 
@@ -108,10 +109,7 @@ struct LineBuf {
 
 impl LineBuf {
     fn new() -> Self {
-        Self {
-            buf: [0; 512],
-            len: 0,
-        }
+        Self { buf: [0; 512], len: 0 }
     }
 
     fn clear(&mut self) {
@@ -163,19 +161,12 @@ pub struct BootTrace {
 
 impl Default for BootTrace {
     fn default() -> Self {
-        Self {
-            len: 0,
-            frozen: false,
-            save_index: 1,
-            save_result: None,
-        }
+        Self { len: 0, frozen: false, save_index: 1, save_result: None }
     }
 }
 
 impl BootTrace {
-    /// Called before the legacy 01FF/0101 RNG_ADVANCE reset in frame.rs. That
-    /// ordering is intentional: the CSV then contains both the real state seen
-    /// on the presented frame and the subsequent logical-advance epoch change.
+    /// Called before frame.rs applies the legacy 01FF/0101 RNG_ADVANCE reset.
     pub fn record_frame(&mut self, reader: &Gen2Reader) {
         if self.frozen || self.len >= MAX_BOOT_FRAMES {
             return;
@@ -198,8 +189,6 @@ impl BootTrace {
     }
 
     fn save(&mut self) {
-        // Freeze both streams before filesystem IO. The diagnostic data is
-        // already collected; any timing perturbation from saving is irrelevant.
         self.frozen = true;
         call_log_stop();
 
@@ -209,7 +198,6 @@ impl BootTrace {
             self.save_result = Some(false);
             return;
         }
-
         if !pnp::trace_file_open(self.save_index) {
             self.save_result = Some(false);
             return;
@@ -217,20 +205,14 @@ impl BootTrace {
 
         let mut line = LineBuf::new();
         let dropped = total.saturating_sub(shown);
-        let first_tick = if shown > 0 {
-            call_log_entry(0).host_tick
-        } else {
-            0
-        };
+        let first_tick = if shown > 0 { call_log_entry(0).host_tick } else { 0 };
 
-        // Find the strongest boot markers directly in the rDIV-call stream.
         let mut zero_found = false;
         let mut zero_index = 0usize;
         let mut zero_div = 0u8;
         let mut zero_subtick = 0u8;
         let mut zero_tick = 0u64;
         let mut zero_count = 0u32;
-
         let mut reset_found = false;
         let mut reset_index = 0usize;
         let mut prev_advance = 0u32;
@@ -256,80 +238,54 @@ impl BootTrace {
             have_prev = true;
         }
 
-        let _ = write!(line, "mode,BOOT_CALL_TRACE_V2\n");
+        let _ = write!(line, "mode,BOOT_CALL_TRACE_V21\n");
         pnp::trace_file_write(line.as_bytes());
         line.clear();
         let _ = write!(
             line,
             "summary,frames_kept,{},frame_capacity,{},calls_total,{},calls_kept,{},calls_dropped,{}\n",
-            self.len,
-            MAX_BOOT_FRAMES,
-            total,
-            shown,
-            dropped
+            self.len, MAX_BOOT_FRAMES, total, shown, dropped
         );
         pnp::trace_file_write(line.as_bytes());
         line.clear();
         let _ = write!(
             line,
             "zero_vblank,found,{},count,{},call_index,{},div,{:02X},mcycle,{:02X},m14,{:04X},host_tick,{}\n",
-            zero_found as u8,
-            zero_count,
-            zero_index,
-            zero_div,
-            zero_subtick,
-            m14(zero_div, zero_subtick),
-            zero_tick
+            zero_found as u8, zero_count, zero_index, zero_div, zero_subtick,
+            m14(zero_div, zero_subtick), zero_tick
         );
         pnp::trace_file_write(line.as_bytes());
         line.clear();
         let _ = write!(
             line,
             "advance_reset,found,{},call_index,{}\n\n",
-            reset_found as u8,
-            reset_index
+            reset_found as u8, reset_index
         );
         pnp::trace_file_write(line.as_bytes());
 
-        // Presented-frame stream. physical_keys is the 3DS HID state; the h*
-        // fields are Crystal's own HRAM input/VBlank context sampled afterwards.
         line.clear();
         let _ = write!(
             line,
-            "frame_index,advance,state,div,asub,ssub,m14_a,m14_s,host_tick,physical_keys,hram_valid,h_vblank,h_map_entry,h_joypad_pressed,h_joypad_down,h_joy_pressed,h_joy_down,h_joy_last,h_in_menu\n"
+            "frame_index,advance,state,div,asub,ssub,m14_a,m14_s,host_tick,physical_keys,hram_valid,h_vblank,h_map_entry,h_joypad_pressed,h_joypad_down,h_joy_pressed,h_joy_down,h_joy_last,h_in_menu,h_random_add,h_random_sub\n"
         );
         pnp::trace_file_write(line.as_bytes());
+
         for i in 0..self.len {
             let e = unsafe { BOOT_FRAMES[i] };
             line.clear();
             let _ = write!(
                 line,
-                "{},{},{:04X},{:04X},{:02X},{:02X},{:04X},{:04X},{},{:04X},{},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X}\n",
-                i,
-                e.advance,
-                e.state,
-                e.div,
-                e.asub,
-                e.ssub,
-                m14((e.div >> 8) as u8, e.asub),
-                m14(e.div as u8, e.ssub),
-                e.atick,
-                e.keys,
-                e.hram.valid,
-                e.hram.vblank,
-                e.hram.map_entry,
-                e.hram.joypad_pressed,
-                e.hram.joypad_down,
-                e.hram.joy_pressed,
-                e.hram.joy_down,
-                e.hram.joy_last,
-                e.hram.in_menu
+                "{},{},{:04X},{:04X},{:02X},{:02X},{:04X},{:04X},{},{:04X},{},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X}\n",
+                i, e.advance, e.state, e.div, e.asub, e.ssub,
+                m14((e.div >> 8) as u8, e.asub), m14(e.div as u8, e.ssub),
+                e.atick, e.keys, e.hram.valid, e.hram.vblank, e.hram.map_entry,
+                e.hram.joypad_pressed, e.hram.joypad_down, e.hram.joy_pressed,
+                e.hram.joy_down, e.hram.joy_last, e.hram.in_menu,
+                e.hram.random_add, e.hram.random_sub
             );
             pnp::trace_file_write(line.as_bytes());
         }
 
-        // Raw rDIV-call stream. epoch increments whenever frame.rs resets the
-        // logical advance. rel_tick is relative to the oldest retained call.
         line.clear();
         let _ = write!(
             line,
@@ -352,17 +308,9 @@ impl BootTrace {
             let _ = write!(
                 line,
                 "{},{},{},{:04X},{},{:02X},{:02X},{:02X},{:02X},{:04X},{},{}\n",
-                total - shown + i,
-                epoch,
-                call_kind(e.pc),
-                e.pc,
-                e.advance,
-                e.add,
-                e.sub,
-                e.div as u8,
-                e.mcycle,
-                m14(e.div as u8, e.mcycle),
-                e.host_tick,
+                total - shown + i, epoch, call_kind(e.pc), e.pc, e.advance,
+                e.add, e.sub, e.div as u8, e.mcycle,
+                m14(e.div as u8, e.mcycle), e.host_tick,
                 e.host_tick.wrapping_sub(first_tick)
             );
             pnp::trace_file_write(line.as_bytes());
@@ -388,12 +336,10 @@ impl BootTrace {
             BootHram::EMPTY
         };
 
-        pnp::println!("BOOT TRACE V2");
+        pnp::println!("BOOT TRACE V2.1");
         pnp::println!(
             "{} f{}/{}",
-            if self.frozen { "STOP" } else { "REC" },
-            self.len,
-            MAX_BOOT_FRAMES
+            if self.frozen { "STOP" } else { "REC" }, self.len, MAX_BOOT_FRAMES
         );
         pnp::println!("calls {} keep {}", total, shown);
         pnp::println!("drop {}", dropped);
@@ -401,14 +347,13 @@ impl BootTrace {
         pnp::println!("div {:04X}", div);
         pnp::println!(
             "M {:04X}/{:04X}",
-            m14((div >> 8) as u8, adiv_subtick()),
-            m14(div as u8, sdiv_subtick())
+            m14((div >> 8) as u8, adiv_subtick()), m14(div as u8, sdiv_subtick())
         );
         pnp::println!(
-            "J {:02X}/{:02X} V{:02X}",
-            last_hram.joy_pressed,
-            last_hram.joy_down,
-            last_hram.vblank
+            "JP {:02X} JD {:02X}", last_hram.joy_pressed, last_hram.joy_down
+        );
+        pnp::println!(
+            "RAW {:02X} {:02X}", last_hram.joypad_pressed, last_hram.joypad_down
         );
 
         match self.save_result {

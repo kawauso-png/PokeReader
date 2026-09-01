@@ -15,6 +15,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Install patch dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+
       - name: Apply v3.1 HRAM layout correction
         run: python3 patch_crystal_boot_oneshot_v31.py
 

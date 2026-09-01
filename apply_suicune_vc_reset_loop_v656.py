@@ -19,12 +19,23 @@ trace = trace_path.read_text()
 # search already clears queue/error/probe state, and after ~17 VBlanks the PRE
 # ring is entirely from the new VC boot.
 
-# C host-side resume request, paired with the existing host_request_pause().
+# C host-side resume request, paired with the generated host_request_pause().
+# Earlier patches change whitespace/signature style, so identify the function
+# semantically instead of depending on an exact text block.
 if "void host_request_resume(void)" not in mainc:
-    anchor = """void host_request_pause(void)\n{\n    is_paused = true;\n}\n"""
-    if mainc.count(anchor) != 1:
-        raise SystemExit(f"v6.5.6 host_request_pause anchor count: {mainc.count(anchor)}")
-    repl = anchor + """
+    pause_matches = list(re.finditer(
+        r"void\s+host_request_pause\s*\(\s*(?:void\s*)?\)\s*\{.*?is_paused\s*=\s*true\s*;.*?\}",
+        mainc,
+        flags=re.S,
+    ))
+    if len(pause_matches) != 1:
+        # Diagnostic kept concise but useful if the generated shape changes again.
+        occurrences = mainc.count("host_request_pause")
+        raise SystemExit(
+            f"v6.5.6 host_request_pause semantic match count: {len(pause_matches)}; name occurrences={occurrences}"
+        )
+    m = pause_matches[0]
+    resume_fn = """
 
 // Rust uses this only for reset-friendly search failures (currently ERR3).
 // It does not inject any game input; it merely leaves PokeReader's own pause
@@ -36,7 +47,7 @@ void host_request_resume(void)
     fixed_run_pending = false;
 }
 """
-    mainc = mainc.replace(anchor, repl, 1)
+    mainc = mainc[:m.end()] + resume_fn + mainc[m.end():]
 
 # Rust FFI declaration + test stub.
 if "pub fn host_request_resume();" not in bind:
@@ -72,9 +83,9 @@ needle = "self.practical_search_error = 3;"
 if trace.count(needle) != 1:
     raise SystemExit(f"v6.5.6 ERR3 assignment count: {trace.count(needle)}")
 pos = trace.find(needle)
-window = trace[pos:pos + 220]
+window = trace[pos:pos + 260]
 if "pnp::request_resume();" not in window:
-    m = re.search(r"self\.practical_search_error = 3;\n(?P<indent>\s*)return;", trace[pos:pos + 220])
+    m = re.search(r"self\.practical_search_error\s*=\s*3;\s*\n(?P<indent>\s*)return;", trace[pos:pos + 260])
     if not m:
         raise SystemExit("v6.5.6 ERR3 return anchor not found")
     old = m.group(0)

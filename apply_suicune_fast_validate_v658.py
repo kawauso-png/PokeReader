@@ -51,11 +51,13 @@ if marker not in mainc:
     # phase-lock initialization stays identical to the proven Y+X path.
     body = mainc[open_brace + 1:close_brace]
 
-    # Insert before the Y-modifier command block, at pause-loop scope.
+    # The X block itself lives inside `if (held & KEY_Y)`.  FastValidate must
+    # live one scope higher so it works with UP+B and no Y.  Therefore insert
+    # at the Y-command comment, which occurs before the copied X body.
     insert_anchor = "        // Y + right / Y + left adjusts the frame count."
-    ins = mainc.find(insert_anchor, close_brace)
-    if ins < 0:
-        raise SystemExit("v6.5.8 pause-loop insertion anchor not found")
+    ins = mainc.find(insert_anchor)
+    if ins < 0 or ins >= xm:
+        raise SystemExit(f"v6.5.8 pause-loop insertion anchor invalid: ins={ins}, xm={xm}")
 
     b_block = (
         "        " + marker + "\n"

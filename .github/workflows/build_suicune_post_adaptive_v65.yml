@@ -1,4 +1,4 @@
-name: Suicune Branch Trial v6.6.1 Build
+name: Suicune Transport Stable v6.7.0 Build
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build Suicune Branch Trial v6.6.1
+    name: Build Suicune Transport Stable v6.7.0
     runs-on: ubuntu-24.04
     container: zaksabeast/devkitarm-rust
     steps:
@@ -126,11 +126,23 @@ jobs:
           grep -q "S661 RETRY B40" reader_core/src/crystal/trace.rs
           grep -q "STATUS_CLEAR_AFTER_ADVANCES: u32 = 180" reader_core/src/crystal/trace.rs
           grep -q "practical_terminal_advance" reader_core/src/crystal/trace.rs
+      - name: Apply v6.7.0 full-index transport stabilization
+        run: python3 apply_suicune_transport_stable_v670.py
+      - name: Audit v6.7.0 transport invariants
+        run: python3 audit_suicune_v670.py
+      - name: Verify v6.7.0 markers
+        run: |
+          grep -q "normal_inc_full" reader_core/src/crystal/practical.rs
+          grep -q "0x22b6" reader_core/src/crystal/practical.rs
+          grep -q "S670 WAIT" reader_core/src/crystal/trace.rs
+          grep -q "S670 READY UP+B" reader_core/src/crystal/trace.rs
+          grep -q "S670 E4" reader_core/src/crystal/trace.rs
+          grep -q "TRANSPORT,V670" reader_core/src/crystal/trace.rs
       - name: Build
         run: make
-      - name: Upload Branch Trial v6.6.1 artifact
+      - name: Upload Transport Stable v6.7.0 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-BranchTrial-v661
+          name: PokeReader-Suicune-TransportStable-v670
           path: out/default.3gx
           retention-days: 7

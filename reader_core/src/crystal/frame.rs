@@ -117,7 +117,9 @@ pub fn run_frame() {
             let (save, code) = state.trace.save_status();
             pnp::println!("Save {} {:08X}", save, code);
         }
-        CrystalView::Boot => state.boot.draw(&reader, is_locked),
+        // Boot capture is diagnostic-only: SELECT should save regardless of
+        // whether the normal menu input lock is enabled.
+        CrystalView::Boot => state.boot.draw(&reader, true),
         CrystalView::Wild => draw_pkx(&reader.wild()),
         CrystalView::Party => {
             let slot = state.party_menu.update_and_draw(is_locked);

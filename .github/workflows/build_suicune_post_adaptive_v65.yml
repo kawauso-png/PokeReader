@@ -87,6 +87,41 @@ jobs:
         run: python3 apply_suicune_target_revalidate_v654.py
       - name: Apply v6.5.6 VC reset retry loop
         run: python3 apply_suicune_vc_reset_loop_v656.py
+      - name: Diagnose v6.6 insertion anchors
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          cases = {
+              'reader_core/src/crystal/trace.rs': [
+                  'search_practical_targets', 'practical_wait_monitor',
+                  'practical_search_error = 2', 'practical_search_error = 3',
+                  'practical_search_waiting', 'S64 WAIT',
+              ],
+              '3gx/sources/main.c': [
+                  'fixed_run_pending', 'KEY_DDOWN', 'search_suicune',
+                  'arm_suicune_probe', 'suicune_auto_resume_pending',
+              ],
+              'reader_core/src/pnp/bindings.rs': ['search_suicune', 'arm_suicune_probe'],
+              'reader_core/src/pnp/hook.rs': ['search_suicune', 'arm_suicune_probe'],
+          }
+          for fn, markers in cases.items():
+              s = Path(fn).read_text()
+              print('\n===== '+fn+' =====')
+              for marker in markers:
+                  start = 0
+                  n = 0
+                  while True:
+                      i = s.find(marker, start)
+                      if i < 0: break
+                      n += 1
+                      lo = max(0, i-700); hi = min(len(s), i+1600)
+                      print(f'--- {marker!r} occurrence {n} at {i} ---')
+                      print(s[lo:hi])
+                      start = i + len(marker)
+                      if n >= 3: break
+                  if n == 0:
+                      print(f'--- {marker!r}: NOT FOUND ---')
+          PY
       - name: Audit v6.5 runtime invariants
         run: python3 audit_suicune_v655.py
       - name: Verify v6.5 markers

@@ -1,4 +1,4 @@
-name: Suicune Post-Adaptive v6.5 Build
+name: Suicune Fast Validate v6.5.8 Build
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build Suicune Post-Adaptive v6.5
+    name: Build Suicune Fast Validate v6.5.8
     runs-on: ubuntu-24.04
     container: zaksabeast/devkitarm-rust
     steps:
@@ -85,50 +85,19 @@ jobs:
         run: python3 apply_suicune_cadence_autophase_v653.py
       - name: Apply v6.5.4 live target revalidation
         run: python3 apply_suicune_target_revalidate_v654.py
-      - name: Apply v6.5.6 VC reset retry loop
+      - name: Apply v6.5.7 VC reset retry loop
         run: python3 apply_suicune_vc_reset_loop_v656.py
-      - name: Diagnose v6.6 insertion anchors
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          cases = {
-              'reader_core/src/crystal/trace.rs': [
-                  'search_practical_targets', 'practical_wait_monitor',
-                  'practical_search_error = 2', 'practical_search_error = 3',
-                  'practical_search_waiting', 'S64 WAIT',
-              ],
-              '3gx/sources/main.c': [
-                  'fixed_run_pending', 'KEY_DDOWN', 'search_suicune',
-                  'arm_suicune_probe', 'suicune_auto_resume_pending',
-              ],
-              'reader_core/src/pnp/bindings.rs': ['search_suicune', 'arm_suicune_probe'],
-              'reader_core/src/pnp/hook.rs': ['search_suicune', 'arm_suicune_probe'],
-          }
-          for fn, markers in cases.items():
-              s = Path(fn).read_text()
-              print('\n===== '+fn+' =====')
-              for marker in markers:
-                  start = 0
-                  n = 0
-                  while True:
-                      i = s.find(marker, start)
-                      if i < 0: break
-                      n += 1
-                      lo = max(0, i-700); hi = min(len(s), i+1600)
-                      print(f'--- {marker!r} occurrence {n} at {i} ---')
-                      print(s[lo:hi])
-                      start = i + len(marker)
-                      if n >= 3: break
-                  if n == 0:
-                      print(f'--- {marker!r}: NOT FOUND ---')
-          PY
-      - name: Audit v6.5 runtime invariants
+      - name: Apply v6.5.8 Fast Validate UP+B path
+        run: python3 apply_suicune_fast_validate_v658.py
+      - name: Audit v6.5.8 runtime invariants
         run: python3 audit_suicune_v655.py
-      - name: Verify v6.5 markers
+      - name: Verify v6.5.8 markers
         run: |
+          grep -q "S658 TEST" reader_core/src/crystal/trace.rs
+          grep -q "FastValidate: hold UP and tap B" 3gx/sources/main.c
+          grep -q "KEY_B | KEY_Y | KEY_X | KEY_L | KEY_R" 3gx/sources/main.c
           grep -q "S65 LEARN" reader_core/src/crystal/trace.rs
           grep -q "S65 RESET VC" reader_core/src/crystal/trace.rs
-          grep -q "request_resume" reader_core/src/crystal/trace.rs
           grep -q "POSTADAPT,V65" reader_core/src/crystal/trace.rs
           grep -q "PRE->POST is not one-to-one" reader_core/src/crystal/trace.rs
           grep -q "calibrate the 16-step DIV cadence" reader_core/src/crystal/trace.rs
@@ -137,9 +106,9 @@ jobs:
           grep -q "POSTFP,V63" reader_core/src/crystal/trace.rs
       - name: Build
         run: make
-      - name: Upload Post-Adaptive v6.5 artifact
+      - name: Upload Fast Validate v6.5.8 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-PostAdaptive-v65
+          name: PokeReader-Suicune-FastValidate-v658
           path: out/default.3gx
           retention-days: 7

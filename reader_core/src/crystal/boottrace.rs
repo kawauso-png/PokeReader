@@ -24,6 +24,7 @@ const MAX_EVENTS: usize = 192;
 const CPU_CTX_BASE: u32 = 0x0022_f5e0;
 const WRAM0_PTR_SLOT: u32 = 0x0022_f6c8;
 const HRAM_PTR_SLOT: u32 = 0x0022_f6d8;
+const M_CYCLE_SUBTICK_ADDR: u32 = 0x0022_f604;
 const CPU_CTX_LEN: usize = 64;
 const HRAM_LEN: usize = 128;
 const WRAM_LEN: usize = 128; // D200-D27F
@@ -148,6 +149,8 @@ struct BootFrame {
     advance: u32,
     state: u16,
     div: u16,
+    raw_div: u8,
+    raw_subtick: u8,
     keys: u16,
     pc: u16,
     asub: u8,
@@ -163,6 +166,8 @@ impl BootFrame {
         advance: 0,
         state: 0,
         div: 0,
+        raw_div: 0,
+        raw_subtick: 0,
         keys: 0,
         pc: 0,
         asub: 0,
@@ -181,6 +186,8 @@ struct EventSnapshot {
     advance: u32,
     state: u16,
     div: u16,
+    raw_div: u8,
+    raw_subtick: u8,
     keys: u16,
     pc: u16,
     asub: u8,
@@ -205,6 +212,8 @@ impl EventSnapshot {
         advance: 0,
         state: 0,
         div: 0,
+        raw_div: 0,
+        raw_subtick: 0,
         keys: 0,
         pc: 0,
         asub: 0,
@@ -466,6 +475,8 @@ impl BootTrace {
                 advance: frame.advance,
                 state: frame.state,
                 div: frame.div,
+                raw_div: frame.raw_div,
+                raw_subtick: frame.raw_subtick,
                 keys: frame.keys,
                 pc: frame.pc,
                 asub: frame.asub,
@@ -506,6 +517,8 @@ impl BootTrace {
         let advance = rng_advance();
         let state = reader.rng_state();
         let div = measured_div();
+        let raw_div = reader.div();
+        let raw_subtick = pnp::read_array::<1>(M_CYCLE_SUBTICK_ADDR)[0];
         let keys = pnp::current_keys() as u16;
         let pc = reader.pc_reg();
         let asub = adiv_subtick();
@@ -519,6 +532,8 @@ impl BootTrace {
             advance,
             state,
             div,
+            raw_div,
+            raw_subtick,
             keys,
             pc,
             asub,
@@ -738,7 +753,7 @@ impl BootTrace {
         line.clear();
         let _ = write!(
             line,
-            "frame_index,advance,state,div,asub,ssub,m14_a,m14_s,host_tick,frame_tick,call_count,pc,rom_bank,physical_keys,rtc_day_hi,rtc_day_lo,rtc_h,rtc_m,rtc_s,hours,minutes,seconds,h_vblank_counter,h_vblank,h_map_entry,h_menu_return,h_joypad_released,h_joypad_pressed,h_joypad_down,h_joypad_sum,h_joy_released,h_joy_pressed,h_joy_down,h_joy_last,h_in_menu,h_random_add,h_random_sub\n"
+            "frame_index,advance,state,div,raw_div,raw_subtick,raw_m14,asub,ssub,m14_a,m14_s,host_tick,frame_tick,call_count,pc,rom_bank,hram_valid,physical_keys,rtc_day_hi,rtc_day_lo,rtc_h,rtc_m,rtc_s,hours,minutes,seconds,h_vblank_counter,h_vblank,h_map_entry,h_menu_return,h_joypad_released,h_joypad_pressed,h_joypad_down,h_joypad_sum,h_joy_released,h_joy_pressed,h_joy_down,h_joy_last,h_in_menu,h_random_add,h_random_sub\n"
         );
         pnp::trace_file_write(line.as_bytes());
 
@@ -747,11 +762,14 @@ impl BootTrace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{},{:04X},{:04X},{:02X},{:02X},{:04X},{:04X},{},{},{},{:04X},{:02X},{:04X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X}\n",
+                "{},{},{:04X},{:04X},{:02X},{:02X},{:04X},{:02X},{:02X},{:04X},{:04X},{},{},{},{:04X},{:02X},{},{:04X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X}\n",
                 i,
                 e.advance,
                 e.state,
                 e.div,
+                e.raw_div,
+                e.raw_subtick,
+                m14(e.raw_div, e.raw_subtick),
                 e.asub,
                 e.ssub,
                 m14((e.div >> 8) as u8, e.asub),
@@ -761,6 +779,7 @@ impl BootTrace {
                 e.call_count,
                 e.pc,
                 e.hram.rom_bank,
+                e.hram.valid,
                 e.keys,
                 e.hram.rtc_day_hi,
                 e.hram.rtc_day_lo,
@@ -830,7 +849,7 @@ impl BootTrace {
         line.clear();
         let _ = write!(
             line,
-            "\nevent_index,frame_index,reasons,reason_text,advance,state,pc,div,asub,ssub,m14_a,m14_s,physical_keys,call_count,host_tick,frame_tick,snapshot_tick_before,snapshot_tick_after,snapshot_tick_cost,hram_valid,cpu_valid,wram_valid\n"
+            "\nevent_index,frame_index,reasons,reason_text,advance,state,pc,div,raw_div,raw_subtick,raw_m14,asub,ssub,m14_a,m14_s,physical_keys,call_count,host_tick,frame_tick,snapshot_tick_before,snapshot_tick_after,snapshot_tick_cost,hram_valid,cpu_valid,wram_valid\n"
         );
         pnp::trace_file_write(line.as_bytes());
 
@@ -839,7 +858,7 @@ impl BootTrace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{},{:08X},{},{},{:04X},{:04X},{:04X},{:02X},{:02X},{:04X},{:04X},{:04X},{},{},{},{},{},{},{},{},{}\n",
+                "{},{},{:08X},{},{},{:04X},{:04X},{:04X},{:02X},{:02X},{:04X},{:02X},{:02X},{:04X},{:04X},{:04X},{},{},{},{},{},{},{},{},{}\n",
                 i,
                 e.frame_index,
                 e.reasons,
@@ -848,6 +867,9 @@ impl BootTrace {
                 e.state,
                 e.pc,
                 e.div,
+                e.raw_div,
+                e.raw_subtick,
+                m14(e.raw_div, e.raw_subtick),
                 e.asub,
                 e.ssub,
                 m14((e.div >> 8) as u8, e.asub),

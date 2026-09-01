@@ -40,6 +40,69 @@ if text.count(old_status) != 1:
     raise SystemExit(f"v6.5 status block count: {text.count(old_status)}")
 text = text.replace(old_status, new_status, 1)
 
+# v6.5.2: Pause can land one RNG advance after the latest VBlank sample.
+# v6.4 treated that harmless boundary condition as ERR1.  A one-advance lag
+# is exactly compensable: shifting a 17-sample/16-delta window by one advances
+# the prototype rotation by one, while the historical tracker-validation
+# phase must move back by one modulo the 16-step normal cadence.
+old_pre_guard = '''        let (proto, rot, best, _, consecutive) = classify_pre_ring(&r);
+        if count != PRE_VBLANK_RING_LEN || !consecutive || best != 0 {
+            self.practical_search_error = 1;
+            return;
+        }
+        let (last_advance, _) = pre_ring_sample(&r, count - 1);
+        if last_advance != rng_advance() {
+            self.practical_search_error = 1;
+            return;
+        }
+'''
+new_pre_guard = '''        let (proto, mut rot, best, _, consecutive) = classify_pre_ring(&r);
+        if count != PRE_VBLANK_RING_LEN {
+            self.practical_search_error = 11;
+            return;
+        }
+        if !consecutive {
+            self.practical_search_error = 12;
+            return;
+        }
+        if best != 0 {
+            self.practical_search_error = 13;
+            return;
+        }
+        let (last_advance, _) = pre_ring_sample(&r, count - 1);
+        let current_advance = rng_advance();
+        let pre_lag = current_advance.wrapping_sub(last_advance);
+        if pre_lag > 1 {
+            self.practical_search_error = 14;
+            return;
+        }
+        if pre_lag == 1 {
+            rot = rot.wrapping_add(1) & 15;
+        }
+'''
+if text.count(old_pre_guard) != 1:
+    raise SystemExit(f"v6.5.2 PRE guard count: {text.count(old_pre_guard)}")
+text = text.replace(old_pre_guard, new_pre_guard, 1)
+
+old_cadence = '''        let ai_now = add_div_tracker().index().unwrap_or(0) as u32;
+        for i in 0..16usize {
+'''
+new_cadence = '''        let ai_now = add_div_tracker().index().unwrap_or(0) as u32;
+        let ai_validate = ai_now.wrapping_sub(pre_lag);
+        for i in 0..16usize {
+'''
+if text.count(old_cadence) != 1:
+    raise SystemExit(f"v6.5.2 cadence anchor count: {text.count(old_cadence)}")
+text = text.replace(old_cadence, new_cadence, 1)
+
+old_inc = '''            if b1.wrapping_sub(b0) != practical::normal_inc(ai_now.wrapping_add(i as u32)) {
+'''
+new_inc = '''            if b1.wrapping_sub(b0) != practical::normal_inc(ai_validate.wrapping_add(i as u32)) {
+'''
+if text.count(old_inc) != 1:
+    raise SystemExit(f"v6.5.2 cadence compare count: {text.count(old_inc)}")
+text = text.replace(old_inc, new_inc, 1)
+
 # Put an explicit v6.5 record immediately before the existing PRACTICAL,V64
 # write. Locate the containing write! dynamically so this does not depend on
 # the exact v6.4 format string layout.
@@ -102,4 +165,4 @@ path.write_text(body)
 if "12000" not in path.read_text():
     raise SystemExit("v6.5 12000F horizon verification failed")
 
-print(f"Applied Suicune Post-Adaptive v6.5 learning fallback; search horizon=12000F in {path}")
+print(f"Applied Suicune Post-Adaptive v6.5.2; search horizon=12000F, PRE lag<=1 compensated in {path}")

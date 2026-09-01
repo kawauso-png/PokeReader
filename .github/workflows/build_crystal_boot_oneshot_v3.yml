@@ -1,4 +1,4 @@
-name: Crystal Boot One-shot v3.1 Build
+name: Crystal Boot One-shot v3.2 Build
 
 on:
   workflow_dispatch:
@@ -7,8 +7,8 @@ on:
       - "crystal-boot-oneshot-v3"
 
 jobs:
-  build-boot-v31:
-    name: Build Crystal Boot One-shot v3.1
+  build-boot-v32:
+    name: Build Crystal Boot One-shot v3.2
     runs-on: ubuntu-latest
     container: zaksabeast/devkitarm-rust
     steps:
@@ -23,21 +23,26 @@ jobs:
       - name: Apply v3.1 HRAM layout correction
         run: python3 patch_crystal_boot_oneshot_v31.py
 
-      - name: Verify one-shot v3.1 markers
+      - name: Apply v3.2 event edge filter
+        run: python3 patch_crystal_boot_oneshot_v32.py
+
+      - name: Verify one-shot v3.2 markers
         run: |
-          grep -q "BOOT_ONESHOT_TRACE_V31" reader_core/src/crystal/boottrace.rs
+          grep -q "BOOT_ONESHOT_TRACE_V32" reader_core/src/crystal/boottrace.rs
           grep -q "hJoyPressed,FFA7" reader_core/src/crystal/boottrace.rs
           grep -q "hJoypadPressed,FFA3" reader_core/src/crystal/boottrace.rs
           grep -q "hVBlankCounter,FF9B" reader_core/src/crystal/boottrace.rs
+          grep -q "MAX_EVENTS: usize = 256" reader_core/src/crystal/boottrace.rs
+          grep -q "hram.joy_pressed != self.prev_hram.joy_pressed" reader_core/src/crystal/boottrace.rs
           grep -q "event_hram" reader_core/src/crystal/boottrace.rs
           grep -q "snapshot_tick_cost" reader_core/src/crystal/boottrace.rs
 
       - name: Build
         run: make
 
-      - name: Upload one-shot v3.1 artifact
+      - name: Upload one-shot v3.2 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Crystal-Boot-OneShot-v3.1
+          name: PokeReader-Crystal-Boot-OneShot-v3.2
           retention-days: 7
           path: out/default.3gx

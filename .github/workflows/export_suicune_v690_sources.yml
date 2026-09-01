@@ -59,12 +59,14 @@ jobs:
       - run: python3 apply_suicune_rolling_reroot_v671.py
       - run: python3 apply_suicune_live_root_scan_v680.py
       - run: python3 apply_suicune_branch_aware_live_v690.py
-      - name: Collect generated sources
+      - name: Collect generated sources and v6.4 payload
         run: |
           mkdir -p /tmp/v690src
           cp reader_core/src/crystal/practical.rs /tmp/v690src/
           cp reader_core/src/crystal/trace.rs /tmp/v690src/
           cp reader_core/src/crystal/hook.rs /tmp/v690src/
+          cp apply_suicune_practical_shiny_v64_payload_0.txt /tmp/v690src/
+          cp apply_suicune_practical_shiny_v64_payload_1.txt /tmp/v690src/
       - name: Upload generated sources
         uses: actions/upload-artifact@v4
         with:

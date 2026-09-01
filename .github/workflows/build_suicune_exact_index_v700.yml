@@ -6,6 +6,7 @@ on:
       - suicune-post-adaptive-v65
   workflow_dispatch:
 
+# Registered before this trigger commit so the push event starts v7.0 CI.
 jobs:
   build:
     name: Build Suicune Exact-Index LiveRoot v7.0

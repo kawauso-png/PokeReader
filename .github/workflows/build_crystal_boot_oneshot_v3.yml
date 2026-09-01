@@ -1,0 +1,35 @@
+name: Crystal Boot One-shot v3 Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "crystal-boot-oneshot-v3"
+
+jobs:
+  build-boot-v3:
+    name: Build Crystal Boot One-shot v3
+    runs-on: ubuntu-latest
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify one-shot markers
+        run: |
+          grep -q "BOOT_ONESHOT_TRACE_V3" reader_core/src/crystal/boottrace.rs
+          grep -q "event_hram" reader_core/src/crystal/boottrace.rs
+          grep -q "event_cpu" reader_core/src/crystal/boottrace.rs
+          grep -q "event_wram_d200" reader_core/src/crystal/boottrace.rs
+          grep -q "snapshot_tick_cost" reader_core/src/crystal/boottrace.rs
+          grep -q "hJoyPressed,FF9C" reader_core/src/crystal/boottrace.rs
+
+      - name: Build
+        run: make
+
+      - name: Upload one-shot v3 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Crystal-Boot-OneShot-v3
+          retention-days: 7
+          path: out/default.3gx

@@ -1,4 +1,4 @@
-name: Crystal Boot Trace v2 Build
+name: Crystal Boot Trace v2.1 Build
 
 on:
   workflow_dispatch:
@@ -7,26 +7,27 @@ on:
       - "crystal-boot-trace-v2"
 
 jobs:
-  build-boot-v2:
-    name: Build Crystal Boot Trace v2
+  build-boot-v21:
+    name: Build Crystal Boot Trace v2.1
     runs-on: ubuntu-latest
     container: zaksabeast/devkitarm-rust
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Verify boot trace v2 markers
+      - name: Verify boot trace v2.1 markers
         run: |
-          grep -q "BOOT_CALL_TRACE_V2" reader_core/src/crystal/boottrace.rs
-          grep -q "h_joy_pressed" reader_core/src/crystal/boottrace.rs
-          grep -q "CRYSTAL_HRAM_PTR" reader_core/src/crystal/boottrace.rs
+          grep -q "BOOT_CALL_TRACE_V21" reader_core/src/crystal/boottrace.rs
+          grep -q "game_lib::gb_mem" reader_core/src/crystal/boottrace.rs
+          grep -q "H_JOY_PRESSED" reader_core/src/crystal/boottrace.rs
+          grep -q "H_RANDOM_ADD" reader_core/src/crystal/boottrace.rs
 
       - name: Build
         run: make
 
-      - name: Upload boot trace v2 artifact
+      - name: Upload boot trace v2.1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Crystal-Boot-Trace-v2
+          name: PokeReader-Crystal-Boot-Trace-v2.1
           retention-days: 7
           path: out/default.3gx

@@ -11,12 +11,13 @@ def require(cond, msg):
     if not cond:
         raise SystemExit("AUDIT FAIL: " + msg)
 
-# 12k must be the executable horizon; old long-horizon literals must be gone.
+# 12k must be the executable shiny-search horizon; old long-horizon literals
+# must not return just because TEST mode can bypass search entirely.
 require("12000" in practical or "12000" in trace, "12,000F horizon marker missing")
 require("131072" not in practical and "0x20000" not in practical and "0x00020000" not in practical,
         "old 131072F horizon still present in practical.rs")
 
-# Search-start state must be reusable after ERR2/ERR4/etc and after a VC reset.
+# Search-start state must be reusable after an error or VC reset.
 for marker in [
     "self.practical_search_error = 0;",
     "self.practical_search_skipped = 0;",
@@ -61,12 +62,14 @@ late = trace[rel716:rel717 + 800]
 require("fail = 2" in late and "fail = 3" in late, "rel716/717 hard MISS guards missing")
 require("self.practical_fail(fail)" in trace, "hard MISS handler missing")
 
-# UI must distinguish adaptive learn/search diagnostics and reset-friendly failures.
-for marker in ["S65 LEARN 1", "S65 MISS {}", "S64 ERR {} K{}", "S64 WAIT", "S64 READY", "S65 RESET VC E{}"]:
+# UI must distinguish adaptive learn/search diagnostics and the direct TEST path.
+for marker in [
+    "S65 LEARN 1", "S65 MISS {}", "S64 ERR {} K{}", "S64 WAIT", "S64 READY",
+    "S65 RESET VC E{}", "S658 TEST",
+]:
     require(marker in trace, f"status marker missing: {marker}")
 
-# ERR2 and ERR3 are the only automatic host-resume paths. Unsupported PRE and
-# no-near both become immediate VC-reset opportunities; ERR4/MISS remain hard.
+# ERR2 and ERR3 remain immediate reset opportunities in shiny-search mode.
 for code in (2, 3):
     pos = trace.find(f"self.practical_search_error = {code};")
     require(pos >= 0, f"ERR{code} assignment missing")
@@ -77,8 +80,28 @@ require("void host_request_resume(void)" in mainc, "C host resume function missi
 require("pub fn host_request_resume();" in bindings, "Rust FFI host resume declaration missing")
 require("pub fn request_resume()" in pnphook, "PNP request_resume wrapper missing")
 
-# Search hotkey must remain present in pause-loop build.
+# v6.5.8 Fast Validate: the user supplies only physical UP plus a B tap. B is
+# consumed while paused and must be released before any exact game frame.
+require("// v6.5.8 FastValidate: hold UP and tap B; no Y/X chord." in mainc,
+        "FastValidate B trigger marker missing")
+require(mainc.count("(just_pressed & KEY_B) && (held & KEY_DUP) && !(held & KEY_Y)") == 1,
+        "FastValidate UP+B trigger missing or duplicated")
+require("if ((held & (KEY_B | KEY_Y | KEY_X | KEY_L | KEY_R)) == 0)" in mainc,
+        "B is not gated out before Exact-2F")
+require("if ((held & (KEY_DUP | KEY_B | KEY_Y | KEY_X | KEY_L | KEY_R)) == 0)" in mainc,
+        "B is not gated in post-2F auto resume")
+require("suicune_auto_resume_pending && !(held & KEY_DUP)" in mainc,
+        "physical-UP safety abort missing")
+require(mainc.count("arm_suicune_probe();") >= 2,
+        "FastValidate B path does not arm Deep Probe")
+
+# The old Y+X path remains as a fallback, and Y+B legacy plumbing must not be
+# accidentally hijacked by the new B trigger (the new condition requires !Y).
+require("if (just_pressed & KEY_X)" in mainc, "legacy Y+X fallback missing")
+require("!(held & KEY_Y)" in mainc, "FastValidate does not protect Y+B command")
+
+# Search hotkey must remain present.
 require("KEY_DDOWN" in mainc or "KEY_DOWN" in mainc, "Down key handling missing from C pause loop")
 require("KEY_Y" in mainc, "Y modifier handling missing from C pause loop")
 
-print("AUDIT PASS: v6.5.7 runtime + ERR2/ERR3 VC reset-loop invariants verified")
+print("AUDIT PASS: v6.5.8 12k + learning + reset + UP+B FastValidate invariants verified")

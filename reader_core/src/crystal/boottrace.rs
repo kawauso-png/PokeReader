@@ -153,6 +153,7 @@ struct BootFrame {
     asub: u8,
     ssub: u8,
     atick: u64,
+    frame_tick: u64,
     call_count: u32,
     hram: LightHram,
 }
@@ -167,6 +168,7 @@ impl BootFrame {
         asub: 0,
         ssub: 0,
         atick: 0,
+        frame_tick: 0,
         call_count: 0,
         hram: LightHram::EMPTY,
     };
@@ -184,6 +186,7 @@ struct EventSnapshot {
     asub: u8,
     ssub: u8,
     host_tick: u64,
+    frame_tick: u64,
     call_count: u32,
     snapshot_tick_before: u64,
     snapshot_tick_after: u64,
@@ -207,6 +210,7 @@ impl EventSnapshot {
         asub: 0,
         ssub: 0,
         host_tick: 0,
+        frame_tick: 0,
         call_count: 0,
         snapshot_tick_before: 0,
         snapshot_tick_after: 0,
@@ -361,6 +365,7 @@ pub struct BootTrace {
 
     hram_base: u32,
     wram0_base: u32,
+    game_start_ms: u64,
 
     prev_valid: bool,
     prev_keys: u16,
@@ -382,6 +387,7 @@ impl Default for BootTrace {
             save_result: None,
             hram_base: 0,
             wram0_base: 0,
+            game_start_ms: 0,
             prev_valid: false,
             prev_keys: 0,
             prev_hram: LightHram::EMPTY,
@@ -465,6 +471,7 @@ impl BootTrace {
                 asub: frame.asub,
                 ssub: frame.ssub,
                 host_tick: frame.atick,
+                frame_tick: frame.frame_tick,
                 call_count: frame.call_count,
                 snapshot_tick_before: before,
                 snapshot_tick_after: after,
@@ -485,6 +492,10 @@ impl BootTrace {
             return;
         }
 
+        if self.game_start_ms == 0 {
+            self.game_start_ms = pnp::game_start_ms();
+        }
+
         if self.hram_base == 0 {
             self.hram_base = resolve_ptr(HRAM_PTR_SLOT);
         }
@@ -500,6 +511,7 @@ impl BootTrace {
         let asub = adiv_subtick();
         let ssub = sdiv_subtick();
         let atick = adiv_tick();
+        let frame_tick = pnp::system_tick();
         let call_count = call_log_count();
         let hram = read_light_hram(self.hram_base);
 
@@ -512,6 +524,7 @@ impl BootTrace {
             asub,
             ssub,
             atick,
+            frame_tick,
             call_count,
             hram,
         };
@@ -658,7 +671,7 @@ impl BootTrace {
         line.clear();
         let _ = write!(
             line,
-            "summary,frames_kept,{},frame_capacity,{},calls_total,{},calls_kept,{},calls_dropped,{},random_calls,{},events_kept,{},events_capacity,{},events_dropped,{},hram_base,{:08X},wram0_base,{:08X}\n",
+            "summary,frames_kept,{},frame_capacity,{},calls_total,{},calls_kept,{},calls_dropped,{},random_calls,{},events_kept,{},events_capacity,{},events_dropped,{},hram_base,{:08X},wram0_base,{:08X},game_start_ms,{}\n",
             self.len,
             MAX_BOOT_FRAMES,
             total,
@@ -669,7 +682,8 @@ impl BootTrace {
             MAX_EVENTS,
             self.event_dropped,
             self.hram_base,
-            self.wram0_base
+            self.wram0_base,
+            self.game_start_ms
         );
         pnp::trace_file_write(line.as_bytes());
 
@@ -724,7 +738,7 @@ impl BootTrace {
         line.clear();
         let _ = write!(
             line,
-            "frame_index,advance,state,div,asub,ssub,m14_a,m14_s,host_tick,call_count,pc,rom_bank,physical_keys,rtc_day_hi,rtc_day_lo,rtc_h,rtc_m,rtc_s,hours,minutes,seconds,h_vblank_counter,h_vblank,h_map_entry,h_menu_return,h_joypad_released,h_joypad_pressed,h_joypad_down,h_joypad_sum,h_joy_released,h_joy_pressed,h_joy_down,h_joy_last,h_in_menu,h_random_add,h_random_sub\n"
+            "frame_index,advance,state,div,asub,ssub,m14_a,m14_s,host_tick,frame_tick,call_count,pc,rom_bank,physical_keys,rtc_day_hi,rtc_day_lo,rtc_h,rtc_m,rtc_s,hours,minutes,seconds,h_vblank_counter,h_vblank,h_map_entry,h_menu_return,h_joypad_released,h_joypad_pressed,h_joypad_down,h_joypad_sum,h_joy_released,h_joy_pressed,h_joy_down,h_joy_last,h_in_menu,h_random_add,h_random_sub\n"
         );
         pnp::trace_file_write(line.as_bytes());
 
@@ -733,7 +747,7 @@ impl BootTrace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{},{:04X},{:04X},{:02X},{:02X},{:04X},{:04X},{},{},{:04X},{:02X},{:04X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X}\n",
+                "{},{},{:04X},{:04X},{:02X},{:02X},{:04X},{:04X},{},{},{},{:04X},{:02X},{:04X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X}\n",
                 i,
                 e.advance,
                 e.state,
@@ -743,6 +757,7 @@ impl BootTrace {
                 m14((e.div >> 8) as u8, e.asub),
                 m14(e.div as u8, e.ssub),
                 e.atick,
+                e.frame_tick,
                 e.call_count,
                 e.pc,
                 e.hram.rom_bank,
@@ -815,7 +830,7 @@ impl BootTrace {
         line.clear();
         let _ = write!(
             line,
-            "\nevent_index,frame_index,reasons,reason_text,advance,state,pc,div,asub,ssub,m14_a,m14_s,physical_keys,call_count,host_tick,snapshot_tick_before,snapshot_tick_after,snapshot_tick_cost,hram_valid,cpu_valid,wram_valid\n"
+            "\nevent_index,frame_index,reasons,reason_text,advance,state,pc,div,asub,ssub,m14_a,m14_s,physical_keys,call_count,host_tick,frame_tick,snapshot_tick_before,snapshot_tick_after,snapshot_tick_cost,hram_valid,cpu_valid,wram_valid\n"
         );
         pnp::trace_file_write(line.as_bytes());
 
@@ -824,7 +839,7 @@ impl BootTrace {
             line.clear();
             let _ = write!(
                 line,
-                "{},{},{:08X},{},{},{:04X},{:04X},{:04X},{:02X},{:02X},{:04X},{:04X},{:04X},{},{},{},{},{},{},{},{}\n",
+                "{},{},{:08X},{},{},{:04X},{:04X},{:04X},{:02X},{:02X},{:04X},{:04X},{:04X},{},{},{},{},{},{},{},{},{}\n",
                 i,
                 e.frame_index,
                 e.reasons,
@@ -840,6 +855,7 @@ impl BootTrace {
                 e.keys,
                 e.call_count,
                 e.host_tick,
+                e.frame_tick,
                 e.snapshot_tick_before,
                 e.snapshot_tick_after,
                 e.snapshot_tick_after.wrapping_sub(e.snapshot_tick_before),

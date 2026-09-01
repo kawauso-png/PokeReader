@@ -31,7 +31,6 @@ repls = {
     'mode,BOOT_ONESHOT_TRACE_V3': 'mode,BOOT_ONESHOT_TRACE_V31',
     'address_map,hVBlankCounter,FF90,hROMBank,FF92,hVBlank,FF93,hMapEntryMethod,FF94,hMenuReturn,FF95,hJoypadReleased,FF97,hJoypadPressed,FF98,hJoypadDown,FF99,hJoypadSum,FF9A,hJoyReleased,FF9B,hJoyPressed,FF9C,hJoyDown,FF9D,hJoyLast,FF9E,hInMenu,FF9F,hRandomAdd,FFE1,hRandomSub,FFE2':
     'address_map,hVBlankCounter,FF9B,hROMBank,FF9D,hVBlank,FF9E,hMapEntryMethod,FF9F,hMenuReturn,FFA0,hJoypadReleased,FFA2,hJoypadPressed,FFA3,hJoypadDown,FFA4,hJoypadSum,FFA5,hJoyReleased,FFA6,hJoyPressed,FFA7,hJoyDown,FFA8,hJoyLast,FFA9,hInMenu,FFAA,hRandomAdd,FFE1,hRandomSub,FFE2',
-    'BOOT ONE-SHOT V3': 'BOOT ONE-SHOT V3.1',
 }
 
 for old, new in repls.items():

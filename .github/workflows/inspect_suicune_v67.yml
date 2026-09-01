@@ -1,9 +1,6 @@
 name: Inspect Suicune v6.7 anchors
 
 on:
-  push:
-    branches:
-      - suicune-post-adaptive-v65
   workflow_dispatch:
 
 jobs:

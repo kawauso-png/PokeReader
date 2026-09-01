@@ -31,7 +31,8 @@ require("pre_lag == 1" in trace, "search-start PRE +1 rotation compensation miss
 require("let lag = current.wrapping_sub(last_advance);" in trace, "target-time PRE lag compensation missing")
 require("if lag > 1" in trace and "if lag == 1" in trace, "target-time PRE lag guard/rotation missing")
 
-# ERR2 and cadence failure must no longer be conflated.
+# ERR2 and cadence failure must remain distinct.
+require("self.practical_search_error = 2;" in trace, "unsupported PRE ERR2 marker missing")
 require("self.practical_search_error = 15;" in trace, "cadence failure is not ERR15")
 
 # Target time must re-evaluate actual state/DIV rather than require projected equality.
@@ -60,17 +61,18 @@ late = trace[rel716:rel717 + 800]
 require("fail = 2" in late and "fail = 3" in late, "rel716/717 hard MISS guards missing")
 require("self.practical_fail(fail)" in trace, "hard MISS handler missing")
 
-# UI must distinguish adaptive learn/search diagnostics and reset-friendly no-near.
-for marker in ["S65 LEARN 1", "S65 MISS {}", "S64 ERR {} K{}", "S64 WAIT", "S64 READY", "S65 RESET VC"]:
+# UI must distinguish adaptive learn/search diagnostics and reset-friendly failures.
+for marker in ["S65 LEARN 1", "S65 MISS {}", "S64 ERR {} K{}", "S64 WAIT", "S64 READY", "S65 RESET VC E{}"]:
     require(marker in trace, f"status marker missing: {marker}")
 
-# ERR3 must be the only automatic host-resume path: no 12k candidate means
-# leave PokeReader pause so the user can immediately use the VC reset UI.
-err3 = trace.find("self.practical_search_error = 3;")
-require(err3 >= 0, "ERR3 assignment missing")
-err3_block = trace[err3:err3 + 260]
-require("pnp::request_resume();" in err3_block, "ERR3 does not release host pause")
-require(trace.count("pnp::request_resume();") == 1, "automatic resume leaked into another path")
+# ERR2 and ERR3 are the only automatic host-resume paths. Unsupported PRE and
+# no-near both become immediate VC-reset opportunities; ERR4/MISS remain hard.
+for code in (2, 3):
+    pos = trace.find(f"self.practical_search_error = {code};")
+    require(pos >= 0, f"ERR{code} assignment missing")
+    block = trace[pos:pos + 300]
+    require("pnp::request_resume();" in block, f"ERR{code} does not release host pause")
+require(trace.count("pnp::request_resume();") == 2, "automatic resume leaked outside ERR2/ERR3")
 require("void host_request_resume(void)" in mainc, "C host resume function missing")
 require("pub fn host_request_resume();" in bindings, "Rust FFI host resume declaration missing")
 require("pub fn request_resume()" in pnphook, "PNP request_resume wrapper missing")
@@ -79,4 +81,4 @@ require("pub fn request_resume()" in pnphook, "PNP request_resume wrapper missin
 require("KEY_DDOWN" in mainc or "KEY_DOWN" in mainc, "Down key handling missing from C pause loop")
 require("KEY_Y" in mainc, "Y modifier handling missing from C pause loop")
 
-print("AUDIT PASS: v6.5.6 runtime + VC reset-loop invariants verified")
+print("AUDIT PASS: v6.5.7 runtime + ERR2/ERR3 VC reset-loop invariants verified")

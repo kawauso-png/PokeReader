@@ -1,4 +1,4 @@
-name: Suicune Conservative Branch Trial v6.6.0 Build
+name: Suicune Branch Trial v6.6.1 Build
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    name: Build Suicune Conservative Branch Trial v6.6.0
+    name: Build Suicune Branch Trial v6.6.1
     runs-on: ubuntu-24.04
     container: zaksabeast/devkitarm-rust
     steps:
@@ -114,11 +114,23 @@ jobs:
           grep -q "TRIAL,V660" reader_core/src/crystal/trace.rs
           grep -q "MIN_SEARCH_LEAD: u32 = 180" reader_core/src/crystal/practical.rs
           grep -q "host_request_release_resume" 3gx/sources/main.c
+      - name: Apply v6.6.1 reset-safe status epoch
+        run: python3 apply_suicune_status_epoch_v661.py
+      - name: Audit v6.6.1 status cleanup
+        run: python3 audit_suicune_v661.py
+      - name: Verify v6.6.1 markers
+        run: |
+          grep -q "S661 IDLE" reader_core/src/crystal/trace.rs
+          grep -q "S661 WAIT" reader_core/src/crystal/trace.rs
+          grep -q "S661 READY UP+B" reader_core/src/crystal/trace.rs
+          grep -q "S661 RETRY B40" reader_core/src/crystal/trace.rs
+          grep -q "STATUS_CLEAR_AFTER_ADVANCES: u32 = 180" reader_core/src/crystal/trace.rs
+          grep -q "practical_terminal_advance" reader_core/src/crystal/trace.rs
       - name: Build
         run: make
-      - name: Upload Conservative Branch Trial v6.6.0 artifact
+      - name: Upload Branch Trial v6.6.1 artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-BranchTrial-v660
+          name: PokeReader-Suicune-BranchTrial-v661
           path: out/default.3gx
           retention-days: 7

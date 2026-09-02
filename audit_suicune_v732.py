@@ -1,0 +1,30 @@
+#!/usr/bin/env python3
+from pathlib import Path
+m=Path('3gx/sources/main.c').read_text()
+t=Path('reader_core/src/crystal/trace.rs').read_text()
+f=Path('reader_core/src/crystal/frame.rs').read_text()
+l=Path('reader_core/src/lib.rs').read_text()
+h=Path('3gx/includes/pokereader.h').read_text()
+
+def need(x,msg):
+    if not x: raise SystemExit('v732 audit FAIL: '+msg)
+
+need('if rot != 10 { return; }' not in t,'old scan r10 gate remains')
+need('pub fn control_pause_cell(&mut self, reader: &Gen2Reader) -> u32' in t,'frozen classifier missing')
+need('count == PRE_VBLANK_RING_LEN && consecutive && best == 0' in t,'exact full-ring guard missing')
+need('pub fn suicune_control_pause_cell() -> u32' in f,'frame wrapper missing')
+need('pub extern "C" fn suicune_control_pause_cell() -> u32' in l,'ABI export missing')
+need('u32 suicune_control_pause_cell();' in h,'header declaration missing')
+need('u32 cell = suicune_control_pause_cell();' in m,'pause loop query missing')
+need('SUICUNE_ROOT_LOCK_MAX_STEPS 64U' in m,'step guard missing')
+need("proto == (u32)'A' && rot == 10U" in m,'A/r10 stop missing')
+need('break; // exactly one neutral frame; stay logically paused' in m,'neutral step missing')
+need(m.count('&& suicune_root_lock_ready') >= 2,'READY gates missing')
+need('fixed_a_frames = 2;' in m,'Exact2F changed')
+need('u32 wanted = suicune_phase_slot & 7U;' in m,'absolute slot control missing')
+need('static u32 suicune_phase_slot = 1;' in m,'default slot1 missing')
+need('suicune_phase_slot = 0;' not in m,'slot0 overwrite returned')
+need('S732 A/r10 LOCKED' in t,'LOCKED UI missing')
+need('PHASESCAN,V732' in t and 'PRECOUNT,V732' in t,'CSV version missing')
+need('S730 A/r10 READY' not in t,'old misleading READY remains')
+print('v7.3.2 audit PASS')

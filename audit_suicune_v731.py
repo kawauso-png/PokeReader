@@ -50,13 +50,19 @@ need(h,'fresh.practical_live_scan = false;','no title-screen scan')
 need(h,'self.sync_host_command_ids();','queued host command sync')
 need(h,'pnp::request_resume();','leave stale pause')
 
-# Auto rearm requires loaded-save signature + fresh PRE. If WRAM never visibly
-# clears, play-time movement is the independent boot/load proof.
+# Auto rearm requires loaded-save signature plus data proven to have been
+# rebuilt after reset. It must NOT depend on matching a known PRE prototype,
+# otherwise v7.3 would reintroduce the exact P0/X0 coverage dead-zone it fixed.
 need(T,'gb_mem::read_u8(0xdc9d)','JP party count gate')
 need(T,'gb_mem::read_u8(0xdc9e)','JP first species gate')
 need(h,'reader.trainer_id() == self.soft_reset_expected_tid','same save TID')
 need(h,'self.soft_reset_saw_unloaded || play_moved','boot/load proof')
-need(h,'let pre_fresh = self.live_pre_cell().is_some();','fresh PRE requirement')
+need(h,'let rr = latest_pre_vblank_ring();','fresh ring read')
+need(h,'rn == PRE_VBLANK_RING_LEN','full fresh ring')
+need(h,'rng_advance().wrapping_sub(last_adv) <= 1','current ring')
+need(h,'add_div_tracker().index().is_some()','fresh A index')
+need(h,'sub_div_tracker().index().is_some()','fresh S index')
+forbid(h,'let pre_fresh = self.live_pre_cell().is_some();','PRE-class-dependent rearm')
 need(h,'if self.soft_reset_loaded_streak < 8','stable loaded streak')
 need(h,'self.search_practical_targets(reader);','automatic fresh SCAN')
 
@@ -74,4 +80,4 @@ need(T,'S731 RESET WAIT','reset wait UI')
 need(T,'SOFTRESET,V731','reset telemetry')
 forbid(T,'S730 ','stale UI')
 
-print('v7.3.1 AUDIT PASS: paired DIV evidence only; encounter stalls cannot trigger wipe; full boot/session observer reset; Trace Default reset; title/load gate; automatic fresh SCAN; UP+B and 716/717 guards preserved')
+print('v7.3.1 AUDIT PASS: paired DIV evidence only; encounter stalls cannot trigger wipe; full observer/Trace reset; loaded-save + fresh-ring/index rearm independent of PRE coverage; automatic fresh SCAN; UP+B and 716/717 guards preserved')

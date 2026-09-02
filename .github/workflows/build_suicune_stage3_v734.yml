@@ -94,13 +94,16 @@ jobs:
         run: python3 fix_suicune_v734_upb_robust.py
       - name: Audit v7.3.4 robust UP+B
         run: python3 audit_suicune_v734.py
+      - name: Test v7.3.4 input state machine
+        run: python3 test_suicune_v734_input_model.py
       - name: Syntax-check patches/audits
-        run: python3 -m py_compile fix_suicune_v733_host_exact_reset.py audit_suicune_v733.py fix_suicune_v734_upb_robust.py audit_suicune_v734.py
+        run: python3 -m py_compile fix_suicune_v733_host_exact_reset.py audit_suicune_v733.py fix_suicune_v734_upb_robust.py audit_suicune_v734.py test_suicune_v734_input_model.py
       - name: Verify v7.3.4 input invariants
         run: |
           grep -q '(held & KEY_B) && (held & KEY_DUP) && !(held & KEY_Y)' 3gx/sources/main.c
           ! grep -q '(just_pressed & KEY_B) && (held & KEY_DUP) && !(held & KEY_Y)' 3gx/sources/main.c
           grep -q 'svcSleepThread(1000000);' 3gx/sources/main.c
+          grep -q 'svcSleepThread(10000000);' 3gx/sources/main.c
           grep -q 'if ((held & (KEY_B | KEY_Y | KEY_X | KEY_L | KEY_R)) == 0)' 3gx/sources/main.c
           grep -q 'suicune_auto_resume_pending && !(held & KEY_DUP)' 3gx/sources/main.c
           grep -q 'S732 TEST UP+B' reader_core/src/crystal/trace.rs

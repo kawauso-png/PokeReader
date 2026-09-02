@@ -19,14 +19,16 @@ need(M,'fixed_run_pending = true;','pending latch')
 need(M,'fixed_frames_remaining = fixed_a_frames;','Exact2F start after release')
 need(M,'fixed_a_frames = 2;','Exact2F length')
 need(M,'suicune_auto_resume_pending && !(held & KEY_DUP)','UP required during exact frames')
+need(M,'svcSleepThread(10000000);','proven 10ms pending/release wait preserved')
 
-# UP-held trigger wait is fast-polled; normal idle pause remains 50ms.
+# Only the pre-trigger UP-held wait is fast-polled; normal idle pause remains
+# 50ms. This fixes detection without modifying the proven Exact2F timing path.
 need(M,'if (held & KEY_DUP)','UP fast-poll branch')
-need(M,'svcSleepThread(1000000);','1ms poll')
+need(M,'svcSleepThread(1000000);','1ms trigger poll')
 need(M,'svcSleepThread(50000000);','normal 50ms idle poll')
 
 # v7.3.3 host reset fix must remain in the chain.
 need(M,'fixed_armed = false;','host armed reset')
 need(M,'suicune_auto_resume_pending = false;','host auto-resume reset')
 
-print('v7.3.4 AUDIT PASS: UP+B level-latched, UP-held 1ms polling, B-release gate and Exact2F preserved, host reset preserved')
+print('v7.3.4 AUDIT PASS: UP+B level-latched, pre-trigger UP wait at 1ms, proven 10ms B-release/Exact2F path preserved, host reset preserved')

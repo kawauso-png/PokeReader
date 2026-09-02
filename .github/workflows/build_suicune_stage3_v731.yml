@@ -1,14 +1,14 @@
-name: Suicune Stage3 v7.3.1 SoftReset Fresh Validate
+name: Suicune Stage3 v7.3.2 SoftReset SessionFix Validate
 
 on:
   push:
     branches:
-      - suicune-stage3-v731-softreset-fresh
+      - suicune-stage3-v732-softreset-sessionfix
   workflow_dispatch:
 
 jobs:
   build:
-    name: Build Suicune Stage3 v7.3.1 SoftReset Fresh Validate
+    name: Build Suicune Stage3 v7.3.2 SoftReset SessionFix Validate
     runs-on: ubuntu-24.04
     container: zaksabeast/devkitarm-rust
     steps:
@@ -85,28 +85,36 @@ jobs:
         run: python3 apply_suicune_softreset_fresh_v731.py
       - name: Fix v7.3.1 PRE-independent rearm
         run: python3 fix_suicune_v731_rearm_gate.py
-      - name: Audit v7.3.1 fresh-session reset
+      - name: Audit v7.3.1 base reset layer
         run: python3 audit_suicune_v731.py
-      - name: Syntax-check current patch/audit
-        run: python3 -m py_compile apply_suicune_softreset_fresh_v731.py fix_suicune_v731_rearm_gate.py audit_suicune_v731.py
-      - name: Verify v7.3.1 invariants
+      - name: Apply v7.3.2 reset-session fix
+        run: python3 fix_suicune_v732_reset_baseline.py
+      - name: Audit v7.3.2 hardware regression fix
+        run: python3 audit_suicune_v732.py
+      - name: Syntax-check current patch/audits
+        run: python3 -m py_compile apply_suicune_softreset_fresh_v731.py fix_suicune_v731_rearm_gate.py audit_suicune_v731.py fix_suicune_v732_reset_baseline.py audit_suicune_v732.py
+      - name: Verify v7.3.2 invariants
         run: |
-          grep -q 'S731 TEST UP+B' reader_core/src/crystal/trace.rs
-          grep -q 'S731 RESET WAIT' reader_core/src/crystal/trace.rs
-          grep -q 'SOFTRESET,V731' reader_core/src/crystal/trace.rs
-          grep -q 'GLOBALBEAM,V731' reader_core/src/crystal/trace.rs
+          grep -q 'S732 TEST UP+B' reader_core/src/crystal/trace.rs
+          grep -q 'S732 RESET WAIT' reader_core/src/crystal/trace.rs
+          grep -q 'S732 SCAN' reader_core/src/crystal/trace.rs
+          grep -q 'SOFTRESET,V732' reader_core/src/crystal/trace.rs
+          grep -q 'GLOBALBEAM,V732' reader_core/src/crystal/trace.rs
+          grep -q 'self.soft_reset_expected_tid = reader.trainer_id()' reader_core/src/crystal/trace.rs
+          grep -q 'let expected_tid = self.soft_reset_expected_tid' reader_core/src/crystal/trace.rs
           grep -q 'reset_vc_session_observers' reader_core/src/crystal/hook.rs
           grep -q 'VC_DIV_DISCONT_EPOCH' reader_core/src/crystal/hook.rs
           grep -q 'PRE_VBLANK_RING = PreVBlankRing::EMPTY' reader_core/src/crystal/hook.rs
           grep -q 'ADD_DIV_TRACKER = DivTracker::new()' reader_core/src/crystal/hook.rs
           grep -q 'let rr = latest_pre_vblank_ring()' reader_core/src/crystal/trace.rs
-          ! grep -q 'let pre_fresh = self.live_pre_cell().is_some()' reader_core/src/crystal/trace.rs
-          ! grep -q 'S730 ' reader_core/src/crystal/trace.rs
+          ! grep -q 'let expected_tid = reader.trainer_id()' reader_core/src/crystal/trace.rs
+          ! grep -q 'self.soft_reset_saw_unloaded || play_moved' reader_core/src/crystal/trace.rs
+          ! grep -q 'S731 ' reader_core/src/crystal/trace.rs
       - name: Build
         run: make
-      - name: Upload v7.3.1 validation artifact
+      - name: Upload v7.3.2 validation artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-Stage3-v731-SoftReset-Fresh-Validate
+          name: PokeReader-Suicune-Stage3-v732-SoftReset-SessionFix-Validate
           path: out/default.3gx
           retention-days: 7

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
-# v7.2.0 is applied after a long historical patch chain.  Whitespace around
+# v7.2.0 is applied after a long historical patch chain. Whitespace around
 # PREFP has changed several times, so do not mutate generated Rust to fit a
-# brittle multiline Python string.  Instead, rewrite the v7.2 apply script's
-# CSV insertion step to splice immediately before one semantic marker that is
+# brittle multiline Python string. Rewrite the v7.2 apply script's CSV
+# insertion step to splice immediately before one semantic marker that is
 # unique in the final v7.1.9 source.
 p = Path('apply_suicune_branchphase_probe_v720.py')
 s = p.read_text()
@@ -16,8 +16,8 @@ end = s.find(end_marker, start)
 if start < 0 or end < 0:
     raise SystemExit('v720 normalizer: CSV source section markers missing')
 
-replacement = r'''# CSV: compute AA/AB deltas offline from the frozen timing snapshot.  Insert by
-# semantic marker rather than matching PREFP whitespace.  Recreate r/count in
+replacement = r"""# CSV: compute AA/AB deltas offline from the frozen timing snapshot. Insert by
+# semantic marker rather than matching PREFP whitespace. Recreate r/count in
 # this independent block because the preceding PREFP block has already closed.
 marker = '        // v6.3 authoritative suffix fingerprint.'
 if t.count(marker) != 1:
@@ -53,7 +53,7 @@ phase_block = r'''        if self.probe_session {
 pos = t.find(marker)
 t = t[:pos] + phase_block + t[pos:]
 
-'''
+"""
 
 s = s[:start] + replacement + s[end:]
 p.write_text(s)

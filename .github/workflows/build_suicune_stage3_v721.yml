@@ -83,6 +83,7 @@ jobs:
             apply_suicune_multicell_phase_v721.py \
             audit_suicune_v721.py \
             apply_suicune_adaptive_probe_v722.py \
+            fix_suicune_v722_csv_format.py \
             audit_suicune_v722.py
           do
             python3 "$f"

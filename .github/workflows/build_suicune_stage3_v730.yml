@@ -96,6 +96,7 @@ jobs:
             fix_suicune_v731_resume_slot_reset.py \
             audit_suicune_v731.py \
             apply_suicune_pause_root_lock_v732.py \
+            fix_suicune_v732_mod_export.py \
             audit_suicune_v732.py
           do
             python3 "$f"
@@ -110,6 +111,7 @@ jobs:
           cp reader_core/src/crystal/hook.rs v732/reader_core/src/crystal/
           cp reader_core/src/crystal/practical.rs v732/reader_core/src/crystal/
           cp reader_core/src/crystal/frame.rs v732/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs v732/reader_core/src/crystal/
           cp reader_core/src/pnp/input.rs v732/reader_core/src/pnp/
           cp reader_core/src/pnp/bindings.rs v732/reader_core/src/pnp/
           cp reader_core/src/lib.rs v732/reader_core/src/

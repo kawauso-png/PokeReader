@@ -89,6 +89,7 @@ jobs:
             audit_suicune_v723.py \
             apply_suicune_robust_probe_arm_v724.py \
             audit_suicune_v724.py \
+            normalize_suicune_v730_apply.py \
             apply_suicune_absolute_resume_control_v730.py \
             audit_suicune_v730.py
           do

@@ -13,16 +13,38 @@ def rep(src, old, new, label):
         raise SystemExit(f'v733 {label}: expected 1 match, got {n}')
     return src.replace(old, new, 1)
 
+
+def replace_braced_block(src, marker, new_block, label):
+    a = src.find(marker)
+    if a < 0:
+        raise SystemExit(f'v733 {label}: marker not found')
+    b = src.find('{', a)
+    if b < 0:
+        raise SystemExit(f'v733 {label}: opening brace not found')
+    depth = 0
+    end = -1
+    for i in range(b, len(src)):
+        if src[i] == '{':
+            depth += 1
+        elif src[i] == '}':
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end < 0:
+        raise SystemExit(f'v733 {label}: closing brace not found')
+    return src[:a] + new_block + src[end:]
+
 # New two-stage state: B arms while frozen; only a later physical UP starts Exact-2F.
 old = '''static bool suicune_root_lock_active = false;\nstatic bool suicune_root_lock_ready = false;\nstatic bool suicune_root_lock_failed = false;'''
 new = '''static bool suicune_root_lock_active = false;\nstatic bool suicune_root_lock_ready = false;\nstatic bool suicune_root_lock_failed = false;\nstatic bool suicune_wait_up_after_b = false;'''
 m = rep(m, old, new, 'two-stage state declaration')
 
-# Replace simultaneous UP+B arm with B-only arm. Capture the authoritative locked
-# donor immediately, but do not start Exact-2F until UP is pressed later.
-old = '''        if ((held & KEY_B) && (held & KEY_DUP) && !(held & KEY_Y)\n            && suicune_root_lock_ready\n            && !fixed_run_pending && !suicune_auto_resume_pending)\n        {\n                // Consume the lock before arming so no neutral lock step can\n                // interleave with Exact-2F.\n                suicune_root_lock_ready = false;\n                suicune_root_lock_active = false;\n                arm_suicune_probe();\n            if (held & KEY_DUP)\n            {\n                suicune_observe_reset();\n                suicune_early_lab_reset();\n                suicune_obs_arm_tick = svcGetSystemTick();\n                fixed_a_frames = 2;\n                fixed_frames_remaining = 0;\n                fixed_armed = true;\n                fixed_run_pending = true;\n                suicune_auto_resume_pending = true;\n                suicune_phase_lock_active = true;\n                suicune_phase_anchor_tick = 0;\n                suicune_phase_target_tick = 0;\n                suicune_phase_actual_tick = 0;\n                suicune_start_phase_lock_active = true;\n                suicune_start_phase_anchor_tick = suicune_start_last_top_tick;\n                suicune_start_phase_target_tick = 0;\n                suicune_start_phase_actual_tick = 0;\n            }\n            continue;\n        }'''
-new = '''        // v7.3.3 two-stage arm: B alone captures/arms the authoritative\n        // frozen A/r10 root.  UP is supplied later as a separate physical\n        // action, eliminating the unreliable simultaneous UP+B chord.\n        if ((held & KEY_B) && !(held & KEY_Y)\n            && suicune_root_lock_ready\n            && !suicune_wait_up_after_b\n            && !fixed_run_pending && !suicune_auto_resume_pending)\n        {\n            suicune_root_lock_ready = false;\n            suicune_root_lock_active = false;\n            arm_suicune_probe();\n            suicune_observe_reset();\n            suicune_early_lab_reset();\n            suicune_obs_arm_tick = svcGetSystemTick();\n            fixed_a_frames = 2;\n            fixed_frames_remaining = 0;\n            fixed_armed = true;\n            fixed_run_pending = false;\n            suicune_auto_resume_pending = false;\n            suicune_wait_up_after_b = true;\n            suicune_phase_lock_active = true;\n            suicune_phase_anchor_tick = 0;\n            suicune_phase_target_tick = 0;\n            suicune_phase_actual_tick = 0;\n            suicune_start_phase_lock_active = true;\n            suicune_start_phase_anchor_tick = suicune_start_last_top_tick;\n            suicune_start_phase_target_tick = 0;\n            suicune_start_phase_actual_tick = 0;\n            continue;\n        }'''
-m = rep(m, old, new, 'replace UP+B with B-only arm')
+# Replace the generated v7.2.4/v7.3.2 simultaneous UP+B block by locating the
+# condition and balancing braces. This is intentionally whitespace-independent.
+marker = '        if ((held & KEY_B) && (held & KEY_DUP) && !(held & KEY_Y)'
+new_block = '''        // v7.3.3 two-stage arm: B alone captures/arms the authoritative\n        // frozen A/r10 root. UP is supplied later as a separate physical\n        // action, eliminating the unreliable simultaneous UP+B chord.\n        if ((held & KEY_B) && !(held & KEY_Y)\n            && suicune_root_lock_ready\n            && !suicune_wait_up_after_b\n            && !fixed_run_pending && !suicune_auto_resume_pending)\n        {\n            suicune_root_lock_ready = false;\n            suicune_root_lock_active = false;\n            arm_suicune_probe();\n            suicune_observe_reset();\n            suicune_early_lab_reset();\n            suicune_obs_arm_tick = svcGetSystemTick();\n            fixed_a_frames = 2;\n            fixed_frames_remaining = 0;\n            fixed_armed = true;\n            fixed_run_pending = false;\n            suicune_auto_resume_pending = false;\n            suicune_wait_up_after_b = true;\n            suicune_phase_lock_active = true;\n            suicune_phase_anchor_tick = 0;\n            suicune_phase_target_tick = 0;\n            suicune_phase_actual_tick = 0;\n            suicune_start_phase_lock_active = true;\n            suicune_start_phase_anchor_tick = suicune_start_last_top_tick;\n            suicune_start_phase_target_tick = 0;\n            suicune_start_phase_actual_tick = 0;\n            continue;\n        }'''
+m = replace_braced_block(m, marker, new_block, 'replace UP+B with B-only arm')
 
 # Insert a dedicated wait state immediately before the existing fixed_run_pending
 # handler. B must be released first; then UP alone latches Exact-2F. No game frame

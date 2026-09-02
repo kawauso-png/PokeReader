@@ -57,7 +57,7 @@ need(h,'pnp::request_resume();','leave stale pause')
 # otherwise v7.3 would reintroduce the exact P0/X0 coverage dead-zone it fixed.
 need(T,'gb_mem::read_u8(0xdc9d)','JP party count gate')
 need(T,'gb_mem::read_u8(0xdc9e)','JP first species gate')
-need(h,'reader.trainer_id() == self.soft_reset_expected_tid','same save TID')
+need(T,'reader.trainer_id() == self.soft_reset_expected_tid','same save TID')
 need(h,'self.soft_reset_saw_unloaded || play_moved','boot/load proof')
 need(h,'let rr = latest_pre_vblank_ring();','fresh ring read')
 need(h,'rn == PRE_VBLANK_RING_LEN','full fresh ring')

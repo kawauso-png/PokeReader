@@ -1,0 +1,70 @@
+name: Suicune Stage3 v7.3.7 HOLD-UP RaceFix Validate
+
+on:
+  push:
+    branches:
+      - suicune-stage3-v737-holdup-racefix
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Suicune v7.3.7 HOLD-UP RaceFix
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - name: Rebuild through v7.3.4
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          y=Path('.github/workflows/build_suicune_stage3_v736.yml').read_text().splitlines()
+          cmds=[]
+          for line in y:
+              s=line.strip()
+              if s.startswith('- run: '): cmds.append(s[len('- run: '):])
+          print('running',len(cmds),'base patch commands')
+          for c in cmds:
+              print('+',c)
+              subprocess.run(c,shell=True,check=True)
+          PY
+      - name: Apply and audit v7.3.6 base
+        run: |
+          python3 fix_suicune_v736_full_repair.py
+          python3 audit_suicune_v736.py
+      - name: Apply v7.3.7 HOLD-UP race fix
+        run: python3 fix_suicune_v737_holdup_race.py
+      - name: Audit v7.3.7
+        run: python3 audit_suicune_v737.py | tee v737_audit.txt
+      - name: Generated-source invariants
+        run: |
+          grep -q 'S737 TEST HOLD UP 0.3s' reader_core/src/crystal/trace.rs
+          grep -q 'SOFTRESET,V737' reader_core/src/crystal/trace.rs
+          grep -q 'GLOBALBEAM,V737' reader_core/src/crystal/trace.rs
+          grep -q 'suicune_test_wait_start_phase_while_up' 3gx/sources/main.c
+          grep -q 'fixed_frames_remaining--; // exact frame #1' 3gx/sources/main.c
+          ! grep -q 'S736' reader_core/src/crystal/trace.rs
+          ! grep -q 'R>RESET' reader_core/src/crystal/trace.rs
+      - name: Build
+        run: make
+      - name: Hash
+        run: |
+          sha256sum out/default.3gx | tee v737_default.sha256
+          stat -c '%s' out/default.3gx | tee v737_default.size
+      - name: Upload validated v7.3.7
+        uses: actions/upload-artifact@v4
+        with:
+          name: Suicune-v737-HOLDUP-RaceFix-Validate
+          path: |
+            out/default.3gx
+            v737_audit.txt
+            v737_default.sha256
+            v737_default.size
+            3gx/sources/main.c
+            reader_core/src/crystal/trace.rs
+            reader_core/src/crystal/practical.rs
+          retention-days: 7

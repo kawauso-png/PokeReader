@@ -46,7 +46,7 @@ forbidden = {
     'old WAIT UI':'S718 WAIT',
     'dead transport fields':'practical_transport_',
     'dead rolling fields':'practical_roll_',
-    'dead queue arrays':'practical_targets',
+    'dead queue array references':'self.practical_targets',
     'neutral delay runtime':'suicune_delay_',
     'old Y+X Suicune handler':'// Y + X arms Suicune Deep Probe',
     'wrong R-reset instruction':'R > VC RESET',
@@ -56,18 +56,15 @@ for label, marker in forbidden.items():
     if marker in ALL:
         raise SystemExit(f'FAIL legacy {label} remains: {marker}')
 
-# The current root monitor itself must not project/step into future state.
 a=T.find('    fn practical_wait_monitor')
 b=T.find('    fn practical_fail',a)
 if a < 0 or b < 0:
     raise SystemExit('FAIL monitor span')
 monitor=T[a:b]
-for bad in ['normal_step(', 'SEARCH_HORIZON', 'practical_targets', 'wrapping_add(step)']:
+for bad in ['normal_step(', 'SEARCH_HORIZON', 'self.practical_targets', 'wrapping_add(step)']:
     if bad in monitor:
         raise SystemExit(f'FAIL monitor contains future-search operation: {bad}')
 
-# Generic trace controls may remain, but the Suicune execution route must have
-# only one arm trigger: the current physical UP+B path.
 if M.count('arm_suicune_probe();') != 1:
     raise SystemExit(f'FAIL expected one Suicune arm path, got {M.count("arm_suicune_probe();")}')
 

@@ -1,0 +1,85 @@
+name: Suicune v7.1.8 Generated Snapshot
+
+on:
+  push:
+    branches: [suicune-stage3-v718-cleanup]
+  workflow_dispatch:
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+          sh apply_suicune_deterministic_v37.sh
+          sh apply_suicune_observe_v38.sh
+          sh apply_suicune_observe_v38_post.sh
+          python3 apply_suicune_endpoint_v41.py
+          python3 apply_suicune_endpoint_v42_lighttail.py
+          python3 apply_suicune_endpoint_v44_puretail.py
+          python3 apply_suicune_endpoint_v44_routecount.py
+          python3 apply_suicune_start_signature_v48.py
+          python3 apply_suicune_resume_phase_lock_v49.py
+          python3 fix_suicune_start_phase_v50_patch.py
+          python3 apply_suicune_start_phase_lock_v50.py
+          python3 fix_suicune_vblank_context_v52_patch.py
+          python3 apply_suicune_vblank_context_v52.py
+          python3 apply_suicune_vblank_context_freeze_v52.py
+          python3 apply_suicune_vblank_context_v53.py
+          python3 apply_suicune_startsig_preserve_v54.py
+          python3 fix_suicune_early_control_lab_v55_patch.py
+          python3 fix_suicune_early_control_lab_v55_patch2.py
+          python3 fix_suicune_early_control_lab_v55_patch3.py
+          python3 fix_suicune_early_control_lab_v55_patch4.py
+          python3 apply_suicune_early_control_lab_v55.py
+          python3 apply_suicune_early_profile_v56.py
+          python3 apply_suicune_early_mapper_v57.py
+          python3 apply_suicune_early_adaptive_v58.py
+          python3 apply_suicune_live_phase_core_v60.py
+          python3 apply_suicune_neutral_delay_v61.py
+          python3 apply_suicune_neutral_delay_v61b.py
+          python3 apply_suicune_neutral_delay_v61c.py
+          python3 apply_suicune_prefingerprint_v62.py
+          python3 apply_suicune_postfingerprint_v63.py
+          python3 apply_suicune_practical_shiny_v64.py
+          python3 apply_suicune_post_adaptive_v65.py
+          python3 apply_suicune_cadence_autophase_v653.py
+          python3 apply_suicune_target_revalidate_v654.py
+          python3 apply_suicune_vc_reset_loop_v656.py
+          python3 apply_suicune_fast_validate_v658.py
+          python3 apply_suicune_branch_trial_v660.py
+          python3 apply_suicune_status_epoch_v661.py
+          python3 apply_suicune_transport_stable_v670.py
+          python3 apply_suicune_rolling_reroot_v671.py
+          python3 apply_suicune_live_root_scan_v680.py
+          python3 apply_suicune_branch_aware_live_v690.py
+          python3 apply_suicune_exact_index_live_v700.py
+          python3 apply_suicune_stage3_v710.py
+          python3 apply_suicune_overlay_compact_v711.py
+          python3 apply_suicune_actionable_counter_v712.py
+          python3 apply_suicune_crossbranch_v713.py
+          python3 fix_suicune_v713_lane_fields.py
+          python3 apply_suicune_learn_all_post_v714.py
+          python3 apply_suicune_puretail_fingerprint_v715.py
+          python3 apply_suicune_reset_epoch_v716.py
+          python3 apply_suicune_auto_reset_advice_v717.py
+      - name: Capture every generated source change
+        run: |
+          mkdir -p snapshot
+          git diff --name-only > snapshot/changed_files.txt
+          while IFS= read -r f; do
+            [ -f "$f" ] || continue
+            mkdir -p "snapshot/$(dirname "$f")"
+            cp "$f" "snapshot/$f"
+          done < snapshot/changed_files.txt
+          git diff --stat > snapshot/diff_stat.txt
+      - name: Verify generated snapshot builds
+        run: make
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Suicune-v717-generated-snapshot
+          path: snapshot
+          retention-days: 7

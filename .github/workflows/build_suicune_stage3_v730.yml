@@ -1,4 +1,4 @@
-name: Suicune Stage3 v7.3.0 Absolute Resume Control Build
+name: Suicune Stage3 v7.3.1 Absolute Resume Control Build
 
 on:
   push:
@@ -92,27 +92,29 @@ jobs:
             normalize_suicune_v730_apply.py \
             apply_suicune_absolute_resume_control_v730.py \
             fix_suicune_v730_fixed_ui.py \
-            audit_suicune_v730.py
+            audit_suicune_v730.py \
+            fix_suicune_v731_resume_slot_reset.py \
+            audit_suicune_v731.py
           do
             python3 "$f"
           done
-      - name: Build v7.3.0
+      - name: Build v7.3.1
         run: make
-      - name: Package v7.3.0
+      - name: Package v7.3.1
         run: |
-          mkdir -p v730/reader_core/src/crystal v730/reader_core/src/pnp v730/3gx/sources
-          cp out/default.3gx v730/PokeReader-Suicune-v730-AbsoluteResumeControl.3gx
-          cp reader_core/src/crystal/trace.rs v730/reader_core/src/crystal/
-          cp reader_core/src/crystal/hook.rs v730/reader_core/src/crystal/
-          cp reader_core/src/crystal/practical.rs v730/reader_core/src/crystal/
-          cp reader_core/src/crystal/frame.rs v730/reader_core/src/crystal/
-          cp reader_core/src/pnp/input.rs v730/reader_core/src/pnp/
-          cp reader_core/src/pnp/bindings.rs v730/reader_core/src/pnp/
-          cp 3gx/sources/main.c v730/3gx/sources/
-          cp analyze_suicune_branchphase_v721.py v730/
-          sha256sum out/default.3gx > v730/sha256.txt
+          mkdir -p v731/reader_core/src/crystal v731/reader_core/src/pnp v731/3gx/sources
+          cp out/default.3gx v731/PokeReader-Suicune-v731-AbsoluteResumeControl.3gx
+          cp reader_core/src/crystal/trace.rs v731/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v731/reader_core/src/crystal/
+          cp reader_core/src/crystal/practical.rs v731/reader_core/src/crystal/
+          cp reader_core/src/crystal/frame.rs v731/reader_core/src/crystal/
+          cp reader_core/src/pnp/input.rs v731/reader_core/src/pnp/
+          cp reader_core/src/pnp/bindings.rs v731/reader_core/src/pnp/
+          cp 3gx/sources/main.c v731/3gx/sources/
+          cp analyze_suicune_branchphase_v721.py v731/
+          sha256sum out/default.3gx > v731/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v730-AbsoluteResumeControl
-          path: v730
+          name: PokeReader-Suicune-v731-AbsoluteResumeControl
+          path: v731
           retention-days: 7

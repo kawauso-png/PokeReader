@@ -1,0 +1,15 @@
+name: Inspect Suicune Stage3 v7.1.2 Empirical Indices
+
+on:
+  push:
+    branches:
+      - suicune-post-adaptive-v65
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect empirical cadence indices
+        run: python3 inspect_suicune_stage3_v712.py

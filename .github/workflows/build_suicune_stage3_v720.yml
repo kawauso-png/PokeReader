@@ -72,6 +72,8 @@ jobs:
       - run: python3 audit_suicune_v718.py
       - run: python3 apply_suicune_evidence_gate_v719.py
       - run: python3 audit_suicune_v719.py
+      - name: Normalize v7.2 PREFP insertion anchor
+        run: python3 normalize_suicune_v720_prefp_anchor.py
       - name: Apply v7.2.0 BranchPhase probe
         run: python3 apply_suicune_branchphase_probe_v720.py
       - name: Apply v7.2.0 exact-lag guard

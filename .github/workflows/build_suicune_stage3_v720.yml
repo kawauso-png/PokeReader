@@ -74,8 +74,12 @@ jobs:
       - run: python3 audit_suicune_v719.py
       - name: Apply v7.2.0 BranchPhase probe
         run: python3 apply_suicune_branchphase_probe_v720.py
+      - name: Apply v7.2.0 exact-lag guard
+        run: python3 fix_suicune_branchphase_exactlag_v720.py
       - name: Audit v7.2.0 BranchPhase probe
         run: python3 audit_suicune_v720.py
+      - name: Audit v7.2.0 exact-lag guard
+        run: python3 audit_suicune_v720_exactlag.py
       - name: Build v7.2.0
         run: make
       - name: Package v7.2.0

@@ -83,10 +83,12 @@ jobs:
       - run: python3 audit_suicune_v730.py
       - name: Apply v7.3.1 SoftReset Fresh
         run: python3 apply_suicune_softreset_fresh_v731.py
+      - name: Fix v7.3.1 PRE-independent rearm
+        run: python3 fix_suicune_v731_rearm_gate.py
       - name: Audit v7.3.1 fresh-session reset
         run: python3 audit_suicune_v731.py
       - name: Syntax-check current patch/audit
-        run: python3 -m py_compile apply_suicune_softreset_fresh_v731.py audit_suicune_v731.py
+        run: python3 -m py_compile apply_suicune_softreset_fresh_v731.py fix_suicune_v731_rearm_gate.py audit_suicune_v731.py
       - name: Verify v7.3.1 invariants
         run: |
           grep -q 'S731 TEST UP+B' reader_core/src/crystal/trace.rs
@@ -97,6 +99,8 @@ jobs:
           grep -q 'VC_DIV_DISCONT_EPOCH' reader_core/src/crystal/hook.rs
           grep -q 'PRE_VBLANK_RING = PreVBlankRing::EMPTY' reader_core/src/crystal/hook.rs
           grep -q 'ADD_DIV_TRACKER = DivTracker::new()' reader_core/src/crystal/hook.rs
+          grep -q 'let rr = latest_pre_vblank_ring()' reader_core/src/crystal/trace.rs
+          ! grep -q 'let pre_fresh = self.live_pre_cell().is_some()' reader_core/src/crystal/trace.rs
           ! grep -q 'S730 ' reader_core/src/crystal/trace.rs
       - name: Build
         run: make

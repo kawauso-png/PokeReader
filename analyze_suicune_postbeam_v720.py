@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """Suicune v7.2 POST-centric held-out validator.
 
-This script is deliberately conservative.  It does not estimate success
-probabilities and it does not count self-replay as prediction accuracy.
-It asks two questions only:
-
-1) How early can the observed POST fingerprint distinguish known POST classes?
-2) After POST is known, does a suffix candidate set built WITHOUT the held-out
-   run cover that run at downstream checkpoints?
+Conservative rules:
+- no success probabilities;
+- no self-replay counted as prediction accuracy;
+- POST discrimination and downstream state transport are tested separately;
+- a phase match is NOT treated as an RNG-state prediction match.
 
 Usage:
   python3 analyze_suicune_postbeam_v720.py celebi_trace_*.csv
@@ -21,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 MOD_M = 0x4000
-CHECKPOINTS = (136, 200, 217, 716, 717)
+CHECKPOINTS = (136, 200, 217, 230, 256, 400, 600, 716, 717)
 
 
 def hx(s: str) -> int:
@@ -34,6 +32,18 @@ def signed(s: str) -> int:
 
 def phase_step(a: int, b: int) -> int:
     return (b - a) & (MOD_M - 1)
+
+
+def upd(st: int, a: int, s: int) -> int:
+    ra, rs = (st >> 8) & 0xFF, st & 0xFF
+    z = ra + a
+    carry = 1 if z > 0xFF else 0
+    return ((z & 0xFF) << 8) | ((rs - s - carry) & 0xFF)
+
+
+def s8(x: int) -> int:
+    x &= 0xFF
+    return x - 256 if x >= 128 else x
 
 
 @dataclass
@@ -83,8 +93,8 @@ def read_run(path: Path) -> Run | None:
     for r in rows:
         try:
             rel = int(r['rel_adv'])
-            # Keep the last sample for repeated advance values.  This includes
-            # any accumulated stall phase before the next RNG advance.
+            # Last sample wins for repeated advances so a stall's accumulated
+            # phase is represented before the next RNG advance.
             frames[rel] = (hx(r['ap4']), hx(r['sp4']), hx(r['state']), hx(r['div']))
         except (KeyError, ValueError):
             continue
@@ -104,7 +114,7 @@ def post_prefix_report(runs: list[Run]) -> None:
             break
 
 
-def close(x: tuple[int, int], y: tuple[int, int], tol: int) -> bool:
+def close_pair(x: tuple[int, int], y: tuple[int, int], tol: int) -> bool:
     return abs(x[0] - y[0]) <= tol and abs(x[1] - y[1]) <= tol
 
 
@@ -114,6 +124,49 @@ def in_envelope(x: tuple[int, int], train: list[tuple[int, int]], tol: int) -> b
     alo, ahi = min(v[0] for v in train) - tol, max(v[0] for v in train) + tol
     slo, shi = min(v[1] for v in train) - tol, max(v[1] for v in train) + tol
     return alo <= x[0] <= ahi and slo <= x[1] <= shi
+
+
+def transport_state(target: Run, donor: Run, cp: int) -> tuple[int, int] | None:
+    """Replay donor POST suffix from target's actual rel40 root.
+
+    Donor DIV bytes are expressed as offsets from donor rel40 and transplanted
+    onto target rel40 DIV.  This is intentionally an empirical held-out test,
+    not a claim that exact-index cadence correction is solved.
+    Returns (predicted_state, actual_state).
+    """
+    tf, df = target.frames, donor.frames
+    if 40 not in tf or 40 not in df or cp not in tf or cp not in df:
+        return None
+    st = tf[40][2]
+    target_div40, donor_div40 = tf[40][3], df[40][3]
+    tav, tsv = (target_div40 >> 8) & 0xFF, target_div40 & 0xFF
+    dav0, dsv0 = (donor_div40 >> 8) & 0xFF, donor_div40 & 0xFF
+    for rel in range(41, cp + 1):
+        d = df.get(rel)
+        if d is None:
+            return None
+        dv = d[3]
+        da, ds = (dv >> 8) & 0xFF, dv & 0xFF
+        a = (tav + ((da - dav0) & 0xFF)) & 0xFF
+        s = (tsv + ((ds - dsv0) & 0xFF)) & 0xFF
+        st = upd(st, a, s)
+    return st, tf[cp][2]
+
+
+def state_close(pred: int, actual: int, tol: int) -> bool:
+    pa, ps = (pred >> 8) & 0xFF, pred & 0xFF
+    aa, ass = (actual >> 8) & 0xFF, actual & 0xFF
+    return abs(s8(aa - pa)) <= tol and abs(s8(ass - ps)) <= tol
+
+
+def first_transport_mismatch(target: Run, donor: Run) -> int | None:
+    for rel in range(41, 718):
+        z = transport_state(target, donor, rel)
+        if z is None:
+            return None
+        if z[0] != z[1]:
+            return rel
+    return None
 
 
 def group_report(label: tuple[str, int], group: list[Run]) -> None:
@@ -126,39 +179,40 @@ def group_report(label: tuple[str, int], group: list[Run]) -> None:
         usable = [r for r in group if r.cumulative(cp) is not None]
         if len(usable) < 2:
             continue
-        exact = near1 = env0 = env1 = 0
+        phase_exact = phase_env = phase_env1 = 0
+        state_exact = state_near1 = 0
         total = 0
         for hold in usable:
-            truth = hold.cumulative(cp)
-            train = [r.cumulative(cp) for r in usable if r is not hold]
-            train = [x for x in train if x is not None]
-            if truth is None or not train:
+            phase_truth = hold.cumulative(cp)
+            train = [r for r in usable if r is not hold]
+            train_phase = [r.cumulative(cp) for r in train]
+            train_phase = [x for x in train_phase if x is not None]
+            if phase_truth is None or not train_phase:
                 continue
             total += 1
-            exact += any(close(truth, x, 0) for x in train)
-            near1 += any(close(truth, x, 1) for x in train)
-            env0 += in_envelope(truth, train, 0)
-            env1 += in_envelope(truth, train, 1)
-        print(f'rel{cp}: donor-exact {exact}/{total}  donor±1 {near1}/{total}  envelope {env0}/{total}  envelope±1 {env1}/{total}')
+            phase_exact += any(close_pair(phase_truth, x, 0) for x in train_phase)
+            phase_env += in_envelope(phase_truth, train_phase, 0)
+            phase_env1 += in_envelope(phase_truth, train_phase, 1)
 
-    # Find the first exact local-step divergence for every pair.  This locates
-    # candidate branch/slip checkpoints without fitting a probability model.
-    print('pair first-divergence rel:')
+            preds = [transport_state(hold, d, cp) for d in train]
+            preds = [z for z in preds if z is not None]
+            state_exact += any(pred == actual for pred, actual in preds)
+            state_near1 += any(state_close(pred, actual, 1) for pred, actual in preds)
+
+        print(
+            f'rel{cp}: phase donor-exact {phase_exact}/{total}  '
+            f'phase envelope {phase_env}/{total}  envelope±1 {phase_env1}/{total}  '
+            f'RNG-state donor-exact {state_exact}/{total}  state±1byte {state_near1}/{total}'
+        )
+
+    print('pair first RNG-state transport mismatch:')
     for i in range(len(group)):
         for j in range(i + 1, len(group)):
             a, b = group[i], group[j]
-            first = None
-            for rel in range(41, 718):
-                a0, a1 = a.frames.get(rel - 1), a.frames.get(rel)
-                b0, b1 = b.frames.get(rel - 1), b.frames.get(rel)
-                if None in (a0, a1, b0, b1):
-                    break
-                sa = (phase_step(a0[0], a1[0]), phase_step(a0[1], a1[1]))
-                sb = (phase_step(b0[0], b1[0]), phase_step(b0[1], b1[1]))
-                if sa != sb:
-                    first = rel
-                    break
-            print(f'  {a.name} vs {b.name}: {first if first is not None else "none<=717"}')
+            ab = first_transport_mismatch(a, b)
+            ba = first_transport_mismatch(b, a)
+            print(f'  {a.name} <- {b.name}: {ab if ab is not None else "none<=717"}')
+            print(f'  {b.name} <- {a.name}: {ba if ba is not None else "none<=717"}')
 
 
 def main() -> None:
@@ -182,7 +236,7 @@ def main() -> None:
     for label in sorted(groups):
         group_report(label, groups[label])
 
-    print('\nVALIDATION RULE: do not promote POSTBEAM to production unless held-out coverage is demonstrated on repeated POST classes. Self-replay is not evidence.')
+    print('\nVALIDATION RULE: POSTBEAM is not production-ready until repeated POST classes demonstrate held-out RNG-state coverage at downstream checkpoints. Phase-only agreement and self-replay are not sufficient evidence.')
 
 
 if __name__ == '__main__':

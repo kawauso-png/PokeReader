@@ -1,4 +1,4 @@
-name: Suicune Stage3 v7.3.2 Pause Root Lock Build
+name: Suicune Stage3 v7.3.3 Two Stage Arm Build
 
 on:
   push:
@@ -97,30 +97,32 @@ jobs:
             audit_suicune_v731.py \
             apply_suicune_pause_root_lock_v732.py \
             fix_suicune_v732_mod_export.py \
-            audit_suicune_v732.py
+            audit_suicune_v732.py \
+            apply_suicune_two_stage_arm_v733.py \
+            audit_suicune_v733.py
           do
             python3 "$f"
           done
-      - name: Build v7.3.2
+      - name: Build v7.3.3
         run: make
-      - name: Package v7.3.2
+      - name: Package v7.3.3
         run: |
-          mkdir -p v732/reader_core/src/crystal v732/reader_core/src/pnp v732/3gx/sources v732/3gx/includes
-          cp out/default.3gx v732/PokeReader-Suicune-v732-PauseRootLock.3gx
-          cp reader_core/src/crystal/trace.rs v732/reader_core/src/crystal/
-          cp reader_core/src/crystal/hook.rs v732/reader_core/src/crystal/
-          cp reader_core/src/crystal/practical.rs v732/reader_core/src/crystal/
-          cp reader_core/src/crystal/frame.rs v732/reader_core/src/crystal/
-          cp reader_core/src/crystal/mod.rs v732/reader_core/src/crystal/
-          cp reader_core/src/pnp/input.rs v732/reader_core/src/pnp/
-          cp reader_core/src/pnp/bindings.rs v732/reader_core/src/pnp/
-          cp reader_core/src/lib.rs v732/reader_core/src/
-          cp 3gx/sources/main.c v732/3gx/sources/
-          cp 3gx/includes/pokereader.h v732/3gx/includes/
-          cp analyze_suicune_branchphase_v721.py v732/
-          sha256sum out/default.3gx > v732/sha256.txt
+          mkdir -p v733/reader_core/src/crystal v733/reader_core/src/pnp v733/3gx/sources v733/3gx/includes
+          cp out/default.3gx v733/PokeReader-Suicune-v733-TwoStageArm.3gx
+          cp reader_core/src/crystal/trace.rs v733/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v733/reader_core/src/crystal/
+          cp reader_core/src/crystal/practical.rs v733/reader_core/src/crystal/
+          cp reader_core/src/crystal/frame.rs v733/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs v733/reader_core/src/crystal/
+          cp reader_core/src/pnp/input.rs v733/reader_core/src/pnp/
+          cp reader_core/src/pnp/bindings.rs v733/reader_core/src/pnp/
+          cp reader_core/src/lib.rs v733/reader_core/src/
+          cp 3gx/sources/main.c v733/3gx/sources/
+          cp 3gx/includes/pokereader.h v733/3gx/includes/
+          cp analyze_suicune_branchphase_v721.py v733/
+          sha256sum out/default.3gx > v733/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v732-PauseRootLock
-          path: v732
+          name: PokeReader-Suicune-v733-TwoStageArm
+          path: v733
           retention-days: 7

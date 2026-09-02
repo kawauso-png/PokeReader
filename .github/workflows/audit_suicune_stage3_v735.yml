@@ -74,23 +74,27 @@ jobs:
       - run: python3 fix_suicune_v734_upb_robust.py
       - name: Generated-source sanity
         run: |
-          grep -nE 'void handle_freeze|scan_input\(|hidScanInput|hidKeysHeld|get_current_keys|KEY_B|KEY_DUP|fixed_run_pending|fixed_frames_remaining|suicune_auto_resume_pending|host_request_resume' 3gx/sources/main.c > generated_main_keypaths.txt || true
-          grep -nE 'practical_wait_monitor|rebind_shiny_post|practical_expected40|practical_expected716|practical_expected717|soft_reset|RESET WAIT|P\{|X\{|EV\{|SK\{' reader_core/src/crystal/trace.rs > generated_trace_keypaths.txt || true
-          grep -nE 'static|bool |u8 |u16 |u32 |u64 ' 3gx/sources/main.c > generated_main_mutable_state.txt || true
-          sha256sum 3gx/sources/main.c reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs > generated_sources.sha256
+          grep -nE 'void handle_freeze|scan_input\(|get_current_keys|KEY_B|KEY_DUP|fixed_run_pending|fixed_frames_remaining|suicune_auto_resume_pending|host_request_resume|arm_suicune_probe|search_suicune' 3gx/sources/main.c > generated_main_keypaths.txt || true
+          grep -nE 'practical_wait_monitor|rebind_shiny_post|practical_expected40|practical_expected716|practical_expected717|soft_reset|RESET WAIT|arm_suicune_probe|candidate_valid' reader_core/src/crystal/trace.rs > generated_trace_keypaths.txt || true
+          grep -nE '^static|^u32 host_|^void host_' 3gx/sources/main.c > generated_main_mutable_state.txt || true
+          sha256sum 3gx/sources/main.c reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs reader_core/src/crystal/hook.rs > generated_sources.sha256
       - name: Build generated source
         run: make
       - name: Export generated sources and binary
         uses: actions/upload-artifact@v4
         with:
-          name: Suicune-v735-Full-Audit-Generated
+          name: Suicune-v735-Full-Audit-Generated-Boundary
           path: |
             3gx/sources/main.c
             3gx/sources/hid.c
             3gx/sources/pnp.c
+            3gx/includes/pokereader.h
+            3gx/includes/pnp.h
             reader_core/src/crystal/trace.rs
             reader_core/src/crystal/practical.rs
+            reader_core/src/crystal/hook.rs
             reader_core/src/pnp/input.rs
+            reader_core/src/pnp/bindings.rs
             generated_main_keypaths.txt
             generated_trace_keypaths.txt
             generated_main_mutable_state.txt

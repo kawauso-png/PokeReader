@@ -37,11 +37,13 @@ for m in [
 ]: need(r,m,'observer wipe '+m)
 forbid(r,'VC_DIV_DISCONT_EPOCH = 0','epoch must survive wipe')
 
-# Trace consumes reset only outside active encounter execution.
+# Trace consumes reset only outside active encounter execution. Extra paired
+# gaps while already in RESET WAIT are acknowledged but must not restart/wipe
+# the fresh-session state again.
 need(T,'fn handle_vc_soft_reset','Trace reset consumer')
 h=T[T.index('fn handle_vc_soft_reset'):T.index('pub fn record',T.index('fn handle_vc_soft_reset'))]
 need(h,'let encounter_executing = self.probe_active || self.practical_active;','encounter guard')
-need(h,'if has_session && !encounter_executing','safe reset context')
+need(h,'if !self.soft_reset_rearm_pending && has_session && !encounter_executing','safe one-shot reset context')
 need(h,'let mut fresh = Self::default();','full Trace reset from Default')
 need(h,'fresh.save_index = keep_save_index;','preserve file slot')
 need(h,'fresh.watch_addr = keep_watch_addr;','preserve watch')
@@ -80,4 +82,4 @@ need(T,'S731 RESET WAIT','reset wait UI')
 need(T,'SOFTRESET,V731','reset telemetry')
 forbid(T,'S730 ','stale UI')
 
-print('v7.3.1 AUDIT PASS: paired DIV evidence only; encounter stalls cannot trigger wipe; full observer/Trace reset; loaded-save + fresh-ring/index rearm independent of PRE coverage; automatic fresh SCAN; UP+B and 716/717 guards preserved')
+print('v7.3.1 AUDIT PASS: paired DIV evidence only; encounter stalls ignored; RESET WAIT does not re-wipe on boot gaps; full observer/Trace reset; loaded-save + fresh-ring/index rearm independent of PRE coverage; automatic fresh SCAN; UP+B and 716/717 guards preserved')

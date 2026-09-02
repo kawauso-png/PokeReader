@@ -91,6 +91,7 @@ jobs:
             audit_suicune_v724.py \
             normalize_suicune_v730_apply.py \
             apply_suicune_absolute_resume_control_v730.py \
+            fix_suicune_v730_fixed_ui.py \
             audit_suicune_v730.py
           do
             python3 "$f"

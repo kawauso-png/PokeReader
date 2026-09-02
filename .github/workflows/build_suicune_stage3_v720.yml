@@ -1,0 +1,97 @@
+name: Suicune Stage3 v7.2.0 BranchPhase Probe Build
+
+on:
+  push:
+    branches:
+      - suicune-stage3-v720-branchphase-probe
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install patch dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - run: sh apply_suicune_deterministic_v37.sh
+      - run: sh apply_suicune_observe_v38.sh
+      - run: sh apply_suicune_observe_v38_post.sh
+      - run: python3 apply_suicune_endpoint_v41.py
+      - run: python3 apply_suicune_endpoint_v42_lighttail.py
+      - run: python3 apply_suicune_endpoint_v44_puretail.py
+      - run: python3 apply_suicune_endpoint_v44_routecount.py
+      - run: python3 apply_suicune_start_signature_v48.py
+      - run: python3 apply_suicune_resume_phase_lock_v49.py
+      - run: python3 fix_suicune_start_phase_v50_patch.py
+      - run: python3 apply_suicune_start_phase_lock_v50.py
+      - run: python3 fix_suicune_vblank_context_v52_patch.py
+      - run: python3 apply_suicune_vblank_context_v52.py
+      - run: python3 apply_suicune_vblank_context_freeze_v52.py
+      - run: python3 apply_suicune_vblank_context_v53.py
+      - run: python3 apply_suicune_startsig_preserve_v54.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch2.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch3.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch4.py
+      - run: python3 apply_suicune_early_control_lab_v55.py
+      - run: python3 apply_suicune_early_profile_v56.py
+      - run: python3 apply_suicune_early_mapper_v57.py
+      - run: python3 apply_suicune_early_adaptive_v58.py
+      - run: python3 apply_suicune_live_phase_core_v60.py
+      - run: python3 apply_suicune_neutral_delay_v61.py
+      - run: python3 apply_suicune_neutral_delay_v61b.py
+      - run: python3 apply_suicune_neutral_delay_v61c.py
+      - run: python3 apply_suicune_prefingerprint_v62.py
+      - run: python3 apply_suicune_postfingerprint_v63.py
+      - run: python3 apply_suicune_practical_shiny_v64.py
+      - run: python3 apply_suicune_post_adaptive_v65.py
+      - run: python3 apply_suicune_cadence_autophase_v653.py
+      - run: python3 apply_suicune_target_revalidate_v654.py
+      - run: python3 apply_suicune_vc_reset_loop_v656.py
+      - run: python3 apply_suicune_fast_validate_v658.py
+      - run: python3 apply_suicune_branch_trial_v660.py
+      - run: python3 apply_suicune_status_epoch_v661.py
+      - run: python3 apply_suicune_transport_stable_v670.py
+      - run: python3 apply_suicune_rolling_reroot_v671.py
+      - run: python3 apply_suicune_live_root_scan_v680.py
+      - run: python3 apply_suicune_branch_aware_live_v690.py
+      - run: python3 apply_suicune_exact_index_live_v700.py
+      - run: python3 apply_suicune_stage3_v710.py
+      - run: python3 apply_suicune_overlay_compact_v711.py
+      - run: python3 apply_suicune_actionable_counter_v712.py
+      - run: python3 apply_suicune_crossbranch_v713.py
+      - run: python3 fix_suicune_v713_lane_fields.py
+      - run: python3 apply_suicune_learn_all_post_v714.py
+      - run: python3 apply_suicune_puretail_fingerprint_v715.py
+      - run: python3 apply_suicune_reset_epoch_v716.py
+      - run: python3 apply_suicune_auto_reset_advice_v717.py
+      - run: python3 apply_suicune_cleanup_v718.py
+      - run: python3 audit_suicune_v718.py
+      - run: python3 apply_suicune_evidence_gate_v719.py
+      - run: python3 audit_suicune_v719.py
+      - name: Apply v7.2.0 BranchPhase probe
+        run: python3 apply_suicune_branchphase_probe_v720.py
+      - name: Audit v7.2.0 BranchPhase probe
+        run: python3 audit_suicune_v720.py
+      - name: Build v7.2.0
+        run: make
+      - name: Package v7.2.0
+        run: |
+          mkdir -p v720/reader_core/src/crystal v720/reader_core/src/pnp v720/3gx/sources
+          cp out/default.3gx v720/PokeReader-Suicune-v720-BranchPhaseProbe.3gx
+          cp reader_core/src/crystal/trace.rs v720/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v720/reader_core/src/crystal/
+          cp reader_core/src/crystal/practical.rs v720/reader_core/src/crystal/
+          cp reader_core/src/crystal/frame.rs v720/reader_core/src/crystal/
+          cp reader_core/src/pnp/input.rs v720/reader_core/src/pnp/
+          cp reader_core/src/pnp/bindings.rs v720/reader_core/src/pnp/
+          cp 3gx/sources/main.c v720/3gx/sources/
+          sha256sum out/default.3gx > v720/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v720-BranchPhaseProbe
+          path: v720
+          retention-days: 7

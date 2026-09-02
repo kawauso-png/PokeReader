@@ -1,9 +1,9 @@
-name: Suicune Stage3 v7.3.5 Adaptive Bucket Shiny Build
+name: Suicune Stage3 v7.3.6 Unbounded Bucket Search Build
 
 on:
   push:
     branches:
-      - suicune-stage3-v735-adaptive-bucket-shiny
+      - suicune-stage3-v736-unbounded-bucket-search
   workflow_dispatch:
 
 jobs:
@@ -103,30 +103,32 @@ jobs:
             apply_suicune_phasebucket_shiny_v734.py \
             audit_suicune_v734.py \
             apply_suicune_adaptive_bucket_v735.py \
-            audit_suicune_v735.py
+            audit_suicune_v735.py \
+            apply_suicune_unbounded_bucket_v736.py \
+            audit_suicune_v736.py
           do
             python3 "$f"
           done
-      - name: Build v7.3.5
+      - name: Build v7.3.6
         run: make
-      - name: Package v7.3.5
+      - name: Package v7.3.6
         run: |
-          mkdir -p v735/reader_core/src/crystal v735/reader_core/src/pnp v735/3gx/sources v735/3gx/includes
-          cp out/default.3gx v735/PokeReader-Suicune-v735-AdaptiveBucketShiny.3gx
-          cp reader_core/src/crystal/trace.rs v735/reader_core/src/crystal/
-          cp reader_core/src/crystal/hook.rs v735/reader_core/src/crystal/
-          cp reader_core/src/crystal/practical.rs v735/reader_core/src/crystal/
-          cp reader_core/src/crystal/frame.rs v735/reader_core/src/crystal/
-          cp reader_core/src/crystal/mod.rs v735/reader_core/src/crystal/
-          cp reader_core/src/pnp/input.rs v735/reader_core/src/pnp/
-          cp reader_core/src/pnp/bindings.rs v735/reader_core/src/pnp/
-          cp reader_core/src/lib.rs v735/reader_core/src/
-          cp 3gx/sources/main.c v735/3gx/sources/
-          cp 3gx/includes/pokereader.h v735/3gx/includes/
-          cp analyze_suicune_branchphase_v721.py v735/
-          sha256sum out/default.3gx > v735/sha256.txt
+          mkdir -p v736/reader_core/src/crystal v736/reader_core/src/pnp v736/3gx/sources v736/3gx/includes
+          cp out/default.3gx v736/PokeReader-Suicune-v736-UnboundedBucketSearch.3gx
+          cp reader_core/src/crystal/trace.rs v736/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v736/reader_core/src/crystal/
+          cp reader_core/src/crystal/practical.rs v736/reader_core/src/crystal/
+          cp reader_core/src/crystal/frame.rs v736/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs v736/reader_core/src/crystal/
+          cp reader_core/src/pnp/input.rs v736/reader_core/src/pnp/
+          cp reader_core/src/pnp/bindings.rs v736/reader_core/src/pnp/
+          cp reader_core/src/lib.rs v736/reader_core/src/
+          cp 3gx/sources/main.c v736/3gx/sources/
+          cp 3gx/includes/pokereader.h v736/3gx/includes/
+          cp analyze_suicune_branchphase_v721.py v736/
+          sha256sum out/default.3gx > v736/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v735-AdaptiveBucketShiny
-          path: v735
+          name: PokeReader-Suicune-v736-UnboundedBucketSearch
+          path: v736
           retention-days: 7

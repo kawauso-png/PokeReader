@@ -32,10 +32,15 @@ jobs:
               print('+',c)
               subprocess.run(c,shell=True,check=True)
           PY
-      - name: Apply and audit v7.3.6 base
+      - name: Reproduce validated v7.3.6 base exactly
         run: |
           python3 fix_suicune_v736_full_repair.py
-          python3 audit_suicune_v736.py
+          echo 'de52182b27aa3dc31343ba21c7f3b04b27613b42f7339335098c92b6b08b103e  3gx/sources/main.c' > v736_expected.sha256
+          echo '67bff9f99c6db46fb2989f8705087a8348d85fe0a4a6ae176e6784465d1b371d  reader_core/src/crystal/trace.rs' >> v736_expected.sha256
+          echo '19bdb54e52b8286ffc558a358788537363cd24962c0a048e82023092072eba56  reader_core/src/crystal/practical.rs' >> v736_expected.sha256
+          echo '0df1e573464e5d04e5dfc8d095d6931bc0ec9350227ef8606b6d29c1558e049a  reader_core/src/pnp/input.rs' >> v736_expected.sha256
+          echo 'f16b55ee4013d8a65c8ee328628c005ff720ec5522dcf9f60b133399b78e531f  reader_core/src/pnp/bindings.rs' >> v736_expected.sha256
+          sha256sum -c v736_expected.sha256
       - name: Apply v7.3.7 HOLD-UP race fix
         run: python3 fix_suicune_v737_holdup_race.py
       - name: Audit v7.3.7
@@ -64,6 +69,7 @@ jobs:
             v737_audit.txt
             v737_default.sha256
             v737_default.size
+            v736_expected.sha256
             3gx/sources/main.c
             reader_core/src/crystal/trace.rs
             reader_core/src/crystal/practical.rs

@@ -43,10 +43,10 @@ def fspan(src, sig):
     raise SystemExit(f'v734 unclosed function {sig}')
 
 # -------------------------------------------------------------------------
-# 1) Branch-resolved empirical evaluator.
-#    v7.1's evaluate_empirical() selects the first donor matching PRE only.
-#    A/r10 is now known to be one-to-many, so v7.3.4 explicitly selects the
-#    registered A/r10 -> C/r8 donor when bucket 76 is observed.
+# 1) Branch-resolved PRE evaluator.
+#    Existing v7.1.3 already owns evaluate_empirical_post() for evaluation
+#    after rel40. This new function is intentionally named differently: it
+#    selects a full PRE->DV donor by both PRE and expected POST before input.
 # -------------------------------------------------------------------------
 anchor = "pub fn evaluate_empirical(proto:u8,rot:u8,state:u16,div:u16,ai:u32,si:u32)->Option<Prediction>{"
 if anchor not in p:
@@ -58,9 +58,9 @@ fn emp_pre_post(p:u8,r:u8,op:u8,orr:u8)->Option<&'static EmpLane>{
         x.pre_proto==p && x.pre_rot==r && x.post_proto==op && x.post_rot==orr)
 }
 
-/// Branch-resolved empirical prediction used by v7.3.4 PhaseBucket Shiny Probe.
-/// Returns Some only when the selected donor predicts a Gen2 shiny DV.
-pub fn evaluate_empirical_post(
+/// Branch-resolved PRE prediction used by v7.3.4 PhaseBucket Shiny Probe.
+/// Returns Some only when the selected full donor predicts a Gen2 shiny DV.
+pub fn evaluate_empirical_branch_pre(
     proto:u8,rot:u8,post_proto:u8,post_rot:u8,
     state:u16,div:u16,ai:u32,si:u32
 )->Option<Prediction>{
@@ -164,8 +164,6 @@ monitor = f'''    fn live_root_monitor(&mut self, reader: &Gen2Reader) {{
         if lag != 0 || best != 0 {{ return; }}
         self.phase_exact_count = self.phase_exact_count.saturating_add(1);
 
-        // The prototype is stable for an epoch. This build only has a causal
-        // bucket model for A/r10, so non-A epochs still request a VC reset.
         if proto0 != b'A' {{
             self.phase_target_proto = proto0;
             self.phase_target_rot = rot;
@@ -205,13 +203,10 @@ monitor = f'''    fn live_root_monitor(&mut self, reader: &Gen2Reader) {{
         let state=reader.rng_state();
         let div=measured_div();
         self.practical_empirical_eval=self.practical_empirical_eval.saturating_add(1);
-        let Some(prediction)=practical::evaluate_empirical_post(
+        let Some(prediction)=practical::evaluate_empirical_branch_pre(
             b'A',10,b'{TARGET_POST_PROTO}',{TARGET_POST_ROT},state,div,ai,si
         ) else {{ return; }};
 
-        // Prediction is already shiny. Keep lane253 as the v7.3 PauseRootLock
-        // transport sentinel; bind_practical_prediction retains the real donor
-        // lane/source/raw DV for Stage3 validation and CSV telemetry.
         self.practical_empirical_candidates=self.practical_empirical_candidates.saturating_add(1);
         self.phase_target_proto=b'A';
         self.phase_target_rot=10;
@@ -224,7 +219,6 @@ monitor = f'''    fn live_root_monitor(&mut self, reader: &Gen2Reader) {{
         self.practical_live_found_si=si;
         self.practical_live_scan=false;
         self.practical_scan_enabled=false;
-        self.clear_transport_diag();
         self.bind_practical_prediction(prediction);
         self.practical_empirical=true;
         pnp::request_pause();
@@ -234,7 +228,6 @@ t = t[:a] + monitor + t[b:]
 
 # -------------------------------------------------------------------------
 # 3) Pack authoritative phase bucket into control_pause_cell().
-#    bit28 = bucket valid, bits12..19 = bucket. Existing proto/rot bits remain.
 # -------------------------------------------------------------------------
 a, b = fspan(t, '    pub fn control_pause_cell(&mut self, reader: &Gen2Reader) -> u32')
 control = '''    pub fn control_pause_cell(&mut self, reader: &Gen2Reader) -> u32 {
@@ -278,15 +271,13 @@ control = '''    pub fn control_pause_cell(&mut self, reader: &Gen2Reader) -> u3
 t = t[:a] + control + t[b:]
 
 # -------------------------------------------------------------------------
-# 4) C PauseRootLock now locks A/r10 AND bucket76. A full 256-bucket traversal
-#    can require up to 4096 neutral frames if the observed +37/16F cadence is
-#    correct, so allow 4608 frames as a bounded experimental ceiling.
+# 4) C PauseRootLock now locks A/r10 AND bucket76.
 # -------------------------------------------------------------------------
 m = rep(m, '#define SUICUNE_ROOT_LOCK_MAX_STEPS 64U',
         '#define SUICUNE_ROOT_LOCK_MAX_STEPS 4608U', 'increase bucket lock horizon')
 
 old = '''            u32 proto = cell & 0xffU;\n            u32 rot = (cell >> 8) & 0x0fU;\n            suicune_root_lock_last_cell = cell;'''
-new = f'''            u32 proto = cell & 0xffU;\n            u32 rot = (cell >> 8) & 0x0fU;\n            bool bucket_valid = (cell & 0x10000000U) != 0;\n            u32 bucket = (cell >> 12) & 0xffU;\n            suicune_root_lock_last_cell = cell;'''
+new = '''            u32 proto = cell & 0xffU;\n            u32 rot = (cell >> 8) & 0x0fU;\n            bool bucket_valid = (cell & 0x10000000U) != 0;\n            u32 bucket = (cell >> 12) & 0xffU;\n            suicune_root_lock_last_cell = cell;'''
 m = rep(m, old, new, 'parse packed bucket')
 
 m = rep(m,
@@ -294,7 +285,6 @@ m = rep(m,
         f"if (valid && bucket_valid && proto == (u32)'A' && rot == 10U && bucket == {TARGET_BUCKET}U)",
         'lock A/r10 plus bucket')
 
-# SLOT1 is part of the model. X is consumed but cannot invalidate the forecast.
 if '(suicune_phase_slot == 1) ? 6 : 1' in m:
     m = m.replace('suicune_phase_slot = (suicune_phase_slot == 1) ? 6 : 1;',
                   'suicune_phase_slot = 1;', 1)
@@ -305,8 +295,7 @@ if scan_reset in m:
                   '''                suicune_root_lock_last_cell = 0;\n                suicune_phase_slot = 1;\n                search_suicune_practical_targets();''', 1)
 
 # -------------------------------------------------------------------------
-# 5) User-visible/CSV telemetry. The prediction remains a probe: actual POST
-#    and raw DV are still captured so a miss directly falsifies one model stage.
+# 5) User-visible/CSV telemetry.
 # -------------------------------------------------------------------------
 t = t.replace('S733 ROOTLOCK SCAN', 'S734 SHINY B76 SCAN')
 t = t.replace('S733 A/r10 LOCKED', 'S734 B76 SHINY LOCK')

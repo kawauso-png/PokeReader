@@ -1,21 +1,32 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import re
 
 M = Path('3gx/sources/main.c')
 s = M.read_text()
 
-old = '''void host_request_resume(void)
-{
-    is_paused = false;
-    fixed_frames_remaining = 0;
-    fixed_run_pending = false;
-}
-'''
+# Locate host_request_resume semantically because earlier generated patches may
+# change whitespace/signature formatting.
+ms = list(re.finditer(
+    r"void\s+host_request_resume\s*\(\s*(?:void\s*)?\)\s*\{.*?\}",
+    s,
+    flags=re.S,
+))
+if len(ms) != 1:
+    raise SystemExit(f'v733 host_request_resume semantic match count {len(ms)}')
+m = ms[0]
+old = m.group(0)
+
+# The existing function must at least be the v6.5.7 resume helper we expect.
+for marker in ['is_paused = false;', 'fixed_frames_remaining = 0;', 'fixed_run_pending = false;']:
+    if marker not in old:
+        raise SystemExit('v733 old resume missing: ' + marker)
+
 new = '''void host_request_resume(void)
 {
     // v7.3.3: a VC software reset must also reset the C-side Exact2F state.
-    // Rust v7.3.1/v7.3.2 already wipes RNG/SCAN state, but these host statics
-    // live outside Rust and otherwise survive the VC reset. A stale
+    // Rust v7.3.1/v7.3.2 wipes RNG/SCAN state, but these host statics live
+    // outside Rust and otherwise survive the VC reset. A stale
     // suicune_auto_resume_pending=true is especially bad: the pause loop
     // handles that block before the UP+B trigger, so holding UP can trap the
     // next TEST in the old run's release-wait state and B is never examined.
@@ -26,16 +37,12 @@ new = '''void host_request_resume(void)
     suicune_auto_resume_pending = false;
     fixed_a_frames = 2;
     fixed_last_run = 0;
-}
-'''
-if s.count(old) != 1:
-    raise SystemExit(f'v733 host_request_resume anchor count {s.count(old)}')
-s = s.replace(old, new, 1)
+}'''
+s = s[:m.start()] + new + s[m.end():]
 
 # Safety: keep fixed_run_id monotonic. Rust synchronizes last_run_id after a
 # reset, so resetting the ID itself would create unnecessary ambiguity.
-resume = s[s.index('void host_request_resume(void)'):]
-resume = resume[:resume.index('}\n')+2]
+resume = new
 for marker in [
     'fixed_frames_remaining = 0;',
     'fixed_run_pending = false;',

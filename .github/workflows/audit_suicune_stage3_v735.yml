@@ -53,6 +53,8 @@ jobs:
       - run: python3 apply_suicune_target_revalidate_v654.py
       - run: python3 apply_suicune_vc_reset_loop_v656.py
       - run: python3 apply_suicune_fast_validate_v658.py
+      - name: Capture historical successful UP+B controller
+        run: cp 3gx/sources/main.c main_v658.c
       - run: python3 apply_suicune_branch_trial_v660.py
       - run: python3 apply_suicune_status_epoch_v661.py
       - run: python3 apply_suicune_transport_stable_v670.py
@@ -61,6 +63,8 @@ jobs:
       - run: python3 apply_suicune_branch_aware_live_v690.py
       - run: python3 apply_suicune_exact_index_live_v700.py
       - run: python3 apply_suicune_stage3_v710.py
+      - name: Decode actual v7.1 empirical donor metadata
+        run: python3 audit_decode_v710_payload.py > decoded_v710.json
       - run: python3 apply_suicune_overlay_compact_v711.py
       - run: python3 apply_suicune_actionable_counter_v712.py
       - run: python3 apply_suicune_crossbranch_v713.py
@@ -72,19 +76,23 @@ jobs:
       - run: python3 fix_suicune_v732_reset_baseline.py
       - run: python3 fix_suicune_v733_host_exact_reset.py
       - run: python3 fix_suicune_v734_upb_robust.py
-      - name: Generated-source sanity
+      - name: Generated-source audit and historical diff
         run: |
           grep -nE 'void handle_freeze|scan_input\(|get_current_keys|KEY_B|KEY_DUP|fixed_run_pending|fixed_frames_remaining|suicune_auto_resume_pending|host_request_resume|arm_suicune_probe|search_suicune' 3gx/sources/main.c > generated_main_keypaths.txt || true
           grep -nE 'practical_wait_monitor|rebind_shiny_post|practical_expected40|practical_expected716|practical_expected717|soft_reset|RESET WAIT|arm_suicune_probe|candidate_valid' reader_core/src/crystal/trace.rs > generated_trace_keypaths.txt || true
           grep -nE '^static|^u32 host_|^void host_' 3gx/sources/main.c > generated_main_mutable_state.txt || true
-          sha256sum 3gx/sources/main.c reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs reader_core/src/crystal/hook.rs > generated_sources.sha256
+          diff -u main_v658.c 3gx/sources/main.c > main_v658_vs_v734.diff || true
+          sha256sum main_v658.c 3gx/sources/main.c reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs reader_core/src/crystal/hook.rs > generated_sources.sha256
       - name: Build generated source
         run: make
       - name: Export generated sources and binary
         uses: actions/upload-artifact@v4
         with:
-          name: Suicune-v735-Full-Audit-Generated-Boundary
+          name: Suicune-v735-Historical-Diff-and-Bank
           path: |
+            main_v658.c
+            main_v658_vs_v734.diff
+            decoded_v710.json
             3gx/sources/main.c
             3gx/sources/hid.c
             3gx/sources/pnp.c

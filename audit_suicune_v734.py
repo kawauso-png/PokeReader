@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 M=Path('3gx/sources/main.c').read_text()
+T=Path('reader_core/src/crystal/trace.rs').read_text()
 
 def need(x,m,label):
     if m not in x: raise SystemExit('v734 missing '+label+': '+m)
@@ -31,4 +32,9 @@ need(M,'svcSleepThread(50000000);','normal 50ms idle poll')
 need(M,'fixed_armed = false;','host armed reset')
 need(M,'suicune_auto_resume_pending = false;','host auto-resume reset')
 
-print('v7.3.4 AUDIT PASS: UP+B level-latched, pre-trigger UP wait at 1ms, proven 10ms B-release/Exact2F path preserved, host reset preserved')
+# Hardware-visible build identity.
+for x in ['S734 TEST UP+B','S734 SCAN','S734 RESET WAIT','GLOBALBEAM,V734','SOFTRESET,V734']:
+    need(T,x,'v734 UI/telemetry '+x)
+forbid(T,'S732 ','stale v732 UI')
+
+print('v7.3.4 AUDIT PASS: UP+B level-latched, pre-trigger UP wait at 1ms, proven 10ms B-release/Exact2F path preserved, host reset preserved, S734 UI stamped')

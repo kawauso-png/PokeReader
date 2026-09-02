@@ -3,7 +3,8 @@ from pathlib import Path
 import re
 
 M=Path('3gx/sources/main.c')
-s=M.read_text()
+T=Path('reader_core/src/crystal/trace.rs')
+s=M.read_text(); t=T.read_text()
 
 # v7.3.4: the old FastValidate trigger used just_pressed, but the pause loop
 # normally polls every 50 ms. A normal short B tap can occur entirely between
@@ -36,6 +37,13 @@ replacement=m.group(1)+'''// v7.3.4: once UP is held for Suicune TEST, sample B 
         }'''
 s=s[:m.start()]+replacement+s[m.end():]
 
+# Stamp the runtime UI/telemetry so the hardware build is unambiguous.
+if 'S732 TEST UP+B' not in t or 'S732 SCAN' not in t or 'S732 RESET WAIT' not in t:
+    raise SystemExit('v734 expected S732 UI baseline missing')
+t=t.replace('S732 ', 'S734 ')
+t=t.replace('GLOBALBEAM,V732', 'GLOBALBEAM,V734')
+t=t.replace('SOFTRESET,V732', 'SOFTRESET,V734')
+
 # Safety/regression checks.
 if s.count(new)!=1:
     raise SystemExit('v734 level trigger missing/duplicated')
@@ -49,6 +57,10 @@ if 'suicune_auto_resume_pending && !(held & KEY_DUP)' not in s:
     raise SystemExit('v734 exact-UP safety guard missing')
 if 'if (held & KEY_DUP)' not in replacement or 'svcSleepThread(1000000);' not in replacement:
     raise SystemExit('v734 fast UP poll missing')
+for x in ['S734 TEST UP+B','S734 SCAN','S734 RESET WAIT','GLOBALBEAM,V734','SOFTRESET,V734']:
+    if x not in t: raise SystemExit('v734 missing UI/telemetry '+x)
+if 'S732 ' in t:
+    raise SystemExit('v734 stale S732 UI')
 
-M.write_text(s)
-print('Applied Suicune v7.3.4 UP+B Robust: level-latched B trigger + 1ms UP wait polling; proven B-release/Exact2F timing unchanged')
+M.write_text(s); T.write_text(t)
+print('Applied Suicune v7.3.4 UP+B Robust: level-latched B trigger + 1ms UP wait polling; proven B-release/Exact2F timing unchanged; S734 UI stamped')

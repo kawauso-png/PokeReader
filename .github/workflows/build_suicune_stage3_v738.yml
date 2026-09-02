@@ -1,0 +1,86 @@
+name: Suicune Stage3 v7.3.8 UP-Debounce SafeSearch Validate
+
+on:
+  push:
+    branches:
+      - suicune-stage3-v738-up-debounce-safe-search
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Suicune v7.3.8 UP-Debounce SafeSearch
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - name: Rebuild through v7.3.4
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          y=Path('.github/workflows/build_suicune_stage3_v736.yml').read_text().splitlines()
+          cmds=[]
+          for line in y:
+              s=line.strip()
+              if s.startswith('- run: '): cmds.append(s[len('- run: '):])
+          print('running',len(cmds),'base patch commands')
+          for c in cmds:
+              print('+',c)
+              subprocess.run(c,shell=True,check=True)
+          PY
+      - name: Reproduce validated v7.3.6 base exactly
+        run: |
+          python3 fix_suicune_v736_full_repair.py
+          echo 'de52182b27aa3dc31343ba21c7f3b04b27613b42f7339335098c92b6b08b103e  3gx/sources/main.c' > v736_expected.sha256
+          echo '67bff9f99c6db46fb2989f8705087a8348d85fe0a4a6ae176e6784465d1b371d  reader_core/src/crystal/trace.rs' >> v736_expected.sha256
+          echo '19bdb54e52b8286ffc558a358788537363cd24962c0a048e82023092072eba56  reader_core/src/crystal/practical.rs' >> v736_expected.sha256
+          echo '0df1e573464e5d04e5dfc8d095d6931bc0ec9350227ef8606b6d29c1558e049a  reader_core/src/pnp/input.rs' >> v736_expected.sha256
+          echo 'f16b55ee4013d8a65c8ee328628c005ff720ec5522dcf9f60b133399b78e531f  reader_core/src/pnp/bindings.rs' >> v736_expected.sha256
+          sha256sum -c v736_expected.sha256
+      - name: Apply v7.3.7 HOLD-UP race fix
+        run: python3 fix_suicune_v737_holdup_race.py
+      - name: Audit v7.3.7 base
+        run: python3 audit_suicune_v737.py
+      - name: Apply v7.3.8 UP debounce and safe search
+        run: python3 fix_suicune_v738_up_debounce_safe_search.py
+      - name: Audit v7.3.8
+        run: python3 audit_suicune_v738.py | tee v738_audit.txt
+      - name: Generated-source invariants
+        run: |
+          grep -q 'S738 TEST HOLD UP 0.5s' reader_core/src/crystal/trace.rs
+          grep -q 'S738 LEARN POST~ S{}' reader_core/src/crystal/trace.rs
+          grep -q 'SOFTRESET,V738' reader_core/src/crystal/trace.rs
+          grep -q 'GLOBALBEAM,V738' reader_core/src/crystal/trace.rs
+          grep -q 'SUICUNE_TEST_UP_DEBOUNCE_SAMPLES 8U' 3gx/sources/main.c
+          grep -q 'suicune_test_wait_start_phase_boundary' 3gx/sources/main.c
+          grep -q 'fixed_frames_remaining--; // exact frame #1' 3gx/sources/main.c
+          ! grep -q 'S737' reader_core/src/crystal/trace.rs
+          ! awk '/fn practical_wait_monitor/{f=1} /fn practical_fail/{f=0} f{print}' reader_core/src/crystal/trace.rs | grep -q 'practical_global_speculative=true'
+          ! awk '/fn practical_wait_monitor/{f=1} /fn practical_fail/{f=0} f{print}' reader_core/src/crystal/trace.rs | grep -q 'for id in 1..=practical::proven_lane_count()'
+      - name: Syntax-check patches
+        run: python3 -m py_compile fix_suicune_v738_up_debounce_safe_search.py audit_suicune_v738.py
+      - name: Build
+        run: make
+      - name: Hash final artifact
+        run: |
+          sha256sum out/default.3gx | tee v738_default.sha256
+          stat -c '%s' out/default.3gx | tee v738_default.size
+          sha256sum 3gx/sources/main.c reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs > v738_sources.sha256
+      - name: Upload validated v7.3.8
+        uses: actions/upload-artifact@v4
+        with:
+          name: Suicune-v738-UP-Debounce-SafeSearch-Validate
+          path: |
+            out/default.3gx
+            v738_audit.txt
+            v738_default.sha256
+            v738_default.size
+            v738_sources.sha256
+            3gx/sources/main.c
+            reader_core/src/crystal/trace.rs
+            reader_core/src/crystal/practical.rs
+          retention-days: 7

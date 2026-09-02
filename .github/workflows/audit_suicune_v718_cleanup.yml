@@ -1,4 +1,4 @@
-name: Suicune v7.1.8 Cleanup Audit
+name: Suicune Stage3 v7.1.8 Cleanup Build
 
 on:
   push:
@@ -68,32 +68,28 @@ jobs:
       - run: python3 apply_suicune_puretail_fingerprint_v715.py
       - run: python3 apply_suicune_reset_epoch_v716.py
       - run: python3 apply_suicune_auto_reset_advice_v717.py
-      - name: Build current v7.1.7
+      - name: Apply v7.1.8 cleanup
+        run: python3 apply_suicune_cleanup_v718.py
+      - name: Audit v7.1.8 cleanup
+        run: python3 audit_suicune_v718.py
+      - name: Build cleaned v7.1.8
         run: make
-      - name: Collect generated sources and suspect markers
+      - name: Capture cleaned generated sources
         run: |
-          mkdir -p v718-audit/reader_core/src/crystal v718-audit/reader_core/src/pnp v718-audit/3gx/sources
-          cp reader_core/src/crystal/trace.rs v718-audit/reader_core/src/crystal/
-          cp reader_core/src/crystal/practical.rs v718-audit/reader_core/src/crystal/
-          cp reader_core/src/pnp/hook.rs v718-audit/reader_core/src/pnp/
-          cp reader_core/src/pnp/bindings.rs v718-audit/reader_core/src/pnp/
-          cp 3gx/sources/main.c v718-audit/3gx/sources/
-          {
-            echo '=== line counts ==='
-            wc -l reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs reader_core/src/pnp/hook.rs reader_core/src/pnp/bindings.rs 3gx/sources/main.c
-            echo '=== future/open-loop/legacy search markers ==='
-            grep -nEi 'SEARCH_HORIZON|MIN_SEARCH_LEAD|future|rolling|reroot|WAIT|target queue|candidate queue|transport' reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs || true
-            echo '=== old key/chord markers ==='
-            grep -nEi 'Y\+X|Y\+START|Y\+B|Fixed A|KEY_Y.*KEY_X|KEY_X.*KEY_Y|manual.*resume|R>RESET|R > RESET' reader_core/src/crystal/trace.rs 3gx/sources/main.c || true
-            echo '=== old version UI/status markers ==='
-            grep -nE 'S6[0-9]|S7(0|1[0-6])|V6[0-9][0-9]|V710|V711|V712|V713|V714|V715|V716' reader_core/src/crystal/trace.rs || true
-            echo '=== legacy hypothesis/model markers ==='
-            grep -nEi '1/10|one.?to.?one|universal|multi.?c|horizon|future target|target transport|open.?loop|branch.*guess|guess.*branch' reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs || true
-            echo '=== dead-code-ish fields/functions ==='
-            grep -nE 'practical_(search_|candidate|queue|rolling|refresh|reroot|wait|transport)' reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs || true
-          } > v718-audit/audit.txt
+          mkdir -p v718-clean/reader_core/src/crystal v718-clean/reader_core/src/pnp v718-clean/3gx/sources
+          cp reader_core/src/crystal/trace.rs v718-clean/reader_core/src/crystal/
+          cp reader_core/src/crystal/practical.rs v718-clean/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v718-clean/reader_core/src/crystal/
+          cp reader_core/src/crystal/frame.rs v718-clean/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs v718-clean/reader_core/src/crystal/
+          cp reader_core/src/pnp/input.rs v718-clean/reader_core/src/pnp/
+          cp reader_core/src/pnp/bindings.rs v718-clean/reader_core/src/pnp/
+          cp reader_core/src/pnp/hook.rs v718-clean/reader_core/src/pnp/
+          cp 3gx/sources/main.c v718-clean/3gx/sources/
+          cp out/default.3gx v718-clean/PokeReader-Suicune-Stage3-v718-Clean.3gx
+          sha256sum out/default.3gx > v718-clean/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: Suicune-v718-cleanup-audit
-          path: v718-audit
+          name: PokeReader-Suicune-Stage3-v718-Clean
+          path: v718-clean
           retention-days: 7

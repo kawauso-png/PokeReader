@@ -1,9 +1,9 @@
-name: Suicune Stage3 v7.3.1 Absolute Resume Control Build
+name: Suicune Stage3 v7.3.2 Pause Root Lock Build
 
 on:
   push:
     branches:
-      - suicune-stage3-v730-absolute-resume-control
+      - suicune-stage3-v732-pause-root-lock
   workflow_dispatch:
 
 jobs:
@@ -94,27 +94,31 @@ jobs:
             fix_suicune_v730_fixed_ui.py \
             audit_suicune_v730.py \
             fix_suicune_v731_resume_slot_reset.py \
-            audit_suicune_v731.py
+            audit_suicune_v731.py \
+            apply_suicune_pause_root_lock_v732.py \
+            audit_suicune_v732.py
           do
             python3 "$f"
           done
-      - name: Build v7.3.1
+      - name: Build v7.3.2
         run: make
-      - name: Package v7.3.1
+      - name: Package v7.3.2
         run: |
-          mkdir -p v731/reader_core/src/crystal v731/reader_core/src/pnp v731/3gx/sources
-          cp out/default.3gx v731/PokeReader-Suicune-v731-AbsoluteResumeControl.3gx
-          cp reader_core/src/crystal/trace.rs v731/reader_core/src/crystal/
-          cp reader_core/src/crystal/hook.rs v731/reader_core/src/crystal/
-          cp reader_core/src/crystal/practical.rs v731/reader_core/src/crystal/
-          cp reader_core/src/crystal/frame.rs v731/reader_core/src/crystal/
-          cp reader_core/src/pnp/input.rs v731/reader_core/src/pnp/
-          cp reader_core/src/pnp/bindings.rs v731/reader_core/src/pnp/
-          cp 3gx/sources/main.c v731/3gx/sources/
-          cp analyze_suicune_branchphase_v721.py v731/
-          sha256sum out/default.3gx > v731/sha256.txt
+          mkdir -p v732/reader_core/src/crystal v732/reader_core/src/pnp v732/3gx/sources v732/3gx/includes
+          cp out/default.3gx v732/PokeReader-Suicune-v732-PauseRootLock.3gx
+          cp reader_core/src/crystal/trace.rs v732/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v732/reader_core/src/crystal/
+          cp reader_core/src/crystal/practical.rs v732/reader_core/src/crystal/
+          cp reader_core/src/crystal/frame.rs v732/reader_core/src/crystal/
+          cp reader_core/src/pnp/input.rs v732/reader_core/src/pnp/
+          cp reader_core/src/pnp/bindings.rs v732/reader_core/src/pnp/
+          cp reader_core/src/lib.rs v732/reader_core/src/
+          cp 3gx/sources/main.c v732/3gx/sources/
+          cp 3gx/includes/pokereader.h v732/3gx/includes/
+          cp analyze_suicune_branchphase_v721.py v732/
+          sha256sum out/default.3gx > v732/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v731-AbsoluteResumeControl
-          path: v731
+          name: PokeReader-Suicune-v732-PauseRootLock
+          path: v732
           retention-days: 7

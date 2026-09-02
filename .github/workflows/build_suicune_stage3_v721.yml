@@ -1,0 +1,107 @@
+name: Suicune Stage3 v7.2.1 PRE-C Validate
+
+on:
+  push:
+    branches:
+      - suicune-stage3-v721-precover-c
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Suicune Stage3 v7.2.1 PRE-C Validate
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install patch dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - run: sh apply_suicune_deterministic_v37.sh
+      - run: sh apply_suicune_observe_v38.sh
+      - run: sh apply_suicune_observe_v38_post.sh
+      - run: python3 apply_suicune_endpoint_v41.py
+      - run: python3 apply_suicune_endpoint_v42_lighttail.py
+      - run: python3 apply_suicune_endpoint_v44_puretail.py
+      - run: python3 apply_suicune_endpoint_v44_routecount.py
+      - run: python3 apply_suicune_start_signature_v48.py
+      - run: python3 apply_suicune_resume_phase_lock_v49.py
+      - run: python3 fix_suicune_start_phase_v50_patch.py
+      - run: python3 apply_suicune_start_phase_lock_v50.py
+      - run: python3 fix_suicune_vblank_context_v52_patch.py
+      - run: python3 apply_suicune_vblank_context_v52.py
+      - run: python3 apply_suicune_vblank_context_freeze_v52.py
+      - run: python3 apply_suicune_vblank_context_v53.py
+      - run: python3 apply_suicune_startsig_preserve_v54.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch2.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch3.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch4.py
+      - run: python3 apply_suicune_early_control_lab_v55.py
+      - run: python3 apply_suicune_early_profile_v56.py
+      - run: python3 apply_suicune_early_mapper_v57.py
+      - run: python3 apply_suicune_early_adaptive_v58.py
+      - run: python3 apply_suicune_live_phase_core_v60.py
+      - run: python3 apply_suicune_neutral_delay_v61.py
+      - run: python3 apply_suicune_neutral_delay_v61b.py
+      - run: python3 apply_suicune_neutral_delay_v61c.py
+      - run: python3 apply_suicune_prefingerprint_v62.py
+      - run: python3 apply_suicune_postfingerprint_v63.py
+      - run: python3 apply_suicune_practical_shiny_v64.py
+      - run: python3 apply_suicune_post_adaptive_v65.py
+      - run: python3 apply_suicune_cadence_autophase_v653.py
+      - run: python3 apply_suicune_target_revalidate_v654.py
+      - run: python3 apply_suicune_vc_reset_loop_v656.py
+      - run: python3 apply_suicune_fast_validate_v658.py
+      - run: python3 audit_suicune_v655.py
+      - run: python3 apply_suicune_branch_trial_v660.py
+      - run: python3 audit_suicune_v660.py
+      - run: python3 apply_suicune_status_epoch_v661.py
+      - run: python3 audit_suicune_v661.py
+      - run: python3 apply_suicune_transport_stable_v670.py
+      - run: python3 audit_suicune_v670.py
+      - run: python3 apply_suicune_rolling_reroot_v671.py
+      - run: python3 audit_suicune_v671.py
+      - run: python3 apply_suicune_live_root_scan_v680.py
+      - run: python3 audit_suicune_v680.py
+      - run: python3 apply_suicune_branch_aware_live_v690.py
+      - run: python3 audit_suicune_v690.py
+      - run: python3 apply_suicune_exact_index_live_v700.py
+      - run: python3 audit_suicune_v700.py
+      - run: python3 apply_suicune_stage3_v710.py
+      - run: python3 audit_suicune_v710_ci.py
+      - run: python3 apply_suicune_overlay_compact_v711.py
+      - run: python3 audit_suicune_v711.py
+      - run: python3 apply_suicune_actionable_counter_v712.py
+      - run: python3 audit_suicune_v712.py
+      - run: python3 apply_suicune_crossbranch_v713.py
+      - run: python3 fix_suicune_v713_lane_fields.py
+      - run: python3 audit_suicune_v713.py
+      - run: python3 apply_suicune_postbeam_v720.py
+      - run: python3 audit_suicune_v720.py
+      - name: Apply v7.2.1 PRE-C coverage fix
+        run: python3 apply_suicune_precover_c_v721.py
+      - name: Audit v7.2.1 PRE-C and route4 regressions
+        run: python3 audit_suicune_v721.py
+      - name: Syntax-check analyzers
+        run: |
+          python3 -m py_compile analyze_suicune_postbeam_v720.py
+          python3 -m py_compile apply_suicune_precover_c_v721.py
+          python3 -m py_compile audit_suicune_v721.py
+      - name: Verify v7.2.1 markers
+        run: |
+          grep -q 'S721 SCAN' reader_core/src/crystal/trace.rs
+          grep -q 'S721 TEST UP+B' reader_core/src/crystal/trace.rs
+          grep -q 'FP {}{} K{}' reader_core/src/crystal/trace.rs
+          grep -q "source:103,pre_proto:b'C',pre_rot:7" reader_core/src/crystal/practical.rs
+          grep -q 'EMP_R4_ALT_A' reader_core/src/crystal/practical.rs
+          grep -q 'emp_r4_step(l.source,j)' reader_core/src/crystal/practical.rs
+          ! grep -q 'S720 ' reader_core/src/crystal/trace.rs
+      - name: Build
+        run: make
+      - name: Upload v7.2.1 validation artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-Stage3-v721-PREC-Validate
+          path: out/default.3gx
+          retention-days: 7

@@ -1,0 +1,113 @@
+name: Suicune Stage3 v7.3.6 Full Repair Validate
+
+on:
+  push:
+    branches:
+      - suicune-stage3-v736-full-repair
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Suicune v7.3.6 Full Repair
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - run: sh apply_suicune_deterministic_v37.sh
+      - run: sh apply_suicune_observe_v38.sh
+      - run: sh apply_suicune_observe_v38_post.sh
+      - run: python3 apply_suicune_endpoint_v41.py
+      - run: python3 apply_suicune_endpoint_v42_lighttail.py
+      - run: python3 apply_suicune_endpoint_v44_puretail.py
+      - run: python3 apply_suicune_endpoint_v44_routecount.py
+      - run: python3 apply_suicune_start_signature_v48.py
+      - run: python3 apply_suicune_resume_phase_lock_v49.py
+      - run: python3 fix_suicune_start_phase_v50_patch.py
+      - run: python3 apply_suicune_start_phase_lock_v50.py
+      - run: python3 fix_suicune_vblank_context_v52_patch.py
+      - run: python3 apply_suicune_vblank_context_v52.py
+      - run: python3 apply_suicune_vblank_context_freeze_v52.py
+      - run: python3 apply_suicune_vblank_context_v53.py
+      - run: python3 apply_suicune_startsig_preserve_v54.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch2.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch3.py
+      - run: python3 fix_suicune_early_control_lab_v55_patch4.py
+      - run: python3 apply_suicune_early_control_lab_v55.py
+      - run: python3 apply_suicune_early_profile_v56.py
+      - run: python3 apply_suicune_early_mapper_v57.py
+      - run: python3 apply_suicune_early_adaptive_v58.py
+      - run: python3 apply_suicune_live_phase_core_v60.py
+      - run: python3 apply_suicune_neutral_delay_v61.py
+      - run: python3 apply_suicune_neutral_delay_v61b.py
+      - run: python3 apply_suicune_neutral_delay_v61c.py
+      - run: python3 apply_suicune_prefingerprint_v62.py
+      - run: python3 apply_suicune_postfingerprint_v63.py
+      - run: python3 apply_suicune_practical_shiny_v64.py
+      - run: python3 apply_suicune_post_adaptive_v65.py
+      - run: python3 apply_suicune_cadence_autophase_v653.py
+      - run: python3 apply_suicune_target_revalidate_v654.py
+      - run: python3 apply_suicune_vc_reset_loop_v656.py
+      - run: python3 apply_suicune_fast_validate_v658.py
+      - run: python3 apply_suicune_branch_trial_v660.py
+      - run: python3 apply_suicune_status_epoch_v661.py
+      - run: python3 apply_suicune_transport_stable_v670.py
+      - run: python3 apply_suicune_rolling_reroot_v671.py
+      - run: python3 apply_suicune_live_root_scan_v680.py
+      - run: python3 apply_suicune_branch_aware_live_v690.py
+      - run: python3 apply_suicune_exact_index_live_v700.py
+      - run: python3 apply_suicune_stage3_v710.py
+      - run: python3 apply_suicune_overlay_compact_v711.py
+      - run: python3 apply_suicune_actionable_counter_v712.py
+      - run: python3 apply_suicune_crossbranch_v713.py
+      - run: python3 fix_suicune_v713_lane_fields.py
+      - run: python3 apply_suicune_postbeam_v720.py
+      - run: python3 apply_suicune_globalbeam_v730.py
+      - run: python3 apply_suicune_softreset_fresh_v731.py
+      - run: python3 fix_suicune_v731_rearm_gate.py
+      - run: python3 fix_suicune_v732_reset_baseline.py
+      - run: python3 fix_suicune_v733_host_exact_reset.py
+      - run: python3 fix_suicune_v734_upb_robust.py
+      - name: Apply v7.3.6 full repair
+        run: python3 fix_suicune_v736_full_repair.py
+      - name: Full v7.3.6 audit
+        run: python3 audit_suicune_v736.py | tee v736_audit.txt
+      - name: Generated-source invariants
+        run: |
+          grep -nE 'S736 TEST HOLD UP|EXEC,V736|rebind_shiny_post_v736|same_suffix_future|enter_stage3_learn|practical_expected716|practical_expected717' reader_core/src/crystal/trace.rs > v736_trace_invariants.txt
+          grep -nE 'suicune_test_ready_flag|suicune_test_exec_state|suicune_host_transient_reset|svcSleepThread\(20000000\)|fixed_frames_remaining = 2' 3gx/sources/main.c > v736_host_invariants.txt
+          grep -nE 'EMP_COUNT:usize=7|EmpLane\{id:10[1-7]' reader_core/src/crystal/practical.rs > v736_bank.txt
+          ! grep -q 'EmpLane{id:108,source:104' reader_core/src/crystal/practical.rs
+          awk '/fn practical_wait_monitor/{f=1} /fn practical_fail/{f=0} f{print}' reader_core/src/crystal/trace.rs | grep -q 'evaluate_exact'
+          ! awk '/fn practical_wait_monitor/{f=1} /fn practical_fail/{f=0} f{print}' reader_core/src/crystal/trace.rs | grep -q 'evaluate_empirical_id'
+      - name: Build generated v7.3.6
+        run: make
+      - name: Hash final artifact
+        run: |
+          sha256sum out/default.3gx | tee v736_default.sha256
+          stat -c '%s' out/default.3gx | tee v736_default.size
+          sha256sum 3gx/sources/main.c reader_core/src/crystal/trace.rs reader_core/src/crystal/practical.rs reader_core/src/pnp/input.rs reader_core/src/pnp/bindings.rs > v736_sources.sha256
+      - name: Upload validated v7.3.6
+        uses: actions/upload-artifact@v4
+        with:
+          name: Suicune-v736-Full-Repair-Validate
+          path: |
+            out/default.3gx
+            v736_audit.txt
+            v736_default.sha256
+            v736_default.size
+            v736_sources.sha256
+            v736_trace_invariants.txt
+            v736_host_invariants.txt
+            v736_bank.txt
+            3gx/sources/main.c
+            3gx/includes/pnp.h
+            reader_core/src/crystal/trace.rs
+            reader_core/src/crystal/practical.rs
+            reader_core/src/pnp/input.rs
+            reader_core/src/pnp/bindings.rs
+          retention-days: 7

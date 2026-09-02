@@ -106,7 +106,12 @@ jobs:
           grep -q 'svcSleepThread(10000000);' 3gx/sources/main.c
           grep -q 'if ((held & (KEY_B | KEY_Y | KEY_X | KEY_L | KEY_R)) == 0)' 3gx/sources/main.c
           grep -q 'suicune_auto_resume_pending && !(held & KEY_DUP)' 3gx/sources/main.c
-          grep -q 'S732 TEST UP+B' reader_core/src/crystal/trace.rs
+          grep -q 'S734 TEST UP+B' reader_core/src/crystal/trace.rs
+          grep -q 'S734 SCAN' reader_core/src/crystal/trace.rs
+          grep -q 'S734 RESET WAIT' reader_core/src/crystal/trace.rs
+          grep -q 'GLOBALBEAM,V734' reader_core/src/crystal/trace.rs
+          grep -q 'SOFTRESET,V734' reader_core/src/crystal/trace.rs
+          ! grep -q 'S732 ' reader_core/src/crystal/trace.rs
       - name: Build
         run: make
       - name: Upload v7.3.4 validation artifact

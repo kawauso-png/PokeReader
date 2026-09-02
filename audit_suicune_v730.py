@@ -10,12 +10,14 @@ def need(x,m,label):
 def forbid(x,m,label):
     if m in x: raise SystemExit('v730 forbidden '+label+': '+m)
 
-# Current physical protocol is UP hold -> B tap. B is consumed by the pause
-# loop and exact VC frames receive UP only. Do not regress to Y+X.
-need(M,'(just_pressed & KEY_B) != 0','B trigger')
-need(M,'(held & KEY_DUP) != 0','physical UP requirement')
-need(M,'suicune_fast_validate_pending','B-release pending gate')
-need(M,'exact_up_guard','post-2F UP-release guard')
+# Current physical protocol is UP hold -> B tap. This matches the v6.5.8
+# generated C exactly: B is consumed by PokeReader, Exact2F gets UP only, and
+# auto-resume waits until physical UP is released. Do not regress to Y+X.
+need(M,'(just_pressed & KEY_B) && (held & KEY_DUP) && !(held & KEY_Y)','UP+B trigger')
+need(M,'if ((held & (KEY_B | KEY_Y | KEY_X | KEY_L | KEY_R)) == 0)','B-release gate before Exact2F')
+need(M,'if ((held & (KEY_DUP | KEY_B | KEY_Y | KEY_X | KEY_L | KEY_R)) == 0)','post-2F release mask')
+need(M,'suicune_auto_resume_pending && !(held & KEY_DUP)','physical-UP auto-resume guard')
+need(M,'arm_suicune_probe();','probe arm on execution path')
 need(T,'S730 TEST UP+B','correct user instruction')
 
 # Actual-root scan: no sparse PRE gate before global evaluation.

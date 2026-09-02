@@ -33,7 +33,7 @@ def summarize(path):
     rs=rows(path)
     su=first(rs,'SUICUNE'); pre=first(rs,'PREFP'); post=first(rs,'POSTFP')
     live=first(rs,'LIVE_SCAN'); early=first(rs,'EARLY'); v38=first(rs,'V38')
-    end=first(rs,'ENDPOINT'); scan=first(rs,'PHASESCAN')
+    livep=first(rs,'LIVE'); end=first(rs,'ENDPOINT'); scan=first(rs,'PHASESCAN')
     bp=alltag(rs,'BRPHASE'); fast=alltag(rs,'FASTCALL')
     aa=[dec(r[7]) for r in bp[1:] if len(r)>8 and dec(r[7])>0]
     ab=[dec(r[8]) for r in bp if len(r)>8 and dec(r[8])>0]
@@ -45,16 +45,16 @@ def summarize(path):
       'target':dec(su[1]) if su else 0,
       'pre':f'{pre[4]}/r{pre[5]}' if pre and len(pre)>5 else '?',
       'post':f'{post[3]}/r{post[4]}' if post and len(post)>4 else '?',
-      'route':dec(su[22]) if su and len(su)>23 else 0,
-      'dv':su[23] if su and len(su)>23 else '',
-      'dv_offset':dec(su[21]) if su and len(su)>22 else 0,
+      'route':dec(su[23]) if su and len(su)>24 else 0,
+      'dv':su[24] if su and len(su)>24 else '',
+      'dv_offset':dec(su[22]) if su and len(su)>23 else 0,
       'stop2_offset':dec(end[3]) if end and len(end)>3 else 0,
       'scan_fr':dec(scan[4]) if scan and len(scan)>5 else (dec(live[3]) if live and len(live)>3 else 0),
       'scan_exact':dec(scan[5]) if scan and len(scan)>5 else 0,
       'fixed_to_hook':dec(v38[9]) if v38 and len(v38)>10 else 0,
-      'early_ja':dec(early[27]) if early and len(early)>28 else 0,
-      'early_js':dec(early[28]) if early and len(early)>29 else 0,
-      'early_live_phase':hexi(first(rs,'LIVE')[7]) if first(rs,'LIVE') and len(first(rs,'LIVE'))>7 else 0,
+      'early_ja':dec(early[26]) if early and len(early)>27 else 0,
+      'early_js':dec(early[27]) if early and len(early)>28 else 0,
+      'early_live_phase':hexi(livep[7]) if livep and len(livep)>7 else 0,
       'br_aa_median':medaa,
       'br_aa_double':double,
       'br_ab_median':int(statistics.median(ab)) if ab else 0,

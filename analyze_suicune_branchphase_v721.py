@@ -49,7 +49,7 @@ def summarize(path):
       'dv':su[24] if su and len(su)>24 else '',
       'dv_offset':dec(su[22]) if su and len(su)>23 else 0,
       'stop2_offset':dec(end[3]) if end and len(end)>3 else 0,
-      'scan_fr':dec(scan[4]) if scan and len(scan)>5 else (dec(live[3]) if live and len(live)>3 else 0),
+      'scan_fr':dec(scan[4]) if scan and len(scan)>5 else (dec(live[4]) if live and len(live)>4 else 0),
       'scan_exact':dec(scan[5]) if scan and len(scan)>5 else 0,
       'fixed_to_hook':dec(v38[9]) if v38 and len(v38)>10 else 0,
       'early_ja':dec(early[26]) if early and len(early)>27 else 0,

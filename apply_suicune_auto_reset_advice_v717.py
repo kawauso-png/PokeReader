@@ -20,7 +20,7 @@ for marker, label in [
 ]:
     need(t, marker, label)
 
-# Replace the old per-code RETRY/RESET wording with one automatic recommendation
+# Replace the old per-code RETRY wording with one automatic recommendation
 # surface. LEARN stays higher priority and is intentionally excluded: a LEARN
 # run should continue to DV capture rather than asking for a reset.
 old_miss = '''        } else if self.practical_miss == 1 {
@@ -49,19 +49,28 @@ if old_miss not in t:
     raise SystemExit('v717 miss status block anchor missing')
 t = t.replace(old_miss, new_miss, 1)
 
-old_err = '''        } else if self.practical_search_error == 2 || self.practical_search_error == 3 {
-            pnp::println!("S716 RESET VC E{}", self.practical_search_error);
-        } else if self.practical_search_error != 0 {
-            pnp::println!("S716 ERR {} K{}", self.practical_search_error, self.practical_search_skipped);
-'''
-new_err = '''        } else if self.practical_search_error != 0 {
+# Later v7.x patches split search errors into several diagnostic branches, so
+# do not depend on the old v6.6 exact strings. Locate the search-error region in
+# the final status renderer *after* the miss recommendation we just inserted,
+# and replace every terminal search-error display up to the final idle branch.
+status_anchor = t.find('pnp::println!("R > VC RESET");')
+if status_anchor < 0:
+    raise SystemExit('v717 inserted miss recommendation not found')
+err_start = t.find('        } else if self.practical_search_error', status_anchor)
+if err_start < 0:
+    raise SystemExit('v717 final search-error region start missing')
+err_end = t.find('        } else {', err_start)
+if err_end < 0:
+    raise SystemExit('v717 final idle branch after search errors missing')
+old_err_region = t[err_start:err_end]
+if 'pnp::println!' not in old_err_region or 'practical_search_error' not in old_err_region:
+    raise SystemExit('v717 search-error region sanity check failed')
+new_err_region = '''        } else if self.practical_search_error != 0 {
             pnp::println!("S717 RESET RECOMMENDED");
             pnp::println!("WHY E{}", self.practical_search_error);
             pnp::println!("R > VC RESET");
 '''
-if old_err not in t:
-    raise SystemExit('v717 search-error status block anchor missing')
-t = t.replace(old_err, new_err, 1)
+t = t[:err_start] + new_err_region + t[err_end:]
 
 # UI epoch only. Current-root search, evaluator, CrossBranch, LearnAllPost,
 # PureTailFingerprint and the v716 fresh-scan reset stay unchanged.

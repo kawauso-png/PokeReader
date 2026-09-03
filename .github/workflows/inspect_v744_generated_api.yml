@@ -1,0 +1,49 @@
+name: Inspect v7.4.4 generated selector API
+
+on:
+  push:
+    branches:
+      - suicune-v759-generated-api-inspect-final
+  workflow_dispatch:
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - name: Extract and run v744 generator
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('.github/workflows/build_suicune_stage3_v744.yml').read_text()
+          marker='      - name: Generate Stage3 v7.4.4\n        run: |\n'
+          a=s.index(marker)+len(marker)
+          b=s.index('      - name: Build v7.4.4',a)
+          body=s[a:b]
+          lines=[]
+          for line in body.splitlines():
+              if line.startswith('          '): line=line[10:]
+              lines.append(line)
+          Path('/tmp/gen_v744.sh').write_text('\n'.join(lines)+'\n')
+          PY
+          sh /tmp/gen_v744.sh
+      - name: Print generated selector API
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('reader_core/src/crystal/practical.rs').read_text()
+          for key in ['pub struct Prediction','struct EmpLane','pub fn evaluate_adaptive_bucket','pub fn evaluate_empirical_branch_pre','const DEEP_A','const DEEP_S','const DEEP_WEIGHT','const EMP_LANES']:
+              i=p.find(key)
+              print('\n===== '+key+' =====')
+              print(p[i:i+7000] if i>=0 else 'NOT FOUND')
+          t=Path('reader_core/src/crystal/trace.rs').read_text()
+          for key in ['fn live_root_monitor','fn bind_practical_prediction','pub fn control_pause_cell','pub fn draw_rng_status','fn practical_rel40']:
+              i=t.find(key)
+              print('\n===== TRACE '+key+' =====')
+              print(t[i:i+7000] if i>=0 else 'NOT FOUND')
+          PY

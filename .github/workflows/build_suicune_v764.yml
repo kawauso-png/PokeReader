@@ -1,0 +1,58 @@
+name: Suicune v7.6.4 Rel40 Index Fallback Build
+
+on:
+  push:
+    branches:
+      - suicune-v764-rel40-index-fallback
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - name: Generate v7.4.4 baseline
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('.github/workflows/build_suicune_stage3_v744.yml').read_text()
+          marker='      - name: Generate Stage3 v7.4.4\n        run: |\n'
+          a=s.index(marker)+len(marker)
+          b=s.index('      - name: Build v7.4.4',a)
+          body=s[a:b]
+          Path('/tmp/gen_v744.sh').write_text('\n'.join((x[10:] if x.startswith('          ') else x) for x in body.splitlines())+'\n')
+          PY
+          sh /tmp/gen_v744.sh
+      - name: Apply v7.6.0 weighted selector base
+        run: python3 apply_suicune_weighted_root_selector_v760.py
+      - name: Apply v7.6.2 multi-PRE inverse selector
+        run: python3 apply_suicune_multipre_inverse_v762.py
+      - name: Apply v7.6.3 rel40 inverse gate
+        run: python3 apply_suicune_rel40_inverse_gate_v763.py
+      - name: Apply v7.6.4 rel40 index fallback
+        run: python3 apply_suicune_rel40_index_fallback_v764.py
+      - name: Build v7.6.4
+        run: make
+      - name: Package v7.6.4
+        run: |
+          mkdir -p v764/reader_core/src/crystal v764/3gx/sources
+          cp out/default.3gx v764/PokeReader-Suicune-v764-Rel40IndexFallback.3gx
+          cp reader_core/src/crystal/practical.rs v764/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs v764/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs v764/reader_core/src/crystal/
+          cp 3gx/sources/main.c v764/3gx/sources/
+          cp apply_suicune_weighted_root_selector_v760.py v764/
+          cp apply_suicune_multipre_inverse_v762.py v764/
+          cp apply_suicune_rel40_inverse_gate_v763.py v764/
+          cp apply_suicune_rel40_index_fallback_v764.py v764/
+          sha256sum out/default.3gx > v764/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v764-Rel40IndexFallback
+          path: v764
+          retention-days: 7

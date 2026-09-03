@@ -12,7 +12,8 @@ end=t.index('\n    fn practical_fail',start)
 seg=t[start:end]
 need('if rot!=10 { return; }' in seg,'live scan is not A/r10-only')
 need('evaluate_adaptive_bucket(' in seg and '6144' in seg,'live R16 confidence evaluator missing')
-need('bind_practical_prediction' not in seg,'live scan binds prediction before frozen recheck')
+# Comments intentionally mention the forbidden call; reject only an actual call.
+need('self.bind_practical_prediction(' not in seg,'live scan binds prediction before frozen recheck')
 need('self.practical_live_found_lane=253;' in seg,'turbo candidate does not request authoritative pause-root path')
 need('self.practical_candidate_valid=false;' in seg,'live candidate exposed as valid before recheck')
 need('self.bucket_scan_steps=6144;' in seg,'pause-side R16 envelope not primed')

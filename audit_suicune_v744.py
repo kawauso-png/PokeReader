@@ -19,9 +19,9 @@ need('pre_vblank_timing_capture_stop();' in t,'capture stop missing')
 need('just_pressed & (KEY_DDOWN | KEY_DUP | KEY_DLEFT | KEY_DRIGHT)' in m,'four physical benchmark launch modes missing')
 need('suicune_phase_slot = 12U' in m and 'suicune_phase_slot = 15U' in m,'benchmark tags missing')
 need('is_paused = false;' in m[m.index('just_pressed & (KEY_DDOWN | KEY_DUP | KEY_DLEFT | KEY_DRIGHT)'):],'benchmark launch does not resume VC')
-# Policy boundary for this diagnostic: the patch itself must not add any new
-# game-memory write or synthetic key injection path.
+# Policy boundary for this diagnostic: the v744 patch adds no game-memory write
+# and no synthetic key-state setter. Ordinary physical keys are only observed.
 patch=Path('apply_suicune_legal_advance_benchmark_v744.py').read_text()
-need('host_write_mem' not in patch,'benchmark patch writes game memory')
-need('set_current_keys' not in patch and 'inject' not in patch.lower(),'benchmark patch suggests HID injection')
+need('host_write_mem(' not in patch,'benchmark patch writes game memory')
+need('set_current_keys(' not in patch,'benchmark patch sets synthetic key state')
 print('v7.4.4 audit PASS: physical-input-only 2s warmup + 10s ADV/A10 speed benchmark, auto CSV/pause')

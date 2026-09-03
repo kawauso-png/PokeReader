@@ -1,0 +1,1 @@
+Need fetch current patch file sha before update.

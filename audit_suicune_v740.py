@@ -1,0 +1,23 @@
+#!/usr/bin/env python3
+from pathlib import Path
+p=Path('reader_core/src/crystal/trace.rs').read_text()
+m=Path('3gx/sources/main.c').read_text()
+
+def need(x,msg):
+    if not x: raise SystemExit('v740 audit FAIL: '+msg)
+need('sweep_target_bucket: u8' in p,'sweep target state missing')
+need("match pnp::fixed_a_frame().phase_slot { 9 => 39, _ => 76 }" in p,'B76/B39 target selector missing')
+need('self.practical_live_found_lane=251' in p,'sweep sentinel missing')
+need('bucket!=self.sweep_target_bucket' in p,'target bucket gate missing')
+need('self.practical_live_found_lane==251' in p and 'out|=1u32<<27' in p,'authoritative frozen root gate missing')
+need('S740 B{} TURBO' in p and 'S740 B{} SWEEP FOUND' in p,'v740 UI missing')
+need('SWEEP,V740' in p,'slot sweep CSV missing')
+need('suicune_phase_slot = 8;' in m,'Y+DOWN B76 config missing')
+need('suicune_phase_slot = 9;' in m,'Y+UP B39 config missing')
+need('if (suicune_phase_slot >= 8U) suicune_phase_slot = 0U;' in m,'SLOT0 base reset missing')
+need('suicune_phase_slot = (suicune_phase_slot + 1U) & 7U;' in m,'SLOT0..7 X cycle missing')
+need('suicune_wait_up_after_b = true;' in m,'B->UP TwoStageArm lost')
+need('u32 wanted = suicune_phase_slot & 7U;' in m,'absolute resume slot path lost')
+need('while (((u32)cycle & 7U) != wanted) cycle++;' in m,'absolute slot wait lost')
+need('SUICUNE_ROOT_LOCK_MAX_STEPS 200000U' in m,'root-lock watchdog lost')
+print('v7.4.0 audit PASS: turbo B76/B39 target lock, SLOT0..7 sweep, Exact2F/absolute resume retained')

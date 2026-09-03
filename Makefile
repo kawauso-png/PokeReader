@@ -8,6 +8,7 @@ H_SRCS := $(shell find 3gx/includes -name '*.h')
 all: out/default.3gx
 
 $(LIBPOKEREADER): $(R_SRCS)
+	python3 fix_suicune_v750_compile.py
 	cargo +nightly-2024-03-21 build --release -Z build-std=core,alloc --target armv6k-nintendo-3ds --manifest-path reader_core/Cargo.toml
 
 out/default.3gx: $(LIBPOKEREADER) $(C_SRCS) $(H_SRCS)

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
+fix=Path('fix_suicune_v740_actual_post.py')
+exec(compile(fix.read_text(),str(fix),'exec'),{})
 p=Path('reader_core/src/crystal/trace.rs').read_text()
 m=Path('3gx/sources/main.c').read_text()
 

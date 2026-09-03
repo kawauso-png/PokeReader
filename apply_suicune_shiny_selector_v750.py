@@ -70,6 +70,10 @@ if marker not in t:
     raise SystemExit('v750 bucket CSV version marker missing')
 
 # Keep the confidence evaluator and all three live verification checkpoints.
+# The old v7.1.6 helper name is intentionally NOT required here: later cleanup
+# patches inline/rename that reset-epoch implementation, while the generated
+# chain and v7.3.8 audit already verify the fresh-scan behavior. For production
+# retry we require the actual host resume/reset path plus all result gates.
 required = [
     'pub fn evaluate_adaptive_bucket(',
     'primary_shiny',
@@ -78,7 +82,6 @@ required = [
     'practical_expected716_state',
     'practical_expected717_state',
     'fn practical_fail',
-    'reset_scan_epoch_v716',
     'host_request_resume',
 ]
 blob = p + '\n' + t + '\n' + m

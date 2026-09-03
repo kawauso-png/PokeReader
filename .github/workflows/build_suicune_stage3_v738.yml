@@ -1,9 +1,9 @@
-name: Suicune Stage3 v7.3.8 Dedup Confidence Build
+name: Suicune v7.4.5 Shiny Selector Reset Build
 
 on:
   push:
     branches:
-      - suicune-stage3-v738-dedup-confidence
+      - suicune-v745-shiny-selector-reset
   workflow_dispatch:
 
 jobs:
@@ -16,7 +16,7 @@ jobs:
         run: |
           apt-get update --allow-releaseinfo-change
           apt-get install -y python3
-      - name: Generate Stage3 v7.3.8
+      - name: Generate practical selector pipeline
         run: |
           sh apply_suicune_deterministic_v37.sh
           sh apply_suicune_observe_v38.sh
@@ -97,18 +97,18 @@ jobs:
           do
             python3 "$f"
           done
-      - name: Build v7.3.8
+      - name: Build v7.4.5
         run: make
-      - name: Package v7.3.8
+      - name: Package v7.4.5
         run: |
-          mkdir -p v738/reader_core/src/crystal v738/3gx/sources
-          cp out/default.3gx v738/PokeReader-Suicune-v738-DedupConfidence.3gx
-          cp reader_core/src/crystal/practical.rs v738/reader_core/src/crystal/
-          cp reader_core/src/crystal/trace.rs v738/reader_core/src/crystal/
-          cp 3gx/sources/main.c v738/3gx/sources/
-          sha256sum out/default.3gx > v738/sha256.txt
+          mkdir -p v745/reader_core/src/crystal v745/3gx/sources
+          cp out/default.3gx v745/PokeReader-Suicune-v745-ShinySelectorReset.3gx
+          cp reader_core/src/crystal/practical.rs v745/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs v745/reader_core/src/crystal/
+          cp 3gx/sources/main.c v745/3gx/sources/
+          sha256sum out/default.3gx > v745/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v738-DedupConfidence
-          path: v738
-          retention-days: 7
+          name: PokeReader-Suicune-v745-ShinySelectorReset
+          path: v745
+          retention-days: 14

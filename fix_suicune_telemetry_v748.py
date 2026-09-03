@@ -6,24 +6,25 @@ T=Path('reader_core/src/crystal/trace.rs')
 h=H.read_text(); t=T.read_text()
 
 def need(c,msg):
-    if not c: raise SystemExit('v748 '+msg)
+    if not c: raise SystemExit('v749 '+msg)
 def rep(s,old,new,msg):
     n=s.count(old)
-    if n!=1: raise SystemExit(f'v748 {msg}: expected 1 got {n}')
+    if n!=1: raise SystemExit(f'v749 {msg}: expected 1 got {n}')
     return s.replace(old,new,1)
 
-# ---------------------------------------------------------------------------
-# 1. Lightweight 2F60/2F68 telemetry must survive the endpoint's intentional
-#    DV-2 stop of the expensive DeepEntry snapshotter.
-# ---------------------------------------------------------------------------
+# 1. Lightweight Random telemetry stays alive after the expensive DeepEntry
+# snapshotter is stopped at DV-2.
 if 'RANDOM_PHASE_LOGGING_V748' not in h:
     anchor='static mut RANDOM_PHASE_PENDING_V747:bool=false;'
     need(anchor in h,'random phase pending anchor missing')
     h=h.replace(anchor,anchor+'\nstatic mut RANDOM_PHASE_LOGGING_V748:bool=false;',1)
 
-rep_old='    unsafe{if !DEEP_LOGGING{return;}}\n    let phase='
-rep_new='    unsafe{if !RANDOM_PHASE_LOGGING_V748{return;}}\n    let phase='
-h=rep(h,rep_old,rep_new,'random phase gate')
+h=rep(h,'    unsafe{if !DEEP_LOGGING{return;}}\n    let phase=','    unsafe{if !RANDOM_PHASE_LOGGING_V748{return;}}\n    let phase=','random phase gate')
+
+# The FF04 hook can report either byte of LDH a,[FF04], just like the VBlank
+# hook already accepts 02B5/02B6 and 02BD/02BE. Accept both Random byte PCs.
+h=rep(h,'    if pc==0x2f60{','    if pc==0x2f5f || pc==0x2f60{','Random A PC alias')
+h=rep(h,'    }else if pc==0x2f68{','    }else if pc==0x2f67 || pc==0x2f68{','Random S PC alias')
 
 start_old='''        RANDOM_PHASE_PENDING_V747=false;
         RANDOM_PHASE_WORK_V747=RandomPhaseEntryV747::EMPTY;
@@ -46,14 +47,9 @@ h=rep(h,clear_old,clear_new,'random phase clear flag')
 if 'pub fn random_phase_stop_v748()' not in h:
     anchor='pub fn random_phase_count_v747()->u32'
     need(anchor in h,'random phase count anchor missing')
-    h=h.replace(anchor,
-        'pub fn random_phase_stop_v748(){unsafe{RANDOM_PHASE_LOGGING_V748=false;RANDOM_PHASE_PENDING_V747=false;}}\n'+anchor,1)
+    h=h.replace(anchor,'pub fn random_phase_stop_v748(){unsafe{RANDOM_PHASE_LOGGING_V748=false;RANDOM_PHASE_PENDING_V747=false;}}\n'+anchor,1)
 
-# ---------------------------------------------------------------------------
-# 2. Live top-hook F604 value.  The old asub/ssub are samples at rDIV reads and
-#    can be stale throughout the 13-hook plateau; this samples F604 at each
-#    run_frame boundary and at the physical UP trigger.
-# ---------------------------------------------------------------------------
+# 2. Live top-hook F604 sample.
 if 'HOST_FRAME_MCYCLE_V748' not in h:
     anchor='static mut HOST_FRAME_DELTA_V747: u64 = 0;'
     need(anchor in h,'host frame delta anchor missing')
@@ -84,16 +80,12 @@ if 'pub fn host_frame_live_mcycle_v748()' not in h:
     need(anchor in h,'host metrics anchor missing')
     h=h.replace(anchor,anchor+'pub fn host_frame_live_mcycle_v748()->u8{unsafe{HOST_FRAME_MCYCLE_V748}}\n',1)
 
-# ---------------------------------------------------------------------------
-# 3. Robust trace import patch. v747 generated import is split across lines.
-# ---------------------------------------------------------------------------
+# 3. Imports / TraceEntry live sample.
 if 'random_phase_stop_v748' not in t.split('};',1)[0]:
     anchor='    host_frame_metrics_v747, random_phase_count_v747, random_phase_entry_v747,\n'
     need(anchor in t,'trace import anchor missing')
-    t=t.replace(anchor,
-        '    host_frame_live_mcycle_v748, host_frame_metrics_v747, random_phase_count_v747, random_phase_entry_v747, random_phase_stop_v748,\n',1)
+    t=t.replace(anchor,'    host_frame_live_mcycle_v748, host_frame_metrics_v747, random_phase_count_v747, random_phase_entry_v747, random_phase_stop_v748,\n',1)
 
-# TraceEntry carries the live top-hook sample.
 if 'pub hook_live_mcycle_v748: u8,' not in t:
     anchor='    pub ticks_since_last_hook_v747: u64,\n'
     need(anchor in t,'TraceEntry hook delta field missing')
@@ -110,9 +102,7 @@ if 'let hook_live_mcycle_v748=host_frame_live_mcycle_v748();' not in t:
     need(anchor in t,'TraceEntry initializer hook delta missing')
     t=t.replace(anchor,anchor+'            hook_live_mcycle_v748,\n',1)
 
-# ---------------------------------------------------------------------------
-# 4. Physical UP trigger phase snapshot (NPJT2), without changing legacy NPJT.
-# ---------------------------------------------------------------------------
+# 4. Physical UP trigger phase snapshot.
 if 'nptest_trigger_hook_index_v748: u32,' not in t:
     anchor='    nptest_trigger_div: u16,\n'
     need(anchor in t,'nptest field anchor missing')
@@ -146,9 +136,7 @@ trigger_new='''                    self.nptest_trigger_advance = rng_advance();
 if 'self.nptest_trigger_hook_index_v748=fi;' not in t:
     t=rep(t,trigger_old,trigger_new,'nptest trigger phase')
 
-# ---------------------------------------------------------------------------
-# 5. Stop lightweight telemetry only after actual DV/result is visible.
-# ---------------------------------------------------------------------------
+# 5. Stop lightweight Random telemetry after actual result is visible.
 result_old='''                self.probe_result = Some(result);
                 self.probe_active = false;
                 self.practical_terminal_advance = rng_advance();
@@ -163,11 +151,7 @@ result_new='''                self.probe_result = Some(result);
 if '                random_phase_stop_v748();\n                call_log_stop();' not in t:
     t=rep(t,result_old,result_new,'final result stop')
 
-# ---------------------------------------------------------------------------
 # 6. CSV fixes/additions. Legacy sections stay untouched.
-# ---------------------------------------------------------------------------
-# phase_a/phase_s are actual F604 rDIV subticks, not DIV low nibbles; also append
-# live_mcycle to FRAME2.
 header_old='frame2,version,index,advance,hook_frame_index,hook_frame_mod16,hook_tick,ticks_since_last_hook,phase_a,phase_s\\n'
 header_new='frame2,version,index,advance,hook_frame_index,hook_frame_mod16,hook_tick,ticks_since_last_hook,phase_a,phase_s,live_mcycle\\n'
 t=rep(t,header_old,header_new,'FRAME2 header')
@@ -179,7 +163,6 @@ row_new='''let _=write!(line,"FRAME2,V748,{},{},{},{},{},{},{},{},{}\\n",i,e.adv
                 e.ticks_since_last_hook_v747,e.asub,e.ssub,e.hook_live_mcycle_v748);'''
 t=rep(t,row_old,row_new,'FRAME2 row')
 
-# New trigger row is append-only and does not alter legacy NPJT.
 if 'NPJT2,V748' not in t:
     anchor='''        pnp::trace_file_write(line.as_bytes());
 
@@ -196,10 +179,9 @@ if 'NPJT2,V748' not in t:
         // v7.4.7 append-only telemetry schema.'''
     t=t.replace(anchor,add,1)
 
-# Version fixed new telemetry rows.
-t=t.replace('DEEP2,V747,','DEEP2,V748,')
-t=t.replace('PREDEEP2,V747,','PREDEEP2,V748,')
+t=t.replace('DEEP2,V747,','DEEP2,V749,')
+t=t.replace('PREDEEP2,V747,','PREDEEP2,V749,')
 t=t.replace('CONTROL2,V747,','CONTROL2,V748,')
 
 H.write_text(h); T.write_text(t)
-print('Applied v7.4.8 telemetry fix: final Random deep phase + live top-hook F604 + NPJT2 trigger phase')
+print('Applied v7.4.9 telemetry fix: Random PC aliases + final Random phase + live F604')

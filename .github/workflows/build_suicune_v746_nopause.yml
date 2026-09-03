@@ -94,7 +94,8 @@ jobs:
             apply_suicune_confidence_gate_v737.py \
             apply_suicune_dedup_confidence_v738.py \
             audit_suicune_v738.py \
-            apply_suicune_nopause_jtest_v746.py
+            apply_suicune_nopause_jtest_v746.py \
+            fix_suicune_nopause_v746_reset.py
           do
             python3 "$f"
           done
@@ -110,6 +111,7 @@ jobs:
           cp reader_core/src/crystal/practical.rs v746/reader_core/src/crystal/
           cp 3gx/sources/main.c v746/3gx/sources/
           cp apply_suicune_nopause_jtest_v746.py v746/
+          cp fix_suicune_nopause_v746_reset.py v746/
           sha256sum out/default.3gx > v746/sha256.txt
       - uses: actions/upload-artifact@v4
         with:

@@ -34,6 +34,8 @@ jobs:
         run: python3 apply_suicune_future_practical_v761.py
       - name: Apply v7.6.1 navigation and rebind
         run: python3 apply_suicune_future_trace_v761.py
+      - name: Apply v7.6.1 non-overlap window throttle
+        run: python3 apply_suicune_future_throttle_v761.py
       - name: Build v7.6.1
         run: make
       - name: Package v7.6.1
@@ -47,6 +49,7 @@ jobs:
           cp apply_suicune_weighted_root_selector_v760.py v761/
           cp apply_suicune_future_practical_v761.py v761/
           cp apply_suicune_future_trace_v761.py v761/
+          cp apply_suicune_future_throttle_v761.py v761/
           sha256sum out/default.3gx > v761/sha256.txt
       - uses: actions/upload-artifact@v4
         with:

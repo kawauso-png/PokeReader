@@ -1,0 +1,55 @@
+name: Suicune v7.5.1 DeepDIV Direct Build
+
+on:
+  push:
+    branches:
+      - suicune-v751-deepdiv-direct
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - name: Generate v7.5.1
+        run: |
+          sh apply_suicune_deterministic_v37.sh
+          sh apply_suicune_observe_v38.sh
+          sh apply_suicune_observe_v38_post.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, subprocess
+          w=Path('.github/workflows/build_suicune_v750.yml').read_text()
+          a=w.index('          for f in \\\n')
+          b=w.index('          do\n',a)
+          files=re.findall(r'([A-Za-z0-9_]+\.py)',w[a:b])
+          if not files or files[-1] != 'apply_suicune_livephase_rdivany_v750.py':
+              raise SystemExit(f'unexpected v750 chain tail: {files[-3:]}')
+          for f in files:
+              subprocess.run(['python3',f],check=True)
+          subprocess.run(['python3','apply_suicune_deepdiv_direct_v751.py'],check=True)
+          PY
+      - name: Build v7.5.1
+        run: make
+      - name: Package v7.5.1
+        run: |
+          mkdir -p v751/reader_core/src/crystal v751/reader_core/src/pnp v751/3gx/sources
+          cp out/default.3gx v751/PokeReader-Suicune-v751-NOPAUSE-DeepDIVDirect.3gx
+          cp reader_core/src/crystal/hook.rs v751/reader_core/src/crystal/
+          cp reader_core/src/crystal/frame.rs v751/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs v751/reader_core/src/crystal/
+          cp reader_core/src/pnp/bindings.rs v751/reader_core/src/pnp/
+          cp reader_core/src/pnp/hook.rs v751/reader_core/src/pnp/
+          cp 3gx/sources/main.c v751/3gx/sources/
+          cp apply_suicune_deepdiv_direct_v751.py v751/
+          sha256sum out/default.3gx > v751/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v751-NOPAUSE-DeepDIVDirect
+          path: v751
+          retention-days: 7

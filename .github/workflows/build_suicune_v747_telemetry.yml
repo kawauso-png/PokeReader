@@ -95,6 +95,7 @@ jobs:
             apply_suicune_dedup_confidence_v738.py \
             audit_suicune_v738.py \
             apply_suicune_nopause_jtest_v746.py \
+            fix_suicune_nopause_v746_reset.py \
             fix_suicune_telemetry_v747_import.py \
             fix_suicune_telemetry_v747_unsafe.py \
             apply_suicune_telemetry_v747.py
@@ -114,6 +115,7 @@ jobs:
           cp reader_core/src/pnp/hook.rs v747/reader_core/src/pnp/
           cp 3gx/sources/main.c v747/3gx/sources/
           cp apply_suicune_nopause_jtest_v746.py v747/
+          cp fix_suicune_nopause_v746_reset.py v747/
           cp fix_suicune_telemetry_v747_import.py v747/
           cp fix_suicune_telemetry_v747_unsafe.py v747/
           cp apply_suicune_telemetry_v747.py v747/

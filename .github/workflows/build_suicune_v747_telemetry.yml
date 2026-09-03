@@ -1,9 +1,9 @@
-name: Suicune v7.4.7 Telemetry V2 Build
+name: Suicune v7.4.8 Telemetry Deep Fix Build
 
 on:
   push:
     branches:
-      - suicune-v747-telemetry-v2
+      - suicune-v748-telemetry-deepfix
   workflow_dispatch:
 
 jobs:
@@ -16,7 +16,7 @@ jobs:
         run: |
           apt-get update --allow-releaseinfo-change
           apt-get install -y python3
-      - name: Generate v7.4.7 Telemetry V2
+      - name: Generate v7.4.8 Telemetry Deep Fix
         run: |
           sh apply_suicune_deterministic_v37.sh
           sh apply_suicune_observe_v38.sh
@@ -98,30 +98,32 @@ jobs:
             fix_suicune_nopause_v746_reset.py \
             fix_suicune_telemetry_v747_import.py \
             fix_suicune_telemetry_v747_unsafe.py \
-            apply_suicune_telemetry_v747.py
+            apply_suicune_telemetry_v747.py \
+            fix_suicune_telemetry_v748.py
           do
             python3 "$f"
           done
-      - name: Build v7.4.7
+      - name: Build v7.4.8
         run: make
-      - name: Package v7.4.7
+      - name: Package v7.4.8
         run: |
-          mkdir -p v747/reader_core/src/crystal v747/reader_core/src/pnp v747/3gx/sources
-          cp out/default.3gx v747/PokeReader-Suicune-v747-NOPAUSE-TelemetryV2.3gx
-          cp reader_core/src/crystal/hook.rs v747/reader_core/src/crystal/
-          cp reader_core/src/crystal/frame.rs v747/reader_core/src/crystal/
-          cp reader_core/src/crystal/trace.rs v747/reader_core/src/crystal/
-          cp reader_core/src/pnp/bindings.rs v747/reader_core/src/pnp/
-          cp reader_core/src/pnp/hook.rs v747/reader_core/src/pnp/
-          cp 3gx/sources/main.c v747/3gx/sources/
-          cp apply_suicune_nopause_jtest_v746.py v747/
-          cp fix_suicune_nopause_v746_reset.py v747/
-          cp fix_suicune_telemetry_v747_import.py v747/
-          cp fix_suicune_telemetry_v747_unsafe.py v747/
-          cp apply_suicune_telemetry_v747.py v747/
-          sha256sum out/default.3gx > v747/sha256.txt
+          mkdir -p v748/reader_core/src/crystal v748/reader_core/src/pnp v748/3gx/sources
+          cp out/default.3gx v748/PokeReader-Suicune-v748-NOPAUSE-TelemetryDeepFix.3gx
+          cp reader_core/src/crystal/hook.rs v748/reader_core/src/crystal/
+          cp reader_core/src/crystal/frame.rs v748/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs v748/reader_core/src/crystal/
+          cp reader_core/src/pnp/bindings.rs v748/reader_core/src/pnp/
+          cp reader_core/src/pnp/hook.rs v748/reader_core/src/pnp/
+          cp 3gx/sources/main.c v748/3gx/sources/
+          cp apply_suicune_nopause_jtest_v746.py v748/
+          cp fix_suicune_nopause_v746_reset.py v748/
+          cp fix_suicune_telemetry_v747_import.py v748/
+          cp fix_suicune_telemetry_v747_unsafe.py v748/
+          cp apply_suicune_telemetry_v747.py v748/
+          cp fix_suicune_telemetry_v748.py v748/
+          sha256sum out/default.3gx > v748/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v747-NOPAUSE-TelemetryV2
-          path: v747
+          name: PokeReader-Suicune-v748-NOPAUSE-TelemetryDeepFix
+          path: v748
           retention-days: 7

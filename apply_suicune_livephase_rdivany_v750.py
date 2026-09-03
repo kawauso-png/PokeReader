@@ -12,11 +12,6 @@ def rep(s,old,new,msg):
     if n!=1: raise SystemExit(f'v750 {msg}: expected 1 got {n}')
     return s.replace(old,new,1)
 
-# ---------------------------------------------------------------------------
-# A. Broad non-VBlank rDIV read ring. This intentionally does NOT guess the
-# final Random PCs. It records every FF04 read except the normal VBlank A/S
-# sites, while the lightweight event-phase logger is active. Last 128 survive.
-# ---------------------------------------------------------------------------
 if 'pub struct RDivAnyEntryV750' not in h:
     anchor='pub const RANDOM_PHASE_LOG_LEN_V747: usize = 256;'
     need(anchor in h,'random phase anchor missing')
@@ -68,73 +63,52 @@ fn capture_rdiv_any_v750(reader:&Gen2Reader,pc:u16,host_tick:u64,mcycle:u8){
 '''
     h=h.replace(anchor,block+'\n'+anchor,1)
 
-# Reset broad ring with each Suicune probe start/clear.
-if 'RDIV_ANY_COUNT_V750=0;' not in h[h.find('pub fn deep_log_start()'):h.find('pub fn deep_log_stop()')]:
-    old='''        RANDOM_PHASE_WRITE_V747=0;\n        RANDOM_PHASE_COUNT_V747=0;'''
-    new='''        RANDOM_PHASE_WRITE_V747=0;\n        RANDOM_PHASE_COUNT_V747=0;\n        RDIV_ANY_WRITE_V750=0;\n        RDIV_ANY_COUNT_V750=0;'''
-    h=rep(h,old,new,'deep start broad reset')
-# deep_log_clear has same pair; patch second occurrence now.
-if h.count('RDIV_ANY_COUNT_V750=0;')<2:
-    pos=h.find('pub fn deep_log_clear()')
-    need(pos>=0,'deep clear missing')
-    tail=h[pos:]
-    old='''        RANDOM_PHASE_WRITE_V747=0;\n        RANDOM_PHASE_COUNT_V747=0;'''
-    need(old in tail,'deep clear reset anchor missing')
-    tail=tail.replace(old,'''        RANDOM_PHASE_WRITE_V747=0;\n        RANDOM_PHASE_COUNT_V747=0;\n        RDIV_ANY_WRITE_V750=0;\n        RDIV_ANY_COUNT_V750=0;''',1)
-    h=h[:pos]+tail
+# Reset broad ring separately inside deep_log_start and deep_log_clear.
+old='''        RANDOM_PHASE_WRITE_V747=0;\n        RANDOM_PHASE_COUNT_V747=0;'''
+new='''        RANDOM_PHASE_WRITE_V747=0;\n        RANDOM_PHASE_COUNT_V747=0;\n        RDIV_ANY_WRITE_V750=0;\n        RDIV_ANY_COUNT_V750=0;'''
+for fn,next_fn in [('pub fn deep_log_start()','pub fn deep_log_stop()'),('pub fn deep_log_clear()','pub fn deep_log_count()')]:
+    a=h.find(fn); b=h.find(next_fn,a)
+    need(a>=0 and b>a,'reset function range missing '+fn)
+    seg=h[a:b]
+    if 'RDIV_ANY_COUNT_V750=0;' not in seg:
+        need(old in seg,'reset anchor missing '+fn)
+        seg=seg.replace(old,new,1)
+        h=h[:a]+seg+h[b:]
 
 if 'capture_rdiv_any_v750(&reader, pc, host_tick, mcycle);' not in h:
     anchor='    capture_random_phase_v747(&reader, pc, host_tick, mcycle);'
     need(anchor in h,'random phase call missing')
     h=h.replace(anchor,'    capture_rdiv_any_v750(&reader, pc, host_tick, mcycle);\n'+anchor,1)
 
-# ---------------------------------------------------------------------------
-# B. Direct live DIV per top hook. This is a read-only Gen2Reader FF04 sample.
-# Combined with v748 live F604 mcycle it yields a direct 14-bit live phase.
-# ---------------------------------------------------------------------------
 if 'pub hook_live_div_v750: u8,' not in t:
-    anchor='    pub hook_live_mcycle_v748: u8,\n'
-    need(anchor in t,'TraceEntry live mcycle field missing')
+    anchor='    pub hook_live_mcycle_v748: u8,\n'; need(anchor in t,'TraceEntry live mcycle field missing')
     t=t.replace(anchor,anchor+'    pub hook_live_div_v750: u8,\n',1)
-    anchor='        hook_live_mcycle_v748: 0,\n'
-    need(anchor in t,'TraceEntry empty live mcycle missing')
+    anchor='        hook_live_mcycle_v748: 0,\n'; need(anchor in t,'TraceEntry empty live mcycle missing')
     t=t.replace(anchor,anchor+'        hook_live_div_v750: 0,\n',1)
 
 if 'let hook_live_div_v750=reader.div();' not in t:
-    anchor='        let hook_live_mcycle_v748=host_frame_live_mcycle_v748();\n'
-    need(anchor in t,'record live mcycle anchor missing')
+    anchor='        let hook_live_mcycle_v748=host_frame_live_mcycle_v748();\n'; need(anchor in t,'record live mcycle anchor missing')
     t=t.replace(anchor,anchor+'        let hook_live_div_v750=reader.div();\n',1)
-    anchor='            hook_live_mcycle_v748,\n'
-    need(anchor in t,'TraceEntry init live mcycle missing')
+    anchor='            hook_live_mcycle_v748,\n'; need(anchor in t,'TraceEntry init live mcycle missing')
     t=t.replace(anchor,anchor+'            hook_live_div_v750,\n',1)
 
-# Trigger live DIV snapshot.
 if 'nptest_trigger_live_div_v750: u8,' not in t:
-    anchor='    nptest_trigger_live_mcycle_v748: u8,\n'
-    need(anchor in t,'nptest mcycle field missing')
+    anchor='    nptest_trigger_live_mcycle_v748: u8,\n'; need(anchor in t,'nptest mcycle field missing')
     t=t.replace(anchor,anchor+'    nptest_trigger_live_div_v750: u8,\n',1)
-    anchor='            nptest_trigger_live_mcycle_v748: 0,\n'
-    need(anchor in t,'nptest default mcycle missing')
+    anchor='            nptest_trigger_live_mcycle_v748: 0,\n'; need(anchor in t,'nptest default mcycle missing')
     t=t.replace(anchor,anchor+'            nptest_trigger_live_div_v750: 0,\n',1)
-    anchor='        self.nptest_trigger_live_mcycle_v748=0;\n'
-    need(anchor in t,'nptest reset mcycle missing')
+    anchor='        self.nptest_trigger_live_mcycle_v748=0;\n'; need(anchor in t,'nptest reset mcycle missing')
     t=t.replace(anchor,anchor+'        self.nptest_trigger_live_div_v750=0;\n',1)
-    anchor='                    self.nptest_trigger_live_mcycle_v748=host_frame_live_mcycle_v748();\n'
-    need(anchor in t,'nptest trigger mcycle assignment missing')
+    anchor='                    self.nptest_trigger_live_mcycle_v748=host_frame_live_mcycle_v748();\n'; need(anchor in t,'nptest trigger mcycle assignment missing')
     t=t.replace(anchor,anchor+'                    self.nptest_trigger_live_div_v750=reader.div();\n',1)
 
-# Import broad-ring helpers.
 if 'rdiv_any_count_v750' not in t.split('};',1)[0]:
     anchor='    host_frame_live_mcycle_v748, host_frame_metrics_v747, random_phase_count_v747, random_phase_entry_v747, random_phase_stop_v748,\n'
     need(anchor in t,'trace hook import line missing')
     t=t.replace(anchor,'    host_frame_live_mcycle_v748, host_frame_metrics_v747, random_phase_count_v747, random_phase_entry_v747, random_phase_stop_v748, rdiv_any_count_v750, rdiv_any_entry_v750,\n',1)
 
-# ---------------------------------------------------------------------------
-# C. Append-only V750 sections. Do not alter legacy/V748 sections.
-# ---------------------------------------------------------------------------
 if 'RDIVANY,V750' not in t:
-    close='        pnp::trace_file_close();'
-    need(t.count(close)==1,'trace close not unique')
+    close='        pnp::trace_file_close();'; need(t.count(close)==1,'trace close not unique')
     sec=r'''        line.clear();
         let _=write!(line,"\nrdivany,version,index,advance,pc,div,mcycle,host_tick,state,add,sub\n");
         pnp::trace_file_write(line.as_bytes());

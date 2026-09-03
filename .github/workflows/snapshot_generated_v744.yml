@@ -1,0 +1,32 @@
+name: Snapshot generated v7.4.4 for v7.6.0
+on:
+  push:
+    branches: [suicune-v760-weighted-root-selector]
+  workflow_dispatch:
+jobs:
+  snapshot:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update --allow-releaseinfo-change && apt-get install -y python3
+      - name: Generate v744
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('.github/workflows/build_suicune_stage3_v744.yml').read_text(); marker='      - name: Generate Stage3 v7.4.4\n        run: |\n'; a=s.index(marker)+len(marker); b=s.index('      - name: Build v7.4.4',a)
+          body=s[a:b]; Path('/tmp/gen.sh').write_text('\n'.join((x[10:] if x.startswith('          ') else x) for x in body.splitlines())+'\n')
+          PY
+          sh /tmp/gen.sh
+      - name: Package generated sources
+        run: |
+          mkdir -p snap/reader_core/src/crystal snap/3gx/sources
+          cp reader_core/src/crystal/practical.rs snap/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs snap/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs snap/reader_core/src/crystal/
+          cp 3gx/sources/main.c snap/3gx/sources/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: generated-v744-for-v760
+          path: snap
+          retention-days: 2

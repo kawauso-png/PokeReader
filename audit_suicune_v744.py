@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
+# Keep the build workflow compact: normalize the generated BENCH formatter
+# immediately before auditing/compiling it.
+fix=Path('fix_suicune_v744_csv_format.py').read_text()
+exec(compile(fix,'fix_suicune_v744_csv_format.py','exec'),globals())
+
 t=Path('reader_core/src/crystal/trace.rs').read_text()
 m=Path('3gx/sources/main.c').read_text()
 

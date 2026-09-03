@@ -1,0 +1,31 @@
+name: Inspect v7.4.4 bucket API
+on:
+  push:
+    branches: [suicune-v759-generated-api-inspect-final]
+  workflow_dispatch:
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - run: apt-get update --allow-releaseinfo-change && apt-get install -y python3
+      - name: Generate v744
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('.github/workflows/build_suicune_stage3_v744.yml').read_text(); marker='      - name: Generate Stage3 v7.4.4\n        run: |\n'; a=s.index(marker)+len(marker); b=s.index('      - name: Build v7.4.4',a)
+          body=s[a:b]; Path('/tmp/gen.sh').write_text('\n'.join((x[10:] if x.startswith('          ') else x) for x in body.splitlines())+'\n')
+          PY
+          sh /tmp/gen.sh
+      - name: Inspect
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('reader_core/src/crystal/practical.rs').read_text()
+          for key in ['const BUCKET_LANES','const BUCKET_','fn nearest_bucket_lane','pub fn adaptive_bucket_radius']:
+              i=p.find(key); print('\n===',key,'===\n',p[i:i+5000] if i>=0 else 'NOT FOUND')
+          m=Path('3gx/sources/main.c').read_text()
+          for key in ['SUICUNE_ROOT_LOCK_MAX_STEPS','suicune_root_lock_active','suicune_control_pause_cell()','search_suicune_practical_targets();']:
+              i=m.find(key); print('\n=== MAIN',key,'===\n',m[max(0,i-1500):i+5000] if i>=0 else 'NOT FOUND')
+          PY

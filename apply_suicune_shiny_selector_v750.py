@@ -19,20 +19,13 @@ p = P.read_text()
 #   * Exact-2F and PokeReader Pause are allowed as input-timing assistance
 #   * NO RNG/DIV/DV writes
 #   * NO host-tick waiting to choose START/Resume phase
-#   * a failed gate returns to the normal VC-reset retry workflow
-#
-# v7.3.8 already supplies the confidence-gated adaptive shiny evaluator and
-# B40/B716/B717 revalidation. v7.5.0 keeps that conservative evaluator for the
-# first real shiny attempts, but makes every inherited host-phase control
-# telemetry-only. Every successful encounter therefore comes from ordinary
-# game progress rather than waiting inside Pause for a chosen system-tick phase.
+#   * a failed live gate returns to a VC-reset retry, never donor LEARN
 # -------------------------------------------------------------------------
 
-# The generated v7.3.8 source contains three tight host-tick waits inherited
-# from the START/Resume/cadence causal experiments. Remove all three while
-# retaining target/actual tick capture for diagnostics. Failing closed here is
-# intentional: if the generator later adds/removes one, the production build
-# must be reviewed instead of silently changing timing policy.
+# v7.3.8 contains three tight host-tick waits inherited from START/Resume/
+# cadence causal experiments. Keep their telemetry but remove their causal
+# effect. Failing closed if the count changes prevents accidental phase
+# manipulation in a future production build.
 wait_pat = re.compile(r'\s*while\s*\(\s*svcGetSystemTick\(\)\s*<\s*target\s*\)\s*\{\s*\}')
 waits = list(wait_pat.finditer(m))
 if len(waits) != 3:
@@ -41,23 +34,17 @@ m = wait_pat.sub('\n                    /* v7.5 natural phase: telemetry target 
 if re.search(r'while\s*\(\s*svcGetSystemTick\(\)\s*<', m):
     raise SystemExit('v750 found an unexpected remaining host-tick wait')
 
-# Make the build identity unmistakable on the live selector screens while
-# preserving the existing field layout and hot-path logic.
+# Production identity.
 t = t.replace('S738 A-EPOCH SCAN', 'S750 SHINY SCAN')
 t = t.replace('S738 CONF SHINY SCAN', 'S750 SHINY SCAN')
 t = t.replace('S738 SHINY LOCK', 'S750 SHINY READY')
 t = t.replace('BUCKET738,V738,', 'BUCKET750,V750,')
+t = t.replace('S732 NEED A EPOCH', 'S750 NEED A EPOCH')
+t = t.replace('S719 RESET RECOMMENDED', 'S750 VC RESET')
+t = t.replace('RESET VC MANUALLY', 'R -> VC RESET')
 m = m.replace('S738', 'S750')
 
-# Later v7.x diagnostics inherited the reset wording from v7.1.7. Keep result
-# checkpoint failures paused, so no unwanted game frame is released before the
-# user chooses VC Reset. Search errors E2/E3 already use the v6.5.7
-# host_request_resume() path and are immediately reset-friendly.
-t = t.replace('S717 RESET RECOMMENDED', 'S750 VC RESET')
-
-# Replace stale causal-control labels if present. Selector/timing fields remain
-# in telemetry, but no longer influence START/Resume because the host waits are
-# gone.
+# Stale causal-control labels are telemetry-only in v7.5.
 for old in (
     'ABS SLOT{} FIXED',
     'ABS SLOT{} X=TOGGLE',
@@ -65,15 +52,46 @@ for old in (
 ):
     t = t.replace(old, 'NATURAL RESUME')
 
+# -------------------------------------------------------------------------
+# Result-gate policy.
+# v7.3.8 is an analysis build and intentionally enters Stage3 LEARN when a
+# candidate's observed POST/B716/B717 leaves the predicted path. For an actual
+# shiny attempt that is the wrong behavior: the selected shiny hypothesis has
+# failed, so stop before wasting the rest of the encounter and retry via VC
+# Reset. Known-post rebind remains allowed in the legacy empirical paths; if a
+# rebind succeeds it is still a real observed path and can safely continue.
+# -------------------------------------------------------------------------
+
+# Bucket-model rel40: any mismatch invalidates this selected candidate.
+old = 'if !ok{if post.valid&&post.best_score==0{self.enter_stage3_learn(post.proto,post.rot40)}else{self.practical_fail(1)}return}'
+new = 'if !ok{self.practical_fail(1);return}'
+if t.count(old) != 1:
+    raise SystemExit(f'v750 bucket B40 learn block count {t.count(old)}')
+t = t.replace(old, new, 1)
+
+# Bucket-model B716/B717: reset instead of entering donor learning.
+old716 = 'if e.state!=self.practical_expected716_state||e.div!=self.practical_expected716_div{self.enter_stage3_learn(self.practical_post_proto,self.practical_post_rot);return}'
+old717 = 'if e.state!=self.practical_expected717_state||e.div!=self.practical_expected717_div{self.enter_stage3_learn(self.practical_post_proto,self.practical_post_rot);return}'
+if t.count(old716) != 1 or t.count(old717) != 1:
+    raise SystemExit(f'v750 bucket late learn blocks counts {t.count(old716)}/{t.count(old717)}')
+t = t.replace(old716, 'if e.state!=self.practical_expected716_state||e.div!=self.practical_expected716_div{self.practical_fail(2);return}', 1)
+t = t.replace(old717, 'if e.state!=self.practical_expected717_state||e.div!=self.practical_expected717_div{self.practical_fail(3);return}', 1)
+
+# Empirical and legacy exact paths may first salvage a mismatch by rebinding to
+# an actually observed known POST. If rebind fails, reset; never switch to LEARN.
+old = 'if post.valid&&post.best_score==0{self.enter_stage3_learn(post.proto,post.rot40)}else{self.practical_fail(1)}return'
+if t.count(old) != 1:
+    raise SystemExit(f'v750 empirical B40 learn block count {t.count(old)}')
+t = t.replace(old, 'self.practical_fail(1);return', 1)
+old = 'if post.valid&&post.best_score==0{self.enter_stage3_learn(post.proto,post.rot40);return}self.practical_fail(1);return'
+if t.count(old) != 1:
+    raise SystemExit(f'v750 exact B40 learn block count {t.count(old)}')
+t = t.replace(old, 'self.practical_fail(1);return', 1)
+
 marker = 'BUCKET750,V750,'
 if marker not in t:
     raise SystemExit('v750 bucket CSV version marker missing')
 
-# Keep the confidence evaluator and all three live verification checkpoints.
-# The old v7.1.6 helper name is intentionally NOT required here: later cleanup
-# patches inline/rename that reset-epoch implementation, while the generated
-# chain and v7.3.8 audit already verify the fresh-scan behavior. For production
-# retry we require the actual host resume/reset path plus all result gates.
 required = [
     'pub fn evaluate_adaptive_bucket(',
     'primary_shiny',
@@ -83,15 +101,23 @@ required = [
     'practical_expected717_state',
     'fn practical_fail',
     'host_request_resume',
+    'S750 SHINY READY',
+    'S750 VC RESET',
 ]
 blob = p + '\n' + t + '\n' + m
 missing = [x for x in required if x not in blob]
 if missing:
     raise SystemExit(f'v750 required production markers missing: {missing}')
 
-# Narrow policy guard: this selector build must not contain a direct write to
-# the Japanese Suicune/Celebi DV watch bytes. The normal reader remains
-# read-only at those locations.
+# No analysis-only LEARN transition may remain inside the active practical gate.
+gate_a = t.find('if self.practical_active{')
+gate_b = t.find('if self.probe_active && window[2] == SUICUNE_SPECIES', gate_a)
+if gate_a < 0 or gate_b < 0:
+    raise SystemExit('v750 could not isolate practical result gate')
+if 'enter_stage3_learn' in t[gate_a:gate_b]:
+    raise SystemExit('v750 practical result gate still contains LEARN transition')
+
+# Narrow policy guard for the Japanese DV watch bytes.
 for forbidden in (
     'write_u16(0xd23d',
     'write_u8(0xd23d',
@@ -104,4 +130,4 @@ for forbidden in (
 M.write_text(m)
 T.write_text(t)
 P.write_text(p)
-print('Applied Suicune v7.5.0 Shiny Selector: v738 confidence gates + natural phase + VC-reset retry')
+print('Applied Suicune v7.5.0 Shiny Selector: natural phase + reset-only live gates + VC retry')

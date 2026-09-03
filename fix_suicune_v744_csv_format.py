@@ -2,10 +2,14 @@
 from pathlib import Path
 p=Path('reader_core/src/crystal/trace.rs')
 s=p.read_text()
-old='BENCH,V744,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:04X}'
-new='BENCH,V744,{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:04X}'
-if s.count(old)!=1:
-    raise SystemExit(f'v744 csv format anchor count {s.count(old)}')
-s=s.replace(old,new,1)
+start=s.find('BENCH,V744,')
+if start<0:
+    raise SystemExit('v744 BENCH row not found')
+# The format literal continues to the escaped newline before the closing quote.
+end=s.find('\\n",',start)
+if end<0:
+    raise SystemExit('v744 BENCH row terminator not found')
+new='BENCH,V744,' + ','.join(['{}']*22 + ['{:04X}']*4)
+s=s[:start]+new+s[end:]
 p.write_text(s)
-print('Fixed v7.4.4 BENCH CSV format: 26 fields / 26 arguments')
+print('Fixed v7.4.4 BENCH CSV format by semantic row bounds: 26 fields / 26 arguments')

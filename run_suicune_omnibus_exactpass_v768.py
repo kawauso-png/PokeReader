@@ -21,4 +21,14 @@ new = '''def rep(src, old, new, label):
 if s.count(old) != 1:
     raise SystemExit('v768 wrapper: rep() definition mismatch')
 s = s.replace(old, new, 1)
+
+# Keep the omnibus summary at exactly 22 columns / 22 Rust arguments.
+# This is patched at source level before executing the generator so rustc and
+# the safety audit both see the same final format string.
+bad_omni = 'OMNI,V768,{:04X},{:02X},{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{},{},{},{},{},{},{},{}'
+good_omni = 'OMNI,V768,{:04X},{:02X},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{},{},{},{},{},{},{}'
+if s.count(bad_omni) != 1:
+    raise SystemExit(f'v768 wrapper: OMNI format mismatch ({s.count(bad_omni)})')
+s = s.replace(bad_omni, good_omni, 1)
+
 exec(compile(s, str(p), 'exec'), {'__name__': '__main__', '__file__': str(p)})

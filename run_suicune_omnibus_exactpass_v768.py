@@ -32,3 +32,20 @@ if s.count(bad_omni) != 1:
 s = s.replace(bad_omni, good_omni, 1)
 
 exec(compile(s, str(p), 'exec'), {'__name__': '__main__', '__file__': str(p)})
+
+# Make the live UI lineage unambiguous.  Older diagnostic internals remain
+# intentionally versioned in their CSV rows, but the operator-facing status
+# must identify the actual 3GX that is running.
+tp = Path('reader_core/src/crystal/trace.rs')
+t = tp.read_text()
+ui_replacements = {
+    'pnp::println!("S766 PHASE PROBE SCAN");': 'pnp::println!("V768 OMNIBUS SCAN");',
+    'pnp::println!("S766 REL40 CAPTURED");': 'pnp::println!("V768 REL40 CAPTURED");',
+    'pnp::println!("S766 A/r10 B76 LOCK");': 'pnp::println!("V768 A/r10 B76 LOCK");',
+    'pnp::println!("S766 RESET RECOMMENDED");': 'pnp::println!("V768 RESET RECOMMENDED");',
+}
+for old_ui, new_ui in ui_replacements.items():
+    if t.count(old_ui) != 1:
+        raise SystemExit(f'v768 wrapper: UI marker mismatch for {old_ui!r} ({t.count(old_ui)})')
+    t = t.replace(old_ui, new_ui, 1)
+tp.write_text(t)

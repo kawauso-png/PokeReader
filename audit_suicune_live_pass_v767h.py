@@ -69,12 +69,27 @@ for forbidden, label in [
 ]:
     ok(forbidden not in control, 'no ' + label + ' in closed-loop control path')
 
-# Also ensure the only controller-side game reads are observational; no direct
-# rJOYP/joy state substitution was added in trace or the exact2 observer.
 ok('0xff00' not in control and 'FF00' not in control, 'no rJOYP substitution in controller')
 ok('joy[JOY_HJOY_DOWN]' in observer, 'Exact2 decision comes from observed FFA8')
 ok('pnp::request_pause();' in observer, 'controller actuator is Pause only')
 
+# Omnibus requirement: rel40 is diagnostic, never the terminal condition.
+rel40_anchor = 'let g=practical::evaluate_actual_post_inverse_v763(post.proto,post.rot40,e.state,e.div,ai,si);'
+a = T.find(rel40_anchor)
+if a < 0:
+    raise SystemExit('AUDIT H FAIL: rel40 inverse evaluation missing')
+b = T.find('\n            }', a)
+if b < 0:
+    raise SystemExit('AUDIT H FAIL: cannot isolate rel40 block')
+rel40 = T[a:b]
+ok('self.v763_gate_models=g.models' in rel40 and 'self.v763_gate_evaluated=g.evaluated' in rel40, 'rel40 inverse telemetry retained')
+ok('self.practical_active=false;' in rel40, 'rel40 hands control back to generic native trace')
+for term in ['self.practical_fail(10)', 'self.practical_fail(11)', 'self.practical_fail(12)', 'self.practical_fail(13)']:
+    ok(term not in rel40, 'rel40 has no terminal ' + term)
+ok('if !post.valid||post.best_score!=0{self.practical_miss=12;self.practical_active=false;return}' in T, 'POST-classification miss is non-terminal')
+ok('if self.probe_active && window[2] == SUICUNE_SPECIES' in T, 'generic native Suicune result detector remains active')
+ok('self.probe_active = false;' in T, 'generic result path owns final probe stop')
+
 print('AUDIT H PASS: closed-loop Exact2 uses observation + Pause/Resume + physical UP release only')
 print('AUDIT H PASS: no HID/FF00/GB-RAM/RNG/DIV/DV input or state substitution')
-print('AUDIT H PASS: trace continues past input calibration into normal Suicune result path')
+print('AUDIT H PASS: rel40 is diagnostic/non-terminal and native Suicune final DV remains observable')

@@ -20,6 +20,110 @@ c = rep(c, 'if ((*pa & KEY_DUP) != 0)',
 c = rep(c, 'if (*pa != saved)',
         'if (*pa != saved || *g_key_addr != saved)',
         'restore dual-view condition')
+
+# Fail closed on a sequencing fault. A second begin while a previous mask is
+# still active must never be silently accepted as a valid trial. Restore the
+# exact old word with dual-view verification, mark begin failure, and abort the
+# new mask. The next Rust hook will pause the trial.
+c = rep(c,
+'''  // Never stack masks. Restore the previous exact word first.
+  if (g_up_mask_active)
+  {
+    vu32 *old_pa = (vu32 *)PA_FROM_VA_PTR(g_key_addr);
+    *old_pa = g_up_mask_saved;
+    g_up_mask_active = false;
+  }
+''',
+'''  // Stacking is a sequencing fault. Restore exactly, verify, and fail this
+  // begin so a broken hook order can never masquerade as a valid timing run.
+  if (g_up_mask_active)
+  {
+    if (g_key_addr == 0)
+    {
+      g_up_mask_restore_failures++;
+      g_up_mask_begin_failures++;
+      return 0;
+    }
+    vu32 *old_pa = (vu32 *)PA_FROM_VA_PTR(g_key_addr);
+    u32 old_saved = g_up_mask_saved;
+    *old_pa = old_saved;
+    if (*old_pa != old_saved || *g_key_addr != old_saved)
+    {
+      g_up_mask_restore_failures++;
+      g_up_mask_begin_failures++;
+      return 0;
+    }
+    g_up_mask_active = false;
+    g_up_mask_begin_failures++;
+    return 0;
+  }
+''', 'stacking fail closed')
+
+# If a mask write fails verification, restoration of the original word must
+# also be verified. If restoration itself fails, keep active=true so later
+# restore calls continue retrying rather than forgetting an uncertain mask.
+c = rep(c,
+'''  if (((*pa | *g_key_addr) & KEY_DUP) != 0)
+  {
+    g_up_mask_begin_failures++;
+    *pa = original;
+      return 0;
+  }
+''',
+'''  if (((*pa | *g_key_addr) & KEY_DUP) != 0)
+  {
+    g_up_mask_begin_failures++;
+    *pa = original;
+    if (*pa != original || *g_key_addr != original)
+    {
+      g_up_mask_restore_failures++;
+      g_up_mask_saved = original;
+      g_up_mask_active = true;
+    }
+    return 0;
+  }
+''', 'failed-mask restoration verification')
+
+c = rep(c,
+'''  if (g_key_addr == 0)
+  {
+    g_up_mask_restore_failures++;
+    g_up_mask_active = false;
+    return 0;
+  }
+''',
+'''  if (g_key_addr == 0)
+  {
+    // Preserve active=true: the exact saved word is still pending restore.
+    g_up_mask_restore_failures++;
+    return 0;
+  }
+''', 'restore null-address retryability')
+
+c = rep(c,
+'''  u32 saved = g_up_mask_saved;
+  *pa = saved;
+  g_up_mask_active = false;
+
+  if (*pa != saved || *g_key_addr != saved)
+  {
+    g_up_mask_restore_failures++;
+    return 0;
+  }
+  return 1;
+''',
+'''  u32 saved = g_up_mask_saved;
+  *pa = saved;
+
+  if (*pa != saved || *g_key_addr != saved)
+  {
+    // Keep active=true so the next hook/plugin scan retries exact restore.
+    g_up_mask_restore_failures++;
+    return 0;
+  }
+  g_up_mask_active = false;
+  return 1;
+''', 'restore active cleared only after verification')
 P.write_text(c)
 
 # Rust hook telemetry: observe Crystal's own hJoypadDown (FF9A) after each
@@ -193,4 +297,4 @@ new_args = '''            lp.first_remask_mcycle,
 t = rep(t, old_args, new_args, 'CSV game args')
 T.write_text(t)
 
-print('Applied v7.6.7c: exact 16/2/4 FF9A windows + per-trial HID failure telemetry')
+print('Applied v7.6.7c: exact 16/2/4 FF9A windows + retryable fail-closed HID restore telemetry')

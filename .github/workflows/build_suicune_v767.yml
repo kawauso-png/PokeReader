@@ -39,7 +39,7 @@ jobs:
       - name: Apply v7.6.6 phase utility probe
         run: python3 apply_suicune_phase_utility_probe_v766.py
       - name: Apply v7.6.7 live pass jitter probe
-        run: python3 apply_suicune_live_pass_jitter_probe_v767.py
+        run: python3 run_suicune_live_pass_jitter_probe_v767.py
       - name: Build v7.6.7
         run: make
       - name: Package v7.6.7
@@ -54,6 +54,7 @@ jobs:
           cp 3gx/sources/main.c v767/3gx/sources/
           cp 3gx/includes/pokereader.h v767/3gx/includes/
           cp apply_suicune_live_pass_jitter_probe_v767.py v767/
+          cp run_suicune_live_pass_jitter_probe_v767.py v767/
           sha256sum out/default.3gx > v767/sha256.txt
       - uses: actions/upload-artifact@v4
         with:

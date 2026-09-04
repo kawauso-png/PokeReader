@@ -1,8 +1,7 @@
 from pathlib import Path
 
-# v7.6.7 is maintained in the apply script. Keep the wrapper limited to two
-# generation-time normalizations that depend on the exact generated v7.6.6
-# tree rather than changing the live-pass design itself.
+# v7.6.7 is maintained in the apply script. Keep the wrapper limited to
+# generation-time hardening that depends on the exact generated v7.6.6 tree.
 
 # hid.c needs the project declaration for svcConvertVAToPA used by common.h's
 # physical-alias helper and by the v7.6.7 capability check.
@@ -50,6 +49,17 @@ insert = (
 t = t[:line_end] + '\\n' + insert + t[line_end:]
 
 """
-
 source = source[:start] + replacement + source[end:]
 exec(compile(source, str(path), 'exec'), {'__name__': '__main__'})
+
+# Fail-closed preflight: while the game is still paused and physical UP is
+# already held, prove that the HID word can really be cleared and restored.
+# This prevents the first live rJOYP read from being the first write test.
+main_path = Path('3gx/sources/main.c')
+c = main_path.read_text()
+old = '''                if (!suicune_live_pass_ready)\n                {\n                    svcSleepThread(1000000);\n                    continue;\n                }\n                suicune_wait_up_after_b = false;\n'''
+new = '''                if (!suicune_live_pass_ready)\n                {\n                    svcSleepThread(1000000);\n                    continue;\n                }\n                // v7.6.7 preflight occurs while still frozen. The game cannot\n                // observe this temporary clear; resume only after exact restore.\n                if (!hid_up_mask_begin())\n                {\n                    suicune_live_pass_ready = false;\n                    svcSleepThread(1000000);\n                    continue;\n                }\n                if (!hid_up_mask_restore())\n                {\n                    suicune_live_pass_ready = false;\n                    svcSleepThread(1000000);\n                    continue;\n                }\n                suicune_wait_up_after_b = false;\n'''
+if c.count(old) != 1:
+    raise SystemExit(f'wrapper: stage2 preflight anchor count {c.count(old)}')
+c = c.replace(old, new, 1)
+main_path.write_text(c)

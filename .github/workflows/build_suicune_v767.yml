@@ -1,0 +1,105 @@
+name: Suicune v7.6.7 W-Eff Repeatability Probe Build
+
+on:
+  push:
+    branches:
+      - suicune-v767-weff-repeatability-probe
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - name: Generate v7.4.4 baseline
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('.github/workflows/build_suicune_stage3_v744.yml').read_text()
+          marker='      - name: Generate Stage3 v7.4.4\n        run: |\n'
+          a=s.index(marker)+len(marker)
+          b=s.index('      - name: Build v7.4.4',a)
+          body=s[a:b]
+          Path('/tmp/gen_v744.sh').write_text('\n'.join((x[10:] if x.startswith('          ') else x) for x in body.splitlines())+'\n')
+          PY
+          sh /tmp/gen_v744.sh
+      - name: Apply v7.6.0 weighted selector base
+        run: python3 apply_suicune_weighted_root_selector_v760.py
+      - name: Apply v7.6.2 multi-PRE inverse selector
+        run: python3 apply_suicune_multipre_inverse_v762.py
+      - name: Apply v7.6.3 rel40 inverse gate
+        run: python3 apply_suicune_rel40_inverse_gate_v763.py
+      - name: Apply v7.6.4 rel40 index fallback
+        run: python3 apply_suicune_rel40_index_fallback_v764.py
+      - name: Apply v7.6.6 phase utility probe
+        run: python3 apply_suicune_phase_utility_probe_v766.py
+      - name: Apply v7.6.7 W-eff repeatability probe
+        run: python3 apply_suicune_weff_probe_v767.py
+      - name: Verify v7.6.7 invariants
+        run: |
+          grep -q 'if ai != 10694 || si != 9981' reader_core/src/crystal/trace.rs
+          grep -q 'WPROBE,V767' reader_core/src/crystal/trace.rs
+          grep -q 'suicune_phase_slot = 14U' 3gx/sources/main.c
+          grep -q 'Resume M14 fixed' 3gx/sources/main.c
+      - name: Build v7.6.7
+        run: make
+      - name: Package v7.6.7
+        run: |
+          mkdir -p v767/reader_core/src/crystal v767/3gx/sources
+          cp out/default.3gx v767/PokeReader-Suicune-v767-WEffRepeatabilityProbe.3gx
+          cp reader_core/src/crystal/practical.rs v767/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs v767/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs v767/reader_core/src/crystal/
+          cp 3gx/sources/main.c v767/3gx/sources/
+          cp apply_suicune_weighted_root_selector_v760.py v767/
+          cp apply_suicune_multipre_inverse_v762.py v767/
+          cp apply_suicune_rel40_inverse_gate_v763.py v767/
+          cp apply_suicune_rel40_index_fallback_v764.py v767/
+          cp apply_suicune_phase_utility_probe_v766.py v767/
+          cp apply_suicune_weff_probe_v767.py v767/
+          cat > v767/README-WEFF.txt <<'EOF'
+          Suicune v7.6.7 W-Eff Repeatability Probe
+
+          Purpose:
+          Measure production-relevant landing spread under the strongest naturally reproducible recorded context.
+
+          Fixed conditions:
+          - PRE A/r10
+          - bucket 76
+          - exact tracker indices AI=10694 / SI=9981
+          - START absolute host M0
+          - Resume absolute host M14 (immutable; X/Y cannot change it)
+          - physical UP + Exact 2F
+          - automatic resume
+          - stop at actual rel40
+          - no RNG/DIV/DV/save writes
+
+          Collection:
+          1. At Suicune setup, start the live scan with Y+DOWN.
+          2. Wait for S767 A/r10 B76 IDX and AI10694 SI9981 M14.
+          3. Press B, release it, then hold physical UP as in the existing Exact2F procedure.
+          4. Let the tool run Exact2F and auto-resume. It stops at rel40.
+          5. Save the CSV using the existing trace save operation.
+          6. Reset/rearm and repeat for 10 valid runs.
+
+          CSV rows of interest:
+          - SUICUNE: target root/state/DIV/AI/SI/AP4/SP4
+          - MAP / EARLY: J and post1 phase
+          - POSTFP: actual POST proto/rotation
+          - RPH: Resume target/actual/error ticks
+          - WPROBE,V767: compact fixed-context marker and rel40 result
+
+          Analyze W_eff using J (or post1-pre normalized phase), not raw RPH error_ticks.
+          Report total J span, floor distribution, within-floor residual spans, circular residual span, and POST distribution.
+          EOF
+          sha256sum out/default.3gx > v767/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v767-WEffRepeatabilityProbe
+          path: v767
+          retention-days: 7

@@ -12,59 +12,100 @@ def forbid(text, needle, label):
         raise SystemExit(f'AUDIT FAIL: forbidden {label}: {needle!r}')
 
 
+def braced_block(text, marker):
+    a = text.index(marker)
+    b = text.index('{', a)
+    depth = 0
+    for i in range(b, len(text)):
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return text[a:i + 1]
+    raise SystemExit(f'AUDIT FAIL: unclosed block for {marker}')
+
+
 h = Path('reader_core/src/crystal/hook.rs').read_text()
 c = Path('3gx/sources/main.c').read_text()
+hidc = Path('3gx/sources/hid.c').read_text()
+hidh = Path('3gx/includes/hid.h').read_text()
 p = Path('3gx/includes/pokereader.h').read_text()
 l = Path('reader_core/src/lib.rs').read_text()
+bind = Path('reader_core/src/pnp/bindings.rs').read_text()
+pin = Path('reader_core/src/pnp/input.rs').read_text()
 t = Path('reader_core/src/crystal/trace.rs').read_text()
 
-# 1) GB-read filter and zero-shadow safety.
-need(h, 'const JOY_HRAM_FIRST: u32 = 0xff98;', 'joy range start')
-need(h, 'const JOY_HRAM_LAST: u32 = 0xff9f;', 'joy range end')
-need(h, 'const ZERO_SHADOW_GB: u16 = 0xff97;', 'FF97-only shadow')
-forbid(h, 'for gb in [0xff97u16, 0xff9cu16, 0xff98u16]', 'joy-byte shadow fallback')
-need(h, 'pub fn arm_live_pass_probe() -> bool', 'fail-closed arm result')
-need(h, 'LIVE_PASS_ARMED = ok;', 'arm only on valid shadow')
-need(h, 'fn gb_read_mem(regs: &mut [u32]', 'mutable pre-dispatch regs')
-need(h, 'let requested = regs[0];', 'preserved original GB address')
-need(h, 'live_pass_filter_read(regs, requested);', 'joy filter invocation')
-need(h, 'pub pass_advances: u8,', 'distinct passed-advance telemetry')
-need(h, 'LIVE_PASS.last_pass_advance != now', 'distinct pass-advance accounting')
+# 1) HID mask must be reversible and must never synthesize UP.
+need(hidc, 'u32 hid_up_mask_begin()', 'HID mask begin')
+need(hidc, 'u32 original = *g_key_addr;', 'save exact HID word')
+need(hidc, '*pa = original & ~KEY_DUP;', 'clear only UP')
+need(hidc, 'g_up_mask_saved = original;', 'remember exact HID word')
+need(hidc, '*pa = saved;', 'restore exact HID word')
+need(hidc, 'u32 hid_up_mask_restore()', 'HID restore')
+need(hidc, 'u32 hid_up_mask_capable()', 'HID capability gate')
+need(hidc, 'PA_FROM_VA_PTR(g_key_addr)', 'physical alias access')
+forbid(hidc, '| KEY_DUP', 'synthetic/injected UP')
+forbid(hidc, 'g_up_mask_saved |', 'modified restore word')
+need(hidh, 'u32 hid_up_mask_begin();', 'HID header begin')
+need(hidh, 'u32 hid_up_mask_restore();', 'HID header restore')
+need(c, 'hid_up_mask_restore();\n        scan_input();', 'restore before paused HID scan')
 
-# The new live-pass block must observe/redirect only. No direct memory/RNG/DIV mutation.
-block_a = h.index('// ---- v7.6.7 continuous physical-UP pass probe')
-block_b = h.index('// Diagnostics for the legacy cycle hook', block_a)
-live_block = h[block_a:block_b]
-forbid(live_block, 'pnp::write(', 'memory write in live-pass block')
-forbid(live_block, 'RNG_ADVANCE =', 'RNG advance mutation in live-pass block')
-forbid(live_block, 'ADIV =', 'ADIV mutation in live-pass block')
-forbid(live_block, 'SDIV =', 'SDIV mutation in live-pass block')
-need(live_block, 'regs[0] = LIVE_PASS.zero_addr as u32;', 'read-address redirect')
+# 2) Rust bridge must expose only mask/restore status, not game-memory writes.
+need(bind, 'pub fn hid_up_mask_begin() -> u32;', 'Rust HID begin binding')
+need(bind, 'pub fn hid_up_mask_restore() -> u32;', 'Rust HID restore binding')
+need(pin, 'pub fn hid_mask_up_begin() -> bool', 'safe HID begin wrapper')
+need(pin, 'pub fn hid_mask_up_restore() -> bool', 'safe HID restore wrapper')
 
-# 2) C control must be B-arm -> UP-only continuous resume, fail closed.
-need(p, 'u32 arm_suicune_live_pass();', 'C ABI readiness return')
-need(l, 'pub extern "C" fn arm_suicune_live_pass() -> u32', 'Rust ABI readiness return')
-need(c, 'static bool suicune_live_pass_ready = false;', 'persistent live-pass readiness')
-need(c, 'suicune_live_pass_ready = arm_suicune_live_pass() != 0;', 'readiness capture on B arm')
+# 3) Live pass acts only on hardware rJOYP (FF00), never hJoy* HRAM.
+need(h, 'const RJOYP_ADDR: u32 = 0xff00;', 'rJOYP-only target')
+forbid(h, 'JOY_HRAM_FIRST', 'hJoy range masking')
+forbid(h, 'ZERO_SHADOW_GB', 'GB shadow byte')
+forbid(h, 'regs[0] =', 'GB address redirect')
+need(h, 'live_pass_restore_previous_mask();', 'restore at every GB read hook')
+need(h, 'live_pass_filter_rjoy(requested);', 'rJOYP filter')
+need(h, 'if requested != RJOYP_ADDR', 'rJOYP-only guard')
+need(h, 'pnp::hid_mask_up_begin()', 'temporary HID clear')
+need(h, 'pnp::hid_mask_up_restore()', 'temporary HID restore')
+need(h, 'base.wrapping_add(1 + LIVE_MASK_FRAMES)', '16 full masked input frames before pass')
+need(h, 'const LIVE_PASS_FRAMES: u32 = 2;', '2F pass width')
+need(h, 'pub passed_advances: u8,', 'distinct pass advance counter')
+need(h, 'LIVE_PASS.last_pass_advance != now', 'distinct pass advance accounting')
+need(h, 'Gen2Reader::crystal().div();', 'direct pass-time rDIV')
+need(h, 'first_pass_phase4', 'direct pass-time phase4')
 
-stage_a = c.index('if (suicune_wait_up_after_b)')
-stage_b = c.index('\n        }', stage_a) + len('\n        }')
-stage = c[stage_a:stage_b]
-need(stage, 'if (!suicune_live_pass_ready)', 'fail-closed UP stage')
+live_a = h.index('// ---- v7.6.7 continuous physical-UP HID mask probe')
+live_b = h.index('// Diagnostics for the legacy cycle hook', live_a)
+live = h[live_a:live_b]
+forbid(live, 'pnp::write(', 'game/host memory writer from Rust live block')
+forbid(live, 'host_write_mem', 'game memory write from live block')
+forbid(live, 'RNG_ADVANCE =', 'RNG mutation')
+forbid(live, 'ADIV =', 'ADIV mutation')
+forbid(live, 'SDIV =', 'SDIV mutation')
+forbid(live, 'gb_mem::write', 'GB RAM write')
+
+# 4) Current B-only ARM -> UP-only continuous run; no paused Exact2F handoff.
+need(p, 'u32 arm_suicune_live_pass();', 'C ABI readiness')
+need(l, 'pub extern "C" fn arm_suicune_live_pass() -> u32', 'Rust ABI readiness')
+need(c, 'static bool suicune_live_pass_ready = false;', 'C readiness state')
+need(c, 'suicune_live_pass_ready = arm_suicune_live_pass() != 0;', 'B-arm readiness capture')
+stage = braced_block(c, 'if (suicune_wait_up_after_b)')
+need(stage, 'if (!suicune_live_pass_ready)', 'fail-closed stage2')
 need(stage, 'is_paused = false;', 'continuous resume')
-forbid(stage, 'fixed_run_pending = true;', 'paused Exact2F scheduling')
-forbid(stage, 'suicune_auto_resume_pending = true;', 'old auto-resume scheduling')
+forbid(stage, 'fixed_run_pending = true;', 'old paused Exact2F scheduler')
+forbid(stage, 'suicune_auto_resume_pending = true;', 'old timed-resume scheduler')
 
-# 3) Trace must auto-stop/save after remask and include self-consistent LIVEPASS CSV.
+# 5) Trace stops after the remasked post-window and LIVEPASS CSV is consistent.
 need(t, 'use super::hook::{live_pass_should_finish, live_pass_telemetry};', 'trace live-pass import')
-need(t, 'if self.probe_session && live_pass_should_finish()', 'live-pass auto-stop condition')
-need(t, 'self.stop();\n            self.save();\n            pnp::request_pause();', 'stop-save-pause sequence')
-need(t, 'pass_advances,last_pass_advance', 'LIVEPASS CSV pass columns')
+need(t, 'if self.probe_session && live_pass_should_finish()', 'auto-stop condition')
+need(t, 'self.stop();\n            self.save();\n            pnp::request_pause();', 'stop-save-pause order')
+need(t, 'first_pass_direct_div,first_pass_phase4', 'direct landing fields in CSV')
+need(t, 'masked_advances,passed_advances', 'mask/pass advance fields in CSV')
 
 stop_pos = t.index('if self.probe_session && live_pass_should_finish()')
 result_pos = t.index('if self.probe_active && window[2] == SUICUNE_SPECIES', stop_pos)
 if stop_pos >= result_pos:
-    raise SystemExit('AUDIT FAIL: live-pass stop must precede normal Suicune result detector')
+    raise SystemExit('AUDIT FAIL: live-pass stop must precede legacy Suicune result detector')
 
 csv_start = t.index('let lp = live_pass_telemetry();')
 csv_end = t.index('pnp::trace_file_write(line.as_bytes());', csv_start)
@@ -76,7 +117,8 @@ fmt, args = m.groups()
 placeholders = len(re.findall(r'\{[^}]*\}', fmt))
 arg_count = len(re.findall(r'\blp\.', args))
 if placeholders != arg_count:
-    raise SystemExit(f'AUDIT FAIL: LIVEPASS format args mismatch: {placeholders} placeholders vs {arg_count} lp args')
+    raise SystemExit(f'AUDIT FAIL: LIVEPASS format mismatch: {placeholders} placeholders vs {arg_count} lp args')
 
-print('AUDIT PASS: v7.6.7 live-pass probe is fail-closed, read-only, continuous, and CSV-consistent')
-print(f'AUDIT INFO: LIVEPASS fields={placeholders}, stage2_len={len(stage)}, live_block_len={len(live_block)}')
+print('AUDIT PASS: v7.6.7 uses reversible temporary HID masking at rJOYP only')
+print('AUDIT PASS: no synthetic UP, no hJoy/GB-RAM redirect, no RNG/DIV mutation')
+print(f'AUDIT INFO: LIVEPASS values={placeholders}, stage2_len={len(stage)}, live_len={len(live)}')

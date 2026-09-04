@@ -36,8 +36,6 @@ ok('pub extern "C" fn suicune_exact2_release_confirmed()' in L, 'Rust C ABI rele
 ok('if self.probe_session && live_pass_should_finish()' not in T, 'old +22 diagnostic auto-stop removed')
 ok('for i in 0..n.min(96)' in T, 'raw joymap exports through rel40 neighborhood')
 
-# Scope mutation checks to code introduced/used by the v7.6.7h controller,
-# rather than matching pre-existing static declarations elsewhere in hook.rs.
 def slice_between(src, start, end, label):
     a = src.find(start)
     b = src.find(end, a + len(start)) if a >= 0 else -1
@@ -48,7 +46,7 @@ def slice_between(src, start, end, label):
 observer = slice_between(
     H,
     'pub fn live_pass_observe_joymap',
-    'pub fn live_pass_telemetry',
+    'pub fn live_pass_should_finish',
     'joymap/exact2 observer path',
 )
 handshake = slice_between(
@@ -73,7 +71,6 @@ ok('0xff00' not in control and 'FF00' not in control, 'no rJOYP substitution in 
 ok('joy[JOY_HJOY_DOWN]' in observer, 'Exact2 decision comes from observed FFA8')
 ok('pnp::request_pause();' in observer, 'controller actuator is Pause only')
 
-# Omnibus requirement: rel40 is diagnostic, never the terminal condition.
 rel40_anchor = 'let g=practical::evaluate_actual_post_inverse_v763(post.proto,post.rot40,e.state,e.div,ai,si);'
 a = T.find(rel40_anchor)
 if a < 0:

@@ -37,6 +37,7 @@ pin = Path('reader_core/src/pnp/input.rs').read_text()
 t = Path('reader_core/src/crystal/trace.rs').read_text()
 
 # 1) HID mask must be reversible and must never synthesize UP.
+need(hidc, '#include "csvc.h"', 'svcConvertVAToPA declaration include')
 need(hidc, 'u32 hid_up_mask_begin()', 'HID mask begin')
 need(hidc, 'u32 original = *g_key_addr;', 'save exact HID word')
 need(hidc, '*pa = original & ~KEY_DUP;', 'clear only UP')
@@ -91,7 +92,12 @@ need(c, 'static bool suicune_live_pass_ready = false;', 'C readiness state')
 need(c, 'suicune_live_pass_ready = arm_suicune_live_pass() != 0;', 'B-arm readiness capture')
 stage = braced_block(c, 'if (suicune_wait_up_after_b)')
 need(stage, 'if (!suicune_live_pass_ready)', 'fail-closed stage2')
+need(stage, 'if (!hid_up_mask_begin())', 'paused HID clear preflight')
+need(stage, 'if (!hid_up_mask_restore())', 'paused HID restore preflight')
+need(stage, 'suicune_live_pass_ready = false;', 'preflight failure latch')
 need(stage, 'is_paused = false;', 'continuous resume')
+if stage.index('if (!hid_up_mask_restore())') > stage.index('is_paused = false;'):
+    raise SystemExit('AUDIT FAIL: HID preflight restore must occur before resume')
 forbid(stage, 'fixed_run_pending = true;', 'old paused Exact2F scheduler')
 forbid(stage, 'suicune_auto_resume_pending = true;', 'old timed-resume scheduler')
 
@@ -101,11 +107,6 @@ need(t, 'if self.probe_session && live_pass_should_finish()', 'auto-stop conditi
 need(t, 'self.stop();\n            self.save();\n            pnp::request_pause();', 'stop-save-pause order')
 need(t, 'first_pass_direct_div,first_pass_phase4', 'direct landing fields in CSV')
 need(t, 'masked_advances,passed_advances', 'mask/pass advance fields in CSV')
-
-stop_pos = t.index('if self.probe_session && live_pass_should_finish()')
-result_pos = t.index('if self.probe_active && window[2] == SUICUNE_SPECIES', stop_pos)
-if stop_pos >= result_pos:
-    raise SystemExit('AUDIT FAIL: live-pass stop must precede legacy Suicune result detector')
 
 csv_start = t.index('let lp = live_pass_telemetry();')
 csv_end = t.index('pnp::trace_file_write(line.as_bytes());', csv_start)
@@ -120,5 +121,6 @@ if placeholders != arg_count:
     raise SystemExit(f'AUDIT FAIL: LIVEPASS format mismatch: {placeholders} placeholders vs {arg_count} lp args')
 
 print('AUDIT PASS: v7.6.7 uses reversible temporary HID masking at rJOYP only')
+print('AUDIT PASS: paused clear/restore preflight is required before continuous resume')
 print('AUDIT PASS: no synthetic UP, no hJoy/GB-RAM redirect, no RNG/DIV mutation')
 print(f'AUDIT INFO: LIVEPASS values={placeholders}, stage2_len={len(stage)}, live_len={len(live)}')

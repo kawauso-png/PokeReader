@@ -1,4 +1,4 @@
-name: Suicune v7.6.8 Omnibus ExactPass Rel40 Build
+name: Suicune v7.6.8 Integrated Natural Exact2F Shiny Build
 
 on:
   push:
@@ -38,32 +38,37 @@ jobs:
         run: python3 apply_suicune_rel40_index_fallback_v764.py
       - name: Apply v7.6.6 phase utility probe
         run: python3 apply_suicune_phase_utility_probe_v766.py
-      - name: Apply v7.6.7 live pass jitter probe
+      - name: Apply v7.6.7 live pass probe base
         run: python3 run_suicune_live_pass_jitter_probe_v767.py
-      - name: Apply v7.6.7c exact game-side verification
+      - name: Apply v7.6.7c verification base
         run: python3 apply_suicune_live_pass_verify_v767c.py
-      - name: Apply v7.6.7d hook-timed verification
+      - name: Apply v7.6.7d hook-timed base
         run: python3 apply_suicune_live_pass_verify_v767d.py
-      - name: Audit v7.6.7d before JP joymap correction
+      - name: Audit v7.6.7d
         run: python3 audit_suicune_live_pass_v767d.py
-      - name: Apply v7.6.7g masked JP joypad map
-        run: python3 apply_suicune_live_pass_joymap_masked_v767g.py
-      - name: Audit v7.6.7g baseline
-        run: python3 audit_suicune_live_pass_v767g.py
-      - name: Apply v7.6.8 omnibus exact pass + rel40
-        run: python3 run_suicune_omnibus_exactpass_v768.py
-      - name: Audit v7.6.8 omnibus
-        run: python3 audit_suicune_omnibus_v768.py
+      - name: Apply v7.6.7e no-mask baseline
+        run: python3 apply_suicune_live_pass_nomask_baseline_v767e.py
+      - name: Audit v7.6.7e
+        run: python3 audit_suicune_live_pass_v767e.py
+      - name: Apply v7.6.7f JP joypad map
+        run: python3 apply_suicune_live_pass_joymap_v767f.py
+      - name: Audit v7.6.7f
+        run: python3 audit_suicune_live_pass_v767f.py
+      - name: Apply v7.6.8 integrated natural Exact2F shiny probe
+        run: python3 apply_suicune_integrated_v768.py
+      - name: Audit v7.6.8 scope and mechanics
+        run: python3 audit_suicune_v768.py
       - name: Build v7.6.8
         run: make
+      - name: Re-audit generated v7.6.8 after build
+        run: python3 audit_suicune_v768.py
       - name: Package v7.6.8
         run: |
           mkdir -p v768/reader_core/src/crystal v768/reader_core/src/pnp v768/reader_core/src v768/3gx/sources v768/3gx/includes
-          cp out/default.3gx v768/PokeReader-Suicune-v768-OmnibusExactPassRel40.3gx
+          cp out/default.3gx v768/PokeReader-Suicune-v768-IntegratedNaturalExact2FShiny.3gx
           cp reader_core/src/crystal/practical.rs v768/reader_core/src/crystal/
           cp reader_core/src/crystal/trace.rs v768/reader_core/src/crystal/
           cp reader_core/src/crystal/hook.rs v768/reader_core/src/crystal/
-          cp reader_core/src/crystal/game_lib.rs v768/reader_core/src/crystal/
           cp reader_core/src/crystal/mod.rs v768/reader_core/src/crystal/
           cp reader_core/src/lib.rs v768/reader_core/src/
           cp reader_core/src/pnp/bindings.rs v768/reader_core/src/pnp/
@@ -72,13 +77,12 @@ jobs:
           cp 3gx/sources/hid.c v768/3gx/sources/
           cp 3gx/includes/pokereader.h v768/3gx/includes/
           cp 3gx/includes/hid.h v768/3gx/includes/
-          cp apply_suicune_omnibus_exactpass_v768.py v768/
-          cp run_suicune_omnibus_exactpass_v768.py v768/
-          cp audit_suicune_omnibus_v768.py v768/
-          cp audit_suicune_live_pass_v767g.py v768/
+          cp apply_suicune_integrated_v768.py v768/
+          cp audit_suicune_v768.py v768/
+          cp V768_DESIGN.md v768/
           sha256sum out/default.3gx > v768/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v768-OmnibusExactPassRel40
+          name: PokeReader-Suicune-v768-IntegratedNaturalExact2FShiny
           path: v768
           retention-days: 7

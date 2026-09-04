@@ -41,4 +41,12 @@ ok(omni_fmt.count('{') == 22 and omni_fmt.count('}') == 22, 'OMNI format has exa
 expected_omni = 'OMNI,V768,{:04X},{:02X},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{},{},{},{},{},{},{}'
 ok(omni_fmt == expected_omni, 'OMNI placeholder types/order match 22-column schema')
 
+# Operator-facing lineage guard.  The inherited V766 algorithm rows may remain
+# in CSV for provenance, but the screen must unmistakably say V768.
+ok('pnp::println!("V768 OMNIBUS SCAN");' in t, 'operator scan screen stamped V768')
+ok('pnp::println!("V768 A/r10 B76 LOCK");' in t, 'operator lock screen stamped V768')
+ok('pnp::println!("V768 REL40 CAPTURED");' in t, 'operator rel40 screen stamped V768')
+ok('pnp::println!("V768 RESET RECOMMENDED");' in t, 'operator reset screen stamped V768')
+ok('pnp::println!("S766 PHASE PROBE SCAN");' not in t and 'pnp::println!("S766 A/r10 B76 LOCK");' not in t, 'obsolete S766 operator lineage absent')
+
 print('AUDIT V768 PASS: ' + '; '.join(checks))

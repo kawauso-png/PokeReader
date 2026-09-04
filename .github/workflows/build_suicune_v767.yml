@@ -46,15 +46,19 @@ jobs:
         run: make
       - name: Package v7.6.7
         run: |
-          mkdir -p v767/reader_core/src/crystal v767/reader_core/src v767/3gx/sources v767/3gx/includes
+          mkdir -p v767/reader_core/src/crystal v767/reader_core/src/pnp v767/reader_core/src v767/3gx/sources v767/3gx/includes
           cp out/default.3gx v767/PokeReader-Suicune-v767-LivePassJitterProbe.3gx
           cp reader_core/src/crystal/practical.rs v767/reader_core/src/crystal/
           cp reader_core/src/crystal/trace.rs v767/reader_core/src/crystal/
           cp reader_core/src/crystal/hook.rs v767/reader_core/src/crystal/
           cp reader_core/src/crystal/mod.rs v767/reader_core/src/crystal/
           cp reader_core/src/lib.rs v767/reader_core/src/
+          cp reader_core/src/pnp/bindings.rs v767/reader_core/src/pnp/
+          cp reader_core/src/pnp/input.rs v767/reader_core/src/pnp/
           cp 3gx/sources/main.c v767/3gx/sources/
+          cp 3gx/sources/hid.c v767/3gx/sources/
           cp 3gx/includes/pokereader.h v767/3gx/includes/
+          cp 3gx/includes/hid.h v767/3gx/includes/
           cp apply_suicune_live_pass_jitter_probe_v767.py v767/
           cp run_suicune_live_pass_jitter_probe_v767.py v767/
           cp audit_suicune_live_pass_v767.py v767/

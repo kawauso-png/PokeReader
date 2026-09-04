@@ -33,23 +33,14 @@ def remove_braced_if(src, marker, label):
         end += 1
     return src[:a] + src[end:]
 
-# v7.6.7h is deliberately inside the agreed manipulation boundary:
-# - no HID masking/writes
-# - no FF00 return-value substitution
-# - no GB RAM/RNG/DIV/DV/save writes
-# It uses only observation + Pause/Resume around a physically held UP button.
-# Crystal FFA8 hJoyDown is authoritative. Once UP has been observed on exactly
-# two distinct RNG advances, the host is paused before a third presented frame.
-# The user releases physical UP while paused; release is detected host-side and
-# the VC resumes. The normal Suicune trace then continues through the encounter.
+# v7.6.7h stays inside the agreed boundary: observation + Pause/Resume +
+# physical UP only. No HID masking, no FF00 substitution, no GB/RNG/DIV/DV/save
+# writes. FFA8 hJoyDown is the authoritative accepted-input observation.
 
 H = Path('reader_core/src/crystal/hook.rs')
 h = H.read_text()
 
-h = rep(h,
-'''const LIVE_SAMPLE_CAP: usize = 22;''',
-'''const LIVE_SAMPLE_CAP: usize = 96;''',
-'sample cap')
+h = rep(h, 'const LIVE_SAMPLE_CAP: usize = 22;', 'const LIVE_SAMPLE_CAP: usize = 96;', 'sample cap')
 
 h = rep(h,
 '''    pub joy_up_counts: [u8; 8],
@@ -103,7 +94,7 @@ h = rep(h,
 }''',
 'arm reset')
 
-anchor = '''pub fn live_pass_telemetry() -> LivePassTelemetry {'''
+anchor = 'pub fn live_pass_telemetry() -> LivePassTelemetry {'
 insert = '''pub fn exact2_release_waiting() -> bool {
     unsafe { EXACT2_RELEASE_WAITING }
 }
@@ -120,15 +111,15 @@ if h.count(anchor) != 1:
     raise SystemExit(f'v767h handshake anchor count {h.count(anchor)}')
 h = h.replace(anchor, insert + anchor, 1)
 
-needle = '''        let hjoy = joy[JOY_HJOY_DOWN];
+h = rep(h,
+'''        let hjoy = joy[JOY_HJOY_DOWN];
         let up = (hjoy & PAD_UP) != 0;
 
-        if before_pass {'''
-replacement = '''        let hjoy = joy[JOY_HJOY_DOWN];
+        if before_pass {''',
+'''        let hjoy = joy[JOY_HJOY_DOWN];
         let up = (hjoy & PAD_UP) != 0;
 
-        // Closed-loop Exact2: count only distinct RNG advances where Crystal's
-        // own game-level hJoyDown (FFA8) says physical UP is down.
+        // Count distinct RNG advances where Crystal itself reports UP held.
         if up {
             if LIVE_PASS.exact2_up_advances == 0 || LIVE_PASS.exact2_last_up_advance != now {
                 LIVE_PASS.exact2_last_up_advance = now;
@@ -146,15 +137,15 @@ replacement = '''        let hjoy = joy[JOY_HJOY_DOWN];
             LIVE_PASS.exact2_first_clear_advance = now;
         }
 
-        if before_pass {'''
-h = rep(h, needle, replacement, 'exact2 observer')
+        if before_pass {''',
+'exact2 observer')
 H.write_text(h)
 
 M = Path('reader_core/src/crystal/mod.rs')
 m = M.read_text()
 m = rep(m,
-'''pub use hook::{arm_live_pass_probe, init_crystal};''',
-'''pub use hook::{arm_live_pass_probe, exact2_release_confirmed, exact2_release_waiting, init_crystal};''',
+'pub use hook::{arm_live_pass_probe, init_crystal};',
+'pub use hook::{arm_live_pass_probe, exact2_release_confirmed, exact2_release_waiting, init_crystal};',
 'crystal exports')
 M.write_text(m)
 
@@ -193,14 +184,15 @@ P.write_text(p)
 
 C = Path('3gx/sources/main.c')
 c = C.read_text()
-needle = '''        u32 just_pressed = host_just_pressed();
+c = rep(c,
+'''        u32 just_pressed = host_just_pressed();
         u32 held = get_current_keys();
-'''
-insert = '''        u32 just_pressed = host_just_pressed();
+''',
+'''        u32 just_pressed = host_just_pressed();
         u32 held = get_current_keys();
 
-        // v7.6.7h: Crystal has already accepted physical UP on two distinct
-        // advances. Do not allow a third game frame while UP is still held.
+        // After Crystal accepted UP on two advances, remain frozen until the
+        // user physically releases UP; then resume the untouched game.
         if (suicune_exact2_release_waiting())
         {
             if ((held & KEY_DUP) == 0)
@@ -214,23 +206,21 @@ insert = '''        u32 just_pressed = host_just_pressed();
             svcSleepThread(1000000);
             continue;
         }
-'''
-c = rep(c, needle, insert, 'pause release checkpoint')
+''',
+'pause release checkpoint')
 C.write_text(c)
 
 T = Path('reader_core/src/crystal/trace.rs')
 t = T.read_text()
 
-# Remove the v7.6.7 +22 diagnostic stop.
-t = remove_braced_if(t,
-'''        if self.probe_session && live_pass_should_finish()''',
-'22-frame auto-stop')
+# Remove the old +22 live-pass diagnostic stop.
+t = remove_braced_if(t, '        if self.probe_session && live_pass_should_finish()', '22-frame auto-stop')
 t = t.replace('live_pass_should_finish, ', '')
 t = t.replace(', live_pass_should_finish', '')
 
-# v7.6.6 intentionally terminated every run at rel40. For the omnibus legal
-# probe we keep the actual rel40 inverse evaluation, but restore its normal
-# continuation behavior so the same native encounter reaches stop2/final DV.
+# Restore rel40 evaluation but make it diagnostic/non-terminal. Even when the
+# inverse model has no shiny prediction, continue the native encounter so final
+# raw DV remains ground truth in the same CSV.
 v766_rel40_stop = '''                let g=practical::evaluate_actual_post_inverse_v763(post.proto,post.rot40,e.state,e.div,ai,si);
                 self.v763_gate_models=g.models;self.v763_gate_evaluated=g.evaluated;self.v763_gate_shiny_models=g.shiny_models;
                 // v7.6.6 ends every diagnostic run at rel40 after recording the
@@ -238,18 +228,24 @@ v766_rel40_stop = '''                let g=practical::evaluate_actual_post_inver
                 // 700-frame tail and makes each M replicate fast and comparable.
                 self.practical_fail(13);return
 '''
-rel40_continue = '''                let g=practical::evaluate_actual_post_inverse_v763(post.proto,post.rot40,e.state,e.div,ai,si);
+rel40_nonterminal = '''                let g=practical::evaluate_actual_post_inverse_v763(post.proto,post.rot40,e.state,e.div,ai,si);
                 self.v763_gate_models=g.models;self.v763_gate_evaluated=g.evaluated;self.v763_gate_shiny_models=g.shiny_models;
-                if g.evaluated==0{self.practical_fail(11);return}
                 if let Some(x)=g.prediction{
                     self.practical_empirical=x.lane_id>=101&&x.lane_id<200;
                     self.bucket_model_active=x.lane_id>=200;
                     self.rebind_practical_post_v690(x,post.proto,post.rot40);
-                    return
                 }
-                self.practical_fail(10);return
+                // Do not make prediction support a condition for collecting the
+                // actual tail. Generic probe/result detection remains active.
+                self.practical_active=false;
+                return
 '''
-t = rep(t, v766_rel40_stop, rel40_continue, 'rel40 continue into tail')
+t = rep(t, v766_rel40_stop, rel40_nonterminal, 'rel40 nonterminal continuation')
+
+t = rep(t,
+'                if !post.valid||post.best_score!=0{self.practical_fail(12);return}',
+'                if !post.valid||post.best_score!=0{self.practical_miss=12;self.practical_active=false;return}',
+'nonterminal POST classification miss')
 
 t = rep(t, 'LIVEPASS,V767F,', 'LIVEPASS,V767H,', 'main lineage')
 t = rep(t, 'LIVEPASSHOST,V767F,', 'LIVEPASSHOST,V767H,', 'host lineage')
@@ -257,7 +253,7 @@ t = rep(t, 'JOYMAP,V767F,', 'JOYMAP,V767H,', 'joymap lineage')
 t = rep(t, 'JOYFRAME,V767F,', 'JOYFRAME,V767H,', 'joyframe lineage')
 t = t.replace('for i in 0..n.min(22) {', 'for i in 0..n.min(96) {', 1)
 
-anchor = '''        // Full per-advance raw chain. This is diagnostic-only and is exported'''
+anchor = '        // Full per-advance raw chain. This is diagnostic-only and is exported'
 insert = '''        line.clear();
         let _ = write!(
             line,
@@ -277,4 +273,4 @@ if t.count(anchor) != 1:
 t = t.replace(anchor, insert + anchor, 1)
 T.write_text(t)
 
-print('Applied v7.6.7h: observation-only closed-loop physical-UP Exact2 + rel40 + native Suicune tail')
+print('Applied v7.6.7h: closed-loop physical-UP Exact2 + rel40 diagnostics + native final DV')

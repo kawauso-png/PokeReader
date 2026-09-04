@@ -1,4 +1,4 @@
-name: Suicune v7.6.7 Live Pass Jitter Probe Build
+name: Suicune v7.6.7b Live Pass Verification Build
 
 on:
   push:
@@ -42,32 +42,32 @@ jobs:
         run: python3 run_suicune_live_pass_jitter_probe_v767.py
       - name: Apply v7.6.7b game-side verification
         run: python3 apply_suicune_live_pass_verify_v767b.py
-      - name: Audit generated v7.6.7
+      - name: Audit generated v7.6.7b
         run: python3 audit_suicune_live_pass_v767.py
-      - name: Build v7.6.7
+      - name: Build v7.6.7b
         run: make
-      - name: Package v7.6.7
+      - name: Package v7.6.7b
         run: |
-          mkdir -p v767/reader_core/src/crystal v767/reader_core/src/pnp v767/reader_core/src v767/3gx/sources v767/3gx/includes
-          cp out/default.3gx v767/PokeReader-Suicune-v767-LivePassJitterProbe.3gx
-          cp reader_core/src/crystal/practical.rs v767/reader_core/src/crystal/
-          cp reader_core/src/crystal/trace.rs v767/reader_core/src/crystal/
-          cp reader_core/src/crystal/hook.rs v767/reader_core/src/crystal/
-          cp reader_core/src/crystal/mod.rs v767/reader_core/src/crystal/
-          cp reader_core/src/lib.rs v767/reader_core/src/
-          cp reader_core/src/pnp/bindings.rs v767/reader_core/src/pnp/
-          cp reader_core/src/pnp/input.rs v767/reader_core/src/pnp/
-          cp 3gx/sources/main.c v767/3gx/sources/
-          cp 3gx/sources/hid.c v767/3gx/sources/
-          cp 3gx/includes/pokereader.h v767/3gx/includes/
-          cp 3gx/includes/hid.h v767/3gx/includes/
-          cp apply_suicune_live_pass_jitter_probe_v767.py v767/
-          cp apply_suicune_live_pass_verify_v767b.py v767/
-          cp run_suicune_live_pass_jitter_probe_v767.py v767/
-          cp audit_suicune_live_pass_v767.py v767/
-          sha256sum out/default.3gx > v767/sha256.txt
+          mkdir -p v767b/reader_core/src/crystal v767b/reader_core/src/pnp v767b/reader_core/src v767b/3gx/sources v767b/3gx/includes
+          cp out/default.3gx v767b/PokeReader-Suicune-v767b-LivePassVerification.3gx
+          cp reader_core/src/crystal/practical.rs v767b/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs v767b/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v767b/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs v767b/reader_core/src/crystal/
+          cp reader_core/src/lib.rs v767b/reader_core/src/
+          cp reader_core/src/pnp/bindings.rs v767b/reader_core/src/pnp/
+          cp reader_core/src/pnp/input.rs v767b/reader_core/src/pnp/
+          cp 3gx/sources/main.c v767b/3gx/sources/
+          cp 3gx/sources/hid.c v767b/3gx/sources/
+          cp 3gx/includes/pokereader.h v767b/3gx/includes/
+          cp 3gx/includes/hid.h v767b/3gx/includes/
+          cp apply_suicune_live_pass_jitter_probe_v767.py v767b/
+          cp apply_suicune_live_pass_verify_v767b.py v767b/
+          cp run_suicune_live_pass_jitter_probe_v767.py v767b/
+          cp audit_suicune_live_pass_v767.py v767b/
+          sha256sum out/default.3gx > v767b/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v767-LivePassJitterProbe
-          path: v767
+          name: PokeReader-Suicune-v767b-LivePassVerification
+          path: v767b
           retention-days: 7

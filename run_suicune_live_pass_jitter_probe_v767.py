@@ -1,8 +1,22 @@
 from pathlib import Path
 
-# v7.6.7 is maintained in the apply script. This wrapper performs one narrow
-# normalization only: replace the brittle exact Suicune-result anchor used for
-# trace auto-stop insertion with a semantic insertion after self.len += 1.
+# v7.6.7 is maintained in the apply script. Keep the wrapper limited to two
+# generation-time normalizations that depend on the exact generated v7.6.6
+# tree rather than changing the live-pass design itself.
+
+# hid.c needs the project declaration for svcConvertVAToPA used by common.h's
+# physical-alias helper and by the v7.6.7 capability check.
+hid_path = Path('3gx/sources/hid.c')
+hid = hid_path.read_text()
+if '#include "csvc.h"' not in hid:
+    needle = '#include <3ds.h>\n'
+    if hid.count(needle) != 1:
+        raise SystemExit(f'wrapper: hid include anchor count {hid.count(needle)}')
+    hid = hid.replace(needle, needle + '#include "csvc.h"\n', 1)
+    hid_path.write_text(hid)
+
+# Replace the brittle exact Suicune-result anchor used for trace auto-stop
+# insertion with a semantic insertion after self.len += 1.
 path = Path('apply_suicune_live_pass_jitter_probe_v767.py')
 source = path.read_text()
 

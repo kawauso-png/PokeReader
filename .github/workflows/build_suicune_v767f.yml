@@ -44,6 +44,8 @@ jobs:
         run: python3 apply_suicune_live_pass_verify_v767c.py
       - name: Apply v7.6.7d hook-timed verification
         run: python3 apply_suicune_live_pass_verify_v767d.py
+      - name: Audit v7.6.7d before no-mask baseline
+        run: python3 audit_suicune_live_pass_v767d.py
       - name: Apply v7.6.7e no-mask baseline
         run: python3 apply_suicune_live_pass_nomask_baseline_v767e.py
       - name: Audit v7.6.7e baseline before joymap correction

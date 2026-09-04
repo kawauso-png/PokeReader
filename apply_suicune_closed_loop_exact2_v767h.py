@@ -91,7 +91,6 @@ static mut LIVE_PASS: LivePassTelemetry = LivePassTelemetry::EMPTY;
 static mut EXACT2_RELEASE_WAITING: bool = false;''',
 'exact2 state')
 
-# Reset the closed-loop release checkpoint on every B-arm.
 h = rep(h,
 '''        LIVE_PASS_ARMED = capable;
     }
@@ -104,7 +103,6 @@ h = rep(h,
 }''',
 'arm reset')
 
-# Export the pause-loop handshake. No game state is modified here.
 anchor = '''pub fn live_pass_telemetry() -> LivePassTelemetry {'''
 insert = '''pub fn exact2_release_waiting() -> bool {
     unsafe { EXACT2_RELEASE_WAITING }
@@ -122,7 +120,6 @@ if h.count(anchor) != 1:
     raise SystemExit(f'v767h handshake anchor count {h.count(anchor)}')
 h = h.replace(anchor, insert + anchor, 1)
 
-# Add exact accepted-UP accounting at the authoritative game-level FFA8.
 needle = '''        let hjoy = joy[JOY_HJOY_DOWN];
         let up = (hjoy & PAD_UP) != 0;
 
@@ -153,7 +150,6 @@ replacement = '''        let hjoy = joy[JOY_HJOY_DOWN];
 h = rep(h, needle, replacement, 'exact2 observer')
 H.write_text(h)
 
-# Export release handshake through the existing C ABI.
 M = Path('reader_core/src/crystal/mod.rs')
 m = M.read_text()
 m = rep(m,
@@ -195,8 +191,6 @@ if p.count(needle) != 1:
 p = p.replace(needle, needle + 'u32 suicune_exact2_release_waiting();\nvoid suicune_exact2_release_confirmed();\n', 1)
 P.write_text(p)
 
-# Pause-loop checkpoint: after the second game-accepted UP frame, remain
-# frozen until physical UP has been released. Then resume automatically.
 C = Path('3gx/sources/main.c')
 c = C.read_text()
 needle = '''        u32 just_pressed = host_just_pressed();
@@ -227,14 +221,35 @@ C.write_text(c)
 T = Path('reader_core/src/crystal/trace.rs')
 t = T.read_text()
 
-# The old v7.6.7 diagnostic auto-stopped at +22. h must continue through the
-# normal Suicune result/DV stop so the same run contains J/POST/rel40/tail.
+# Remove the v7.6.7 +22 diagnostic stop.
 t = remove_braced_if(t,
 '''        if self.probe_session && live_pass_should_finish()''',
 '22-frame auto-stop')
-
 t = t.replace('live_pass_should_finish, ', '')
 t = t.replace(', live_pass_should_finish', '')
+
+# v7.6.6 intentionally terminated every run at rel40. For the omnibus legal
+# probe we keep the actual rel40 inverse evaluation, but restore its normal
+# continuation behavior so the same native encounter reaches stop2/final DV.
+v766_rel40_stop = '''                let g=practical::evaluate_actual_post_inverse_v763(post.proto,post.rot40,e.state,e.div,ai,si);
+                self.v763_gate_models=g.models;self.v763_gate_evaluated=g.evaluated;self.v763_gate_shiny_models=g.shiny_models;
+                // v7.6.6 ends every diagnostic run at rel40 after recording the
+                // actual POST/J/state/div and suffix-gate support.  This avoids a
+                // 700-frame tail and makes each M replicate fast and comparable.
+                self.practical_fail(13);return
+'''
+rel40_continue = '''                let g=practical::evaluate_actual_post_inverse_v763(post.proto,post.rot40,e.state,e.div,ai,si);
+                self.v763_gate_models=g.models;self.v763_gate_evaluated=g.evaluated;self.v763_gate_shiny_models=g.shiny_models;
+                if g.evaluated==0{self.practical_fail(11);return}
+                if let Some(x)=g.prediction{
+                    self.practical_empirical=x.lane_id>=101&&x.lane_id<200;
+                    self.bucket_model_active=x.lane_id>=200;
+                    self.rebind_practical_post_v690(x,post.proto,post.rot40);
+                    return
+                }
+                self.practical_fail(10);return
+'''
+t = rep(t, v766_rel40_stop, rel40_continue, 'rel40 continue into tail')
 
 t = rep(t, 'LIVEPASS,V767F,', 'LIVEPASS,V767H,', 'main lineage')
 t = rep(t, 'LIVEPASSHOST,V767F,', 'LIVEPASSHOST,V767H,', 'host lineage')
@@ -242,7 +257,6 @@ t = rep(t, 'JOYMAP,V767F,', 'JOYMAP,V767H,', 'joymap lineage')
 t = rep(t, 'JOYFRAME,V767F,', 'JOYFRAME,V767H,', 'joyframe lineage')
 t = t.replace('for i in 0..n.min(22) {', 'for i in 0..n.min(96) {', 1)
 
-# Add one compact closed-loop summary before the raw JOYFRAME section.
 anchor = '''        // Full per-advance raw chain. This is diagnostic-only and is exported'''
 insert = '''        line.clear();
         let _ = write!(
@@ -263,4 +277,4 @@ if t.count(anchor) != 1:
 t = t.replace(anchor, insert + anchor, 1)
 T.write_text(t)
 
-print('Applied v7.6.7h: observation-only closed-loop physical-UP Exact2 + full Suicune trace')
+print('Applied v7.6.7h: observation-only closed-loop physical-UP Exact2 + rel40 + native Suicune tail')

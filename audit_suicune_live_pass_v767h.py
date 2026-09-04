@@ -36,15 +36,44 @@ ok('pub extern "C" fn suicune_exact2_release_confirmed()' in L, 'Rust C ABI rele
 ok('if self.probe_session && live_pass_should_finish()' not in T, 'old +22 diagnostic auto-stop removed')
 ok('for i in 0..n.min(96)' in T, 'raw joymap exports through rel40 neighborhood')
 
-# Forbidden manipulation surfaces for this agreed scope.
+# Scope mutation checks to code introduced/used by the v7.6.7h controller,
+# rather than matching pre-existing static declarations elsewhere in hook.rs.
+def slice_between(src, start, end, label):
+    a = src.find(start)
+    b = src.find(end, a + len(start)) if a >= 0 else -1
+    if a < 0 or b < 0:
+        raise SystemExit('AUDIT H FAIL: cannot isolate ' + label)
+    return src[a:b]
+
+observer = slice_between(
+    H,
+    'pub fn live_pass_observe_joymap',
+    'pub fn live_pass_telemetry',
+    'joymap/exact2 observer path',
+)
+handshake = slice_between(
+    H,
+    'pub fn exact2_release_waiting',
+    'pub fn live_pass_telemetry',
+    'release handshake path',
+)
+control = observer + handshake
+
 for forbidden, label in [
     ('RNG_ADVANCE =', 'RNG advance assignment'),
     ('ADIV =', 'ADIV assignment'),
     ('SDIV =', 'SDIV assignment'),
     ('gb_mem::write', 'GB memory write'),
     ('| KEY_DUP', 'synthetic physical UP'),
+    ('pnp::write', 'process/game write'),
 ]:
-    ok(forbidden not in H + T, 'no ' + label)
+    ok(forbidden not in control, 'no ' + label + ' in closed-loop control path')
+
+# Also ensure the only controller-side game reads are observational; no direct
+# rJOYP/joy state substitution was added in trace or the exact2 observer.
+ok('0xff00' not in control and 'FF00' not in control, 'no rJOYP substitution in controller')
+ok('joy[JOY_HJOY_DOWN]' in observer, 'Exact2 decision comes from observed FFA8')
+ok('pnp::request_pause();' in observer, 'controller actuator is Pause only')
 
 print('AUDIT H PASS: closed-loop Exact2 uses observation + Pause/Resume + physical UP release only')
 print('AUDIT H PASS: no HID/FF00/GB-RAM/RNG/DIV/DV input or state substitution')

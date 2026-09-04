@@ -1,0 +1,91 @@
+name: Suicune v7.6.7i Low-Level Exact2 Build
+
+on:
+  push:
+    branches:
+      - suicune-v767-live-pass-jitter-probe
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - name: Generate v7.4.4 baseline
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('.github/workflows/build_suicune_stage3_v744.yml').read_text()
+          marker='      - name: Generate Stage3 v7.4.4\n        run: |\n'
+          a=s.index(marker)+len(marker)
+          b=s.index('      - name: Build v7.4.4',a)
+          body=s[a:b]
+          Path('/tmp/gen_v744.sh').write_text('\n'.join((x[10:] if x.startswith('          ') else x) for x in body.splitlines())+'\n')
+          PY
+          sh /tmp/gen_v744.sh
+      - name: Apply v7.6.0 weighted selector base
+        run: python3 apply_suicune_weighted_root_selector_v760.py
+      - name: Apply v7.6.2 multi-PRE inverse selector
+        run: python3 apply_suicune_multipre_inverse_v762.py
+      - name: Apply v7.6.3 rel40 inverse gate
+        run: python3 apply_suicune_rel40_inverse_gate_v763.py
+      - name: Apply v7.6.4 rel40 index fallback
+        run: python3 apply_suicune_rel40_index_fallback_v764.py
+      - name: Apply v7.6.6 phase utility probe
+        run: python3 apply_suicune_phase_utility_probe_v766.py
+      - name: Apply v7.6.7 live pass base
+        run: python3 run_suicune_live_pass_jitter_probe_v767.py
+      - name: Apply v7.6.7c exact game-side verification
+        run: python3 apply_suicune_live_pass_verify_v767c.py
+      - name: Apply v7.6.7d hook-timed verification
+        run: python3 apply_suicune_live_pass_verify_v767d.py
+      - name: Audit v7.6.7d before no-mask path
+        run: python3 audit_suicune_live_pass_v767d.py
+      - name: Apply v7.6.7e no-mask baseline
+        run: python3 apply_suicune_live_pass_nomask_baseline_v767e.py
+      - name: Audit v7.6.7e
+        run: python3 audit_suicune_live_pass_v767e.py
+      - name: Apply v7.6.7f JP joypad map
+        run: python3 apply_suicune_live_pass_joymap_v767f.py
+      - name: Audit v7.6.7f
+        run: python3 audit_suicune_live_pass_v767f.py
+      - name: Apply v7.6.7h closed-loop Exact2
+        run: python3 apply_suicune_closed_loop_exact2_v767h.py
+      - name: Audit v7.6.7h scope and timing
+        run: python3 audit_suicune_live_pass_v767h.py
+      - name: Apply v7.6.7i FFA4 Exact2 correction
+        run: python3 apply_suicune_closed_loop_exact2_v767i.py
+      - name: Audit v7.6.7i low-level Exact2
+        run: python3 audit_suicune_live_pass_v767i.py
+      - name: Build v7.6.7i
+        run: make
+      - name: Package v7.6.7i
+        run: |
+          mkdir -p v767i/reader_core/src/crystal v767i/reader_core/src/pnp v767i/reader_core/src v767i/3gx/sources v767i/3gx/includes
+          cp out/default.3gx v767i/PokeReader-Suicune-v767i-LowLevelExact2.3gx
+          cp reader_core/src/crystal/practical.rs v767i/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs v767i/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v767i/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs v767i/reader_core/src/crystal/
+          cp reader_core/src/lib.rs v767i/reader_core/src/
+          cp reader_core/src/pnp/bindings.rs v767i/reader_core/src/pnp/
+          cp reader_core/src/pnp/input.rs v767i/reader_core/src/pnp/
+          cp 3gx/sources/main.c v767i/3gx/sources/
+          cp 3gx/sources/hid.c v767i/3gx/sources/
+          cp 3gx/includes/pokereader.h v767i/3gx/includes/
+          cp 3gx/includes/hid.h v767i/3gx/includes/
+          cp apply_suicune_closed_loop_exact2_v767h.py v767i/
+          cp apply_suicune_closed_loop_exact2_v767i.py v767i/
+          cp audit_suicune_live_pass_v767h.py v767i/
+          cp audit_suicune_live_pass_v767i.py v767i/
+          sha256sum out/default.3gx > v767i/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v767i-LowLevelExact2
+          path: v767i
+          retention-days: 7

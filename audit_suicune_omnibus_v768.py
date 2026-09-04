@@ -33,11 +33,10 @@ ok('RNG_ADVANCE =' not in live, 'live-pass block does not rewrite RNG advance')
 assigns = re.findall(r'regs\[0\]\s*=\s*([^;]+);', live)
 ok(assigns == ['LIVE_PASS.neutral_addr as u32'], 'only r0 mutation is neutral-address redirect')
 
-# CSV schema guard: OMNI has 22 named data columns and therefore must have
-# exactly 22 Rust format placeholders. This catches shifted hex specifiers too.
+# CSV schema guard: after Python generation the Rust multiline string contains
+# real newlines, so inspect the actual generated OMNI data line directly.
 omni_start = t.index('OMNI,V768,')
-omni_end = t.index('\\n"', omni_start)
-omni_fmt = t[omni_start:omni_end]
+omni_fmt = t[omni_start:].splitlines()[0]
 ok(omni_fmt.count('{') == 22 and omni_fmt.count('}') == 22, 'OMNI format has exactly 22 placeholders')
 expected_omni = 'OMNI,V768,{:04X},{:02X},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{},{},{},{},{},{},{}'
 ok(omni_fmt == expected_omni, 'OMNI placeholder types/order match 22-column schema')

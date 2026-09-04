@@ -1,0 +1,266 @@
+from pathlib import Path
+
+
+def rep(src, old, new, label):
+    n = src.count(old)
+    if n != 1:
+        raise SystemExit(f'v767h {label}: expected 1 match, got {n}')
+    return src.replace(old, new, 1)
+
+
+def remove_braced_if(src, marker, label):
+    a = src.find(marker)
+    if a < 0:
+        raise SystemExit(f'v767h {label}: marker not found')
+    b = src.find('{', a)
+    if b < 0:
+        raise SystemExit(f'v767h {label}: opening brace missing')
+    depth = 0
+    end = -1
+    for i in range(b, len(src)):
+        if src[i] == '{':
+            depth += 1
+        elif src[i] == '}':
+            depth -= 1
+            if depth == 0:
+                end = i + 1
+                break
+    if end < 0:
+        raise SystemExit(f'v767h {label}: closing brace missing')
+    while end < len(src) and src[end] in ' \t':
+        end += 1
+    if end < len(src) and src[end] == '\n':
+        end += 1
+    return src[:a] + src[end:]
+
+# v7.6.7h is deliberately inside the agreed manipulation boundary:
+# - no HID masking/writes
+# - no FF00 return-value substitution
+# - no GB RAM/RNG/DIV/DV/save writes
+# It uses only observation + Pause/Resume around a physically held UP button.
+# Crystal FFA8 hJoyDown is authoritative. Once UP has been observed on exactly
+# two distinct RNG advances, the host is paused before a third presented frame.
+# The user releases physical UP while paused; release is detected host-side and
+# the VC resumes. The normal Suicune trace then continues through the encounter.
+
+H = Path('reader_core/src/crystal/hook.rs')
+h = H.read_text()
+
+h = rep(h,
+'''const LIVE_SAMPLE_CAP: usize = 22;''',
+'''const LIVE_SAMPLE_CAP: usize = 96;''',
+'sample cap')
+
+h = rep(h,
+'''    pub joy_up_counts: [u8; 8],
+    pub joy_first_up_rel: [u8; 8],
+}''',
+'''    pub joy_up_counts: [u8; 8],
+    pub joy_first_up_rel: [u8; 8],
+    pub exact2_up_advances: u8,
+    pub exact2_last_up_advance: u32,
+    pub exact2_first_up_advance: u32,
+    pub exact2_second_up_advance: u32,
+    pub exact2_pause_requested: u8,
+    pub exact2_release_confirmed: u8,
+    pub exact2_first_clear_advance: u32,
+}''',
+'exact2 telemetry fields')
+
+h = rep(h,
+'''        joy_up_counts: [0; 8],
+        joy_first_up_rel: [0xff; 8],
+    };''',
+'''        joy_up_counts: [0; 8],
+        joy_first_up_rel: [0xff; 8],
+        exact2_up_advances: 0,
+        exact2_last_up_advance: 0,
+        exact2_first_up_advance: 0,
+        exact2_second_up_advance: 0,
+        exact2_pause_requested: 0,
+        exact2_release_confirmed: 0,
+        exact2_first_clear_advance: 0,
+    };''',
+'exact2 telemetry defaults')
+
+h = rep(h,
+'''static mut LIVE_PASS_ARMED: bool = false;
+static mut LIVE_PASS: LivePassTelemetry = LivePassTelemetry::EMPTY;''',
+'''static mut LIVE_PASS_ARMED: bool = false;
+static mut LIVE_PASS: LivePassTelemetry = LivePassTelemetry::EMPTY;
+static mut EXACT2_RELEASE_WAITING: bool = false;''',
+'exact2 state')
+
+# Reset the closed-loop release checkpoint on every B-arm.
+h = rep(h,
+'''        LIVE_PASS_ARMED = capable;
+    }
+    capable
+}''',
+'''        LIVE_PASS_ARMED = capable;
+        EXACT2_RELEASE_WAITING = false;
+    }
+    capable
+}''',
+'arm reset')
+
+# Export the pause-loop handshake. No game state is modified here.
+anchor = '''pub fn live_pass_telemetry() -> LivePassTelemetry {'''
+insert = '''pub fn exact2_release_waiting() -> bool {
+    unsafe { EXACT2_RELEASE_WAITING }
+}
+
+pub fn exact2_release_confirmed() {
+    unsafe {
+        EXACT2_RELEASE_WAITING = false;
+        LIVE_PASS.exact2_release_confirmed = 1;
+    }
+}
+
+'''
+if h.count(anchor) != 1:
+    raise SystemExit(f'v767h handshake anchor count {h.count(anchor)}')
+h = h.replace(anchor, insert + anchor, 1)
+
+# Add exact accepted-UP accounting at the authoritative game-level FFA8.
+needle = '''        let hjoy = joy[JOY_HJOY_DOWN];
+        let up = (hjoy & PAD_UP) != 0;
+
+        if before_pass {'''
+replacement = '''        let hjoy = joy[JOY_HJOY_DOWN];
+        let up = (hjoy & PAD_UP) != 0;
+
+        // Closed-loop Exact2: count only distinct RNG advances where Crystal's
+        // own game-level hJoyDown (FFA8) says physical UP is down.
+        if up {
+            if LIVE_PASS.exact2_up_advances == 0 || LIVE_PASS.exact2_last_up_advance != now {
+                LIVE_PASS.exact2_last_up_advance = now;
+                LIVE_PASS.exact2_up_advances = LIVE_PASS.exact2_up_advances.saturating_add(1);
+                if LIVE_PASS.exact2_up_advances == 1 {
+                    LIVE_PASS.exact2_first_up_advance = now;
+                } else if LIVE_PASS.exact2_up_advances == 2 {
+                    LIVE_PASS.exact2_second_up_advance = now;
+                    LIVE_PASS.exact2_pause_requested = 1;
+                    EXACT2_RELEASE_WAITING = true;
+                    pnp::request_pause();
+                }
+            }
+        } else if LIVE_PASS.exact2_release_confirmed != 0 && LIVE_PASS.exact2_first_clear_advance == 0 {
+            LIVE_PASS.exact2_first_clear_advance = now;
+        }
+
+        if before_pass {'''
+h = rep(h, needle, replacement, 'exact2 observer')
+H.write_text(h)
+
+# Export release handshake through the existing C ABI.
+M = Path('reader_core/src/crystal/mod.rs')
+m = M.read_text()
+m = rep(m,
+'''pub use hook::{arm_live_pass_probe, init_crystal};''',
+'''pub use hook::{arm_live_pass_probe, exact2_release_confirmed, exact2_release_waiting, init_crystal};''',
+'crystal exports')
+M.write_text(m)
+
+L = Path('reader_core/src/lib.rs')
+l = L.read_text()
+anchor = '''#[no_mangle]
+pub extern "C" fn arm_suicune_live_pass() -> u32 {'''
+insert = '''#[no_mangle]
+pub extern "C" fn suicune_exact2_release_waiting() -> u32 {
+    if let Ok(LoadedTitle::CrystalJp) = loaded_title() {
+        return crystal::exact2_release_waiting() as u32;
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn suicune_exact2_release_confirmed() {
+    if let Ok(LoadedTitle::CrystalJp) = loaded_title() {
+        crystal::exact2_release_confirmed();
+    }
+}
+
+'''
+if l.count(anchor) != 1:
+    raise SystemExit(f'v767h lib anchor count {l.count(anchor)}')
+l = l.replace(anchor, insert + anchor, 1)
+L.write_text(l)
+
+P = Path('3gx/includes/pokereader.h')
+p = P.read_text()
+needle = 'u32 arm_suicune_live_pass();\n'
+if p.count(needle) != 1:
+    raise SystemExit(f'v767h header arm count {p.count(needle)}')
+p = p.replace(needle, needle + 'u32 suicune_exact2_release_waiting();\nvoid suicune_exact2_release_confirmed();\n', 1)
+P.write_text(p)
+
+# Pause-loop checkpoint: after the second game-accepted UP frame, remain
+# frozen until physical UP has been released. Then resume automatically.
+C = Path('3gx/sources/main.c')
+c = C.read_text()
+needle = '''        u32 just_pressed = host_just_pressed();
+        u32 held = get_current_keys();
+'''
+insert = '''        u32 just_pressed = host_just_pressed();
+        u32 held = get_current_keys();
+
+        // v7.6.7h: Crystal has already accepted physical UP on two distinct
+        // advances. Do not allow a third game frame while UP is still held.
+        if (suicune_exact2_release_waiting())
+        {
+            if ((held & KEY_DUP) == 0)
+            {
+                suicune_exact2_release_confirmed();
+                fixed_frames_remaining = 0;
+                fixed_run_pending = false;
+                is_paused = false;
+                break;
+            }
+            svcSleepThread(1000000);
+            continue;
+        }
+'''
+c = rep(c, needle, insert, 'pause release checkpoint')
+C.write_text(c)
+
+T = Path('reader_core/src/crystal/trace.rs')
+t = T.read_text()
+
+# The old v7.6.7 diagnostic auto-stopped at +22. h must continue through the
+# normal Suicune result/DV stop so the same run contains J/POST/rel40/tail.
+t = remove_braced_if(t,
+'''        if self.probe_session && live_pass_should_finish()''',
+'22-frame auto-stop')
+
+t = t.replace('live_pass_should_finish, ', '')
+t = t.replace(', live_pass_should_finish', '')
+
+t = rep(t, 'LIVEPASS,V767F,', 'LIVEPASS,V767H,', 'main lineage')
+t = rep(t, 'LIVEPASSHOST,V767F,', 'LIVEPASSHOST,V767H,', 'host lineage')
+t = rep(t, 'JOYMAP,V767F,', 'JOYMAP,V767H,', 'joymap lineage')
+t = rep(t, 'JOYFRAME,V767F,', 'JOYFRAME,V767H,', 'joyframe lineage')
+t = t.replace('for i in 0..n.min(22) {', 'for i in 0..n.min(96) {', 1)
+
+# Add one compact closed-loop summary before the raw JOYFRAME section.
+anchor = '''        // Full per-advance raw chain. This is diagnostic-only and is exported'''
+insert = '''        line.clear();
+        let _ = write!(
+            line,
+            "\\nexact2,version,accepted_up_advances,first_up_advance,second_up_advance,pause_requested,release_confirmed,first_clear_after_release\\nEXACT2,V767H,{},{},{},{},{},{}\\n",
+            lp.exact2_up_advances,
+            lp.exact2_first_up_advance,
+            lp.exact2_second_up_advance,
+            lp.exact2_pause_requested,
+            lp.exact2_release_confirmed,
+            lp.exact2_first_clear_advance
+        );
+        pnp::trace_file_write(line.as_bytes());
+
+'''
+if t.count(anchor) != 1:
+    raise SystemExit(f'v767h exact2 CSV anchor count {t.count(anchor)}')
+t = t.replace(anchor, insert + anchor, 1)
+T.write_text(t)
+
+print('Applied v7.6.7h: observation-only closed-loop physical-UP Exact2 + full Suicune trace')

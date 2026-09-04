@@ -52,6 +52,16 @@ t = t[:line_end] + '\\n' + insert + t[line_end:]
 source = source[:start] + replacement + source[end:]
 exec(compile(source, str(path), 'exec'), {'__name__': '__main__'})
 
+# ARM11/ARMv6K: the generated helper originally used the ARMv7 `dmb` mnemonic.
+# PokeReader's existing physical-alias patches use uncached/volatile accesses
+# directly, so keep the same model and remove the unsupported instruction.
+hid = hid_path.read_text()
+dmb = '  __asm__ volatile("dmb" ::: "memory");\n'
+if hid.count(dmb) != 3:
+    raise SystemExit(f'wrapper: expected 3 ARMv7 dmb lines, got {hid.count(dmb)}')
+hid = hid.replace(dmb, '')
+hid_path.write_text(hid)
+
 # Fail-closed preflight: while the game is still paused and physical UP is
 # already held, prove that the HID word can really be cleared and restored.
 # This prevents the first live rJOYP read from being the first write test.
@@ -62,4 +72,24 @@ new = '''                if (!suicune_live_pass_ready)\n                {\n     
 if c.count(old) != 1:
     raise SystemExit(f'wrapper: stage2 preflight anchor count {c.count(old)}')
 c = c.replace(old, new, 1)
+
+# Any plugin-side key sample must see the restored physical word. The paused
+# bottom-screen loop was already hardened by the apply script; do the same for
+# the normal top-screen sample.
+old = '''    if (isTopScreen)\n    {\n        scan_input();\n        run_frame();\n'''
+new = '''    if (isTopScreen)\n    {\n        hid_up_mask_restore();\n        scan_input();\n        run_frame();\n'''
+if c.count(old) != 1:
+    raise SystemExit(f'wrapper: top-screen restore anchor count {c.count(old)}')
+c = c.replace(old, new, 1)
 main_path.write_text(c)
+
+# Defensive phase packing: keep raw F604 in telemetry, but only its documented
+# low six subcycle bits participate in the 14-bit DIV:subcycle phase value.
+hook_path = Path('reader_core/src/crystal/hook.rs')
+h = hook_path.read_text()
+old = 'LIVE_PASS.first_pass_phase4 = (((div as u16) << 6) | mcycle as u16) & 0x3fff;'
+new = 'LIVE_PASS.first_pass_phase4 = (((div as u16) << 6) | ((mcycle as u16) & 0x3f)) & 0x3fff;'
+if h.count(old) != 1:
+    raise SystemExit(f'wrapper: phase4 packing anchor count {h.count(old)}')
+h = h.replace(old, new, 1)
+hook_path.write_text(h)

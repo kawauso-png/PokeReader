@@ -46,19 +46,21 @@ need(hidc, '*pa = saved;', 'restore exact HID word')
 need(hidc, 'u32 hid_up_mask_restore()', 'HID restore')
 need(hidc, 'u32 hid_up_mask_capable()', 'HID capability gate')
 need(hidc, 'PA_FROM_VA_PTR(g_key_addr)', 'physical alias access')
+need(hidc, '((*pa | *g_key_addr) & KEY_DUP)', 'dual-view mask verification')
+need(hidc, '*pa != saved || *g_key_addr != saved', 'dual-view restore verification')
 forbid(hidc, '| KEY_DUP', 'synthetic/injected UP')
 forbid(hidc, 'g_up_mask_saved |', 'modified restore word')
 need(hidh, 'u32 hid_up_mask_begin();', 'HID header begin')
 need(hidh, 'u32 hid_up_mask_restore();', 'HID header restore')
 need(c, 'hid_up_mask_restore();\n        scan_input();', 'restore before paused HID scan')
 
-# 2) Rust bridge must expose only mask/restore status, not game-memory writes.
+# 2) Rust bridge exposes only reversible HID mask/restore status.
 need(bind, 'pub fn hid_up_mask_begin() -> u32;', 'Rust HID begin binding')
 need(bind, 'pub fn hid_up_mask_restore() -> u32;', 'Rust HID restore binding')
 need(pin, 'pub fn hid_mask_up_begin() -> bool', 'safe HID begin wrapper')
 need(pin, 'pub fn hid_mask_up_restore() -> bool', 'safe HID restore wrapper')
 
-# 3) Live pass acts only on hardware rJOYP (FF00), never hJoy* HRAM.
+# 3) Live pass acts only on hardware rJOYP (FF00), never hJoy* HRAM writes.
 need(h, 'const RJOYP_ADDR: u32 = 0xff00;', 'rJOYP-only target')
 forbid(h, 'JOY_HRAM_FIRST', 'hJoy range masking')
 forbid(h, 'ZERO_SHADOW_GB', 'GB shadow byte')
@@ -92,6 +94,7 @@ need(c, 'static bool suicune_live_pass_ready = false;', 'C readiness state')
 need(c, 'suicune_live_pass_ready = arm_suicune_live_pass() != 0;', 'B-arm readiness capture')
 stage = braced_block(c, 'if (suicune_wait_up_after_b)')
 need(stage, 'if (!suicune_live_pass_ready)', 'fail-closed stage2')
+# Current generated branch includes a paused begin/restore preflight. Preserve it.
 need(stage, 'if (!hid_up_mask_begin())', 'paused HID clear preflight')
 need(stage, 'if (!hid_up_mask_restore())', 'paused HID restore preflight')
 need(stage, 'suicune_live_pass_ready = false;', 'preflight failure latch')
@@ -101,26 +104,38 @@ if stage.index('if (!hid_up_mask_restore())') > stage.index('is_paused = false;'
 forbid(stage, 'fixed_run_pending = true;', 'old paused Exact2F scheduler')
 forbid(stage, 'suicune_auto_resume_pending = true;', 'old timed-resume scheduler')
 
-# 5) Trace stops after the remasked post-window and LIVEPASS CSV is consistent.
-need(t, 'use super::hook::{live_pass_should_finish, live_pass_telemetry};', 'trace live-pass import')
+# 5) v7.6.7b must prove what Crystal itself received through hJoypadDown FF9A.
+need(h, 'pub fn live_pass_observe_hjoypad_down(hjoy: u8)', 'game-side observer')
+need(h, 'const PAD_UP: u8 = 0x40;', 'Gen2 UP bit')
+need(h, 'game_mask_up_advances', 'masked game-UP counter')
+need(h, 'game_pass_up_advances', 'passed game-UP counter')
+need(h, 'game_remask_up_advances', 'remasked game-UP counter')
+need(t, 'live_pass_observe_hjoypad_down(gb_mem::read_u8(0xff9a));', 'FF9A observation')
+forbid(t, 'write_u8(0xff9a', 'FF9A write')
+forbid(t, 'write_u16(0xff9a', 'FF9A write16')
+
+# 6) Trace stops after remask and CSV must be internally consistent.
 need(t, 'if self.probe_session && live_pass_should_finish()', 'auto-stop condition')
 need(t, 'self.stop();\n            self.save();\n            pnp::request_pause();', 'stop-save-pause order')
 need(t, 'first_pass_direct_div,first_pass_phase4', 'direct landing fields in CSV')
 need(t, 'masked_advances,passed_advances', 'mask/pass advance fields in CSV')
+need(t, 'game_observed_advances,game_mask_up_advances,game_pass_up_advances,game_remask_up_advances', 'game verification CSV fields')
+need(t, 'LIVEPASS,V767B', 'verification-layer version stamp')
 
 csv_start = t.index('let lp = live_pass_telemetry();')
 csv_end = t.index('pnp::trace_file_write(line.as_bytes());', csv_start)
 csv = t[csv_start:csv_end]
-m = re.search(r'let _ = write!\(\s*line,\s*"([^"]*LIVEPASS,V767[^"]*)",(.*?)\n\s*\);', csv, re.S)
+m = re.search(r'let _ = write!\(\s*line,\s*"([^"]*LIVEPASS,V767B[^"]*)",(.*?)\n\s*\);', csv, re.S)
 if not m:
-    raise SystemExit('AUDIT FAIL: could not parse LIVEPASS write! block')
+    raise SystemExit('AUDIT FAIL: could not parse LIVEPASS V767B write! block')
 fmt, args = m.groups()
 placeholders = len(re.findall(r'\{[^}]*\}', fmt))
 arg_count = len(re.findall(r'\blp\.', args))
 if placeholders != arg_count:
     raise SystemExit(f'AUDIT FAIL: LIVEPASS format mismatch: {placeholders} placeholders vs {arg_count} lp args')
+if placeholders != 33:
+    raise SystemExit(f'AUDIT FAIL: expected 33 V767B values, got {placeholders}')
 
-print('AUDIT PASS: v7.6.7 uses reversible temporary HID masking at rJOYP only')
-print('AUDIT PASS: paused clear/restore preflight is required before continuous resume')
-print('AUDIT PASS: no synthetic UP, no hJoy/GB-RAM redirect, no RNG/DIV mutation')
-print(f'AUDIT INFO: LIVEPASS values={placeholders}, stage2_len={len(stage)}, live_len={len(live)}')
+print('AUDIT PASS: v7.6.7b reversible HID mask + paused preflight + dual-view verification')
+print('AUDIT PASS: FF9A hJoypadDown observed read-only; no synthetic UP/RNG/DIV/GB-RAM mutation')
+print(f'AUDIT INFO: LIVEPASS V767B values={placeholders}, stage2_len={len(stage)}, live_len={len(live)}')

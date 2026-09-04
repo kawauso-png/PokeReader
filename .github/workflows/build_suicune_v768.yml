@@ -51,7 +51,7 @@ jobs:
       - name: Audit v7.6.7g baseline
         run: python3 audit_suicune_live_pass_v767g.py
       - name: Apply v7.6.8 omnibus exact pass + rel40
-        run: python3 apply_suicune_omnibus_exactpass_v768.py
+        run: python3 run_suicune_omnibus_exactpass_v768.py
       - name: Audit v7.6.8 omnibus
         run: python3 audit_suicune_omnibus_v768.py
       - name: Build v7.6.8
@@ -73,6 +73,7 @@ jobs:
           cp 3gx/includes/pokereader.h v768/3gx/includes/
           cp 3gx/includes/hid.h v768/3gx/includes/
           cp apply_suicune_omnibus_exactpass_v768.py v768/
+          cp run_suicune_omnibus_exactpass_v768.py v768/
           cp audit_suicune_omnibus_v768.py v768/
           cp audit_suicune_live_pass_v767g.py v768/
           sha256sum out/default.3gx > v768/sha256.txt

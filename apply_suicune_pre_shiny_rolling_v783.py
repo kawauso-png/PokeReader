@@ -173,8 +173,8 @@ new_ui = '''            } else if self.practical_candidate_valid {
 '''
 t = rep(t, old_ui, new_ui, 'rolling UI')
 
-# Version tag for the top-level status where available.
-t = t.replace('V782', 'V783', 1) if 'V782' in t else t
+# Keep v7.8.2 constant/function names intact.  Renaming the first textual V782
+# occurrence used to rename only the phase bitset declaration and break build.
 T.write_text(t)
 
 print('Applied v7.8.3 PRE Shiny Rolling Search: A/r10 supported-bucket inverse candidate scan + rel40/tail authority retained')

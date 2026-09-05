@@ -1,4 +1,4 @@
-name: Suicune v7.8.0 Practical Rel40 Score Build
+name: Suicune v7.8.0j Practical Rel40 Score Build
 
 on:
   push:
@@ -64,17 +64,13 @@ jobs:
         run: python3 audit_suicune_live_pass_v767i.py
       - name: Apply v7.6.7j M14 Resume phase lock
         run: python3 apply_suicune_resume_phase_lock_v767j.py
-      - name: Audit v7.6.7j before hook-anchor replacement
+      - name: Audit v7.6.7j
         run: python3 audit_suicune_resume_phase_lock_v767j.py
-      - name: Apply v7.6.7k hook-anchored Resume
-        run: python3 apply_suicune_hook_anchored_resume_v767k.py
-      - name: Audit v7.6.7k hook anchor and scope
-        run: python3 audit_suicune_hook_anchored_resume_v767k.py
       - name: Normalize v7.6.7h rel40 block for v7.8.0
         run: python3 prepare_suicune_rel40_anchor_v780.py
       - name: Apply v7.8.0 observation-only rel40 score probe
         run: python3 apply_suicune_practical_rel40_score_v780.py
-      - name: Verify v7.8.0 markers and scope
+      - name: Verify v7.8.0j markers and scope
         run: |
           grep -q "v7.8.0 PRACTICAL REL40 MODAL SCORE" reader_core/src/crystal/practical.rs
           grep -q "fn v780_canonical_raw" reader_core/src/crystal/practical.rs
@@ -84,31 +80,30 @@ jobs:
           grep -q '"HIGH"}else{"OBSERVE"}' reader_core/src/crystal/trace.rs
           grep -q "self.practical_active=false" reader_core/src/crystal/trace.rs
           ! grep -q "practical_fail(14)" reader_core/src/crystal/trace.rs
-          grep -q "apply_suicune_hook_anchored_resume_v767k.py" .github/workflows/build_suicune_v780.yml
+          ! grep -q "v7.6.7k: anchor post-Exact2 Resume" 3gx/sources/main.c
           ! grep -nE "gb_mem::write|write_u8\(|write_u16\(|rng_state.*=|measured_div.*=" apply_suicune_practical_rel40_score_v780.py
-      - name: Build v7.8.0
+      - name: Build v7.8.0j
         run: make
-      - name: Package v7.8.0
+      - name: Package v7.8.0j
         run: |
-          mkdir -p v780/reader_core/src/crystal v780/reader_core/src/pnp v780/reader_core/src v780/3gx/sources v780/3gx/includes
-          cp out/default.3gx v780/PokeReader-Suicune-v780-PracticalRel40Score.3gx
-          cp reader_core/src/crystal/practical.rs v780/reader_core/src/crystal/
-          cp reader_core/src/crystal/trace.rs v780/reader_core/src/crystal/
-          cp reader_core/src/crystal/hook.rs v780/reader_core/src/crystal/
-          cp reader_core/src/crystal/mod.rs v780/reader_core/src/crystal/
-          cp reader_core/src/lib.rs v780/reader_core/src/
-          cp reader_core/src/pnp/bindings.rs v780/reader_core/src/pnp/
-          cp reader_core/src/pnp/input.rs v780/reader_core/src/pnp/
-          cp 3gx/sources/main.c v780/3gx/sources/
-          cp 3gx/sources/hid.c v780/3gx/sources/
-          cp 3gx/includes/pokereader.h v780/3gx/includes/
-          cp 3gx/includes/hid.h v780/3gx/includes/
-          cp apply_suicune_practical_rel40_score_v780.py v780/
-          cp prepare_suicune_rel40_anchor_v780.py v780/
-          cp apply_suicune_hook_anchored_resume_v767k.py v780/
-          sha256sum out/default.3gx > v780/sha256.txt
+          mkdir -p v780j/reader_core/src/crystal v780j/reader_core/src/pnp v780j/reader_core/src v780j/3gx/sources v780j/3gx/includes
+          cp out/default.3gx v780j/PokeReader-Suicune-v780j-PracticalRel40Score.3gx
+          cp reader_core/src/crystal/practical.rs v780j/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs v780j/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v780j/reader_core/src/crystal/
+          cp reader_core/src/crystal/mod.rs v780j/reader_core/src/crystal/
+          cp reader_core/src/lib.rs v780j/reader_core/src/
+          cp reader_core/src/pnp/bindings.rs v780j/reader_core/src/pnp/
+          cp reader_core/src/pnp/input.rs v780j/reader_core/src/pnp/
+          cp 3gx/sources/main.c v780j/3gx/sources/
+          cp 3gx/sources/hid.c v780j/3gx/sources/
+          cp 3gx/includes/pokereader.h v780j/3gx/includes/
+          cp 3gx/includes/hid.h v780j/3gx/includes/
+          cp apply_suicune_practical_rel40_score_v780.py v780j/
+          cp prepare_suicune_rel40_anchor_v780.py v780j/
+          sha256sum out/default.3gx > v780j/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v780-PracticalRel40Score
-          path: v780
+          name: PokeReader-Suicune-v780j-PracticalRel40Score
+          path: v780j
           retention-days: 7

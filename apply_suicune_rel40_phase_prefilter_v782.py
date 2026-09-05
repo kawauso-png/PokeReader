@@ -54,10 +54,10 @@ fn v782_rel40_any_shiny_phase(rel40_ap4: u16) -> bool {
     // rate for false-negative protection.  Historical compatible traces:
     // 47 checked, every actually shiny-capable endpoint phase passes.
     const RANGES: [(u16, u16); 4] = [
-        (202, 236),       // measured 218..220
-        (1371, 1416),     // measured 1387..1400
-        (2544, 2579),     // measured 2560..2563
-        (15413, 15450),   // measured 15429..15434 (mod 0x4000)
+        (202, 236),
+        (1371, 1416),
+        (2544, 2579),
+        (15413, 15450),
     ];
     let mut r = 0usize;
     while r < RANGES.len() {
@@ -80,7 +80,7 @@ if marker not in t:
 t = t.replace(marker, insert + marker, 1)
 
 old_rel40 = '''                self.practical_post_proto=post.proto;self.practical_post_rot=post.rot40;self.practical_post_score=post.best_score;\n                // v7.6.4: live DivTracker indices can temporarily be unavailable after Exact2F.\n'''
-new_rel40 = '''                self.practical_post_proto=post.proto;self.practical_post_rot=post.rot40;self.practical_post_score=post.best_score;\n\n                // v7.8.2 hard-negative phase prefilter.  This does not predict\n                // the final state and never selects one stop/route branch.  It\n                // asks only whether *any* conservatively compatible endpoint\n                // AP4 class can produce a shiny under any state/profile.\n                if !v782_rel40_any_shiny_phase(e.ap4) {\n                    self.practical_miss = 15;\n                    self.practical_terminal_advance = rng_advance();\n                    self.practical_active = false;\n                    self.probe_active = false;\n                    deep_log_stop();\n                    call_log_stop();\n                    self.state = TraceState::Done;\n                    self.save();\n                    pnp::request_pause();\n                    return;\n                }\n\n                // v7.6.4: live DivTracker indices can temporarily be unavailable after Exact2F.\n'''
+new_rel40 = '''                self.practical_post_proto=post.proto;self.practical_post_rot=post.rot40;self.practical_post_score=post.best_score;\n\n                // v7.8.2 hard-negative phase prefilter.  This does not predict\n                // the final state and never selects one stop/route branch.  It\n                // asks only whether *any* conservatively compatible endpoint\n                // AP4 class can produce a shiny under any state/profile.\n                let rel40_ap4 = direct_phase_m((e.div >> 8) as u8, e.asub);\n                if !v782_rel40_any_shiny_phase(rel40_ap4) {\n                    self.practical_miss = 15;\n                    self.practical_terminal_advance = rng_advance();\n                    self.practical_active = false;\n                    self.probe_active = false;\n                    deep_log_stop();\n                    call_log_stop();\n                    self.state = TraceState::Done;\n                    self.save();\n                    pnp::request_pause();\n                    return;\n                }\n\n                // v7.6.4: live DivTracker indices can temporarily be unavailable after Exact2F.\n'''
 t = rep(t, old_rel40, new_rel40, 'rel40 phase prefilter')
 
 old_ui = '''            } else if self.practical_miss == 14 {\n                pnp::println!("TAIL NO SHINY");\n                pnp::println!("CAND {} SH{}",self.practical_support,self.practical_mask);\n            } else {\n'''

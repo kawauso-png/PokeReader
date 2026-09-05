@@ -72,7 +72,7 @@ jobs:
         run: python3 audit_suicune_hook_anchored_resume_v767k.py
       - name: Normalize v7.6.7h rel40 block for v7.8.0
         run: python3 prepare_suicune_rel40_anchor_v780.py
-      - name: Apply v7.8.0 practical rel40 score gate
+      - name: Apply v7.8.0 observation-only rel40 score probe
         run: python3 apply_suicune_practical_rel40_score_v780.py
       - name: Verify v7.8.0 markers and scope
         run: |
@@ -80,8 +80,10 @@ jobs:
           grep -q "fn v780_canonical_raw" reader_core/src/crystal/practical.rs
           grep -q "evaluate_rel40_mode_v780" reader_core/src/crystal/practical.rs
           grep -q "REL40SCORE,V780" reader_core/src/crystal/trace.rs
-          grep -q "S780 REL40 SKIP" reader_core/src/crystal/trace.rs
-          grep -q "q.score>=20" reader_core/src/crystal/trace.rs
+          grep -q "v7.8.0 EXP: score ACTUAL rel40" reader_core/src/crystal/trace.rs
+          grep -q '"HIGH"}else{"OBSERVE"}' reader_core/src/crystal/trace.rs
+          grep -q "self.practical_active=false" reader_core/src/crystal/trace.rs
+          ! grep -q "practical_fail(14)" reader_core/src/crystal/trace.rs
           grep -q "apply_suicune_hook_anchored_resume_v767k.py" .github/workflows/build_suicune_v780.yml
           ! grep -nE "gb_mem::write|write_u8\(|write_u16\(|rng_state.*=|measured_div.*=" apply_suicune_practical_rel40_score_v780.py
       - name: Build v7.8.0

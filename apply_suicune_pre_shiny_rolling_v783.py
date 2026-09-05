@@ -36,15 +36,20 @@ t = T.read_text()
 # while 3GX observes roots; only a root whose finite historical hypotheses can
 # connect to a shiny raw causes AutoPause.
 #
+# The PRE cell remains A/r10, but the rolling search is allowed to use every
+# bucket within the already-observed five donor neighborhoods (the evaluator's
+# distance<=16 support).  This makes the automatic wait practical without
+# weakening the authoritative downstream gates.
+#
 # This PRE screen is intentionally NOT authoritative.  It may produce false
 # positives because PRE->tail transport is not deterministic.  The actual
 # rel40 impossible-phase gate and v7.8.1 DV-2 exact-tail gate remain authoritative
 # hard-negative filters.  No RNG/DIV/DV/input memory is written.
 
-# The inverse weighted evaluator previously required score >=12.  For bucket76
-# the score is a ranking/support quantity, not a physical probability.  A single
-# observed minor deep profile contributes ~6 support points.  Accept it as a
-# coarse rolling candidate; later exact gates decide whether the run survives.
+# The inverse weighted evaluator previously required score >=12.  The score is
+# a ranking/support quantity, not a physical probability.  A single observed
+# minor deep profile contributes about 6 support points, which is useful as a
+# coarse rolling candidate because later exact gates decide whether it survives.
 p = rep(
     p,
     'let score=((sw.saturating_mul(100)+total/2)/total).min(100)as u8;if score<12{return None}',
@@ -56,8 +61,9 @@ P.write_text(p)
 new_monitor = r'''    fn live_root_monitor(&mut self, reader: &Gen2Reader) {
         // v7.8.3 PRE SHINY ROLLING SEARCH.
         // Observe natural roots continuously and pause only when the current
-        // exact A/r10 bucket76 root passes the inverse shiny candidate screen.
-        // The PRE score is ranking/support only; rel40 + DV-2 remain authority.
+        // exact A/r10 root passes the inverse shiny candidate screen in one of
+        // the supported measured bucket neighborhoods.  The PRE score is only
+        // ranking/support; rel40 + DV-2 remain authoritative.
         if !self.practical_scan_enabled || !self.practical_live_scan
             || self.probe_session || self.practical_active || self.practical_candidate_valid
         {
@@ -93,11 +99,6 @@ new_monitor = r'''    fn live_root_monitor(&mut self, reader: &Gen2Reader) {
         let bucket = ((pd >> 6) & 0xff) as u8;
         self.bucket_current = bucket;
 
-        // Keep the validated physical-flow root class for this first production
-        // rolling build.  Other A/r10 buckets can be added later without
-        // changing the authoritative downstream gates.
-        if bucket != 76 { return; }
-
         let Some(ai0) = add_div_tracker().index() else {
             self.practical_live_index_wait = self.practical_live_index_wait.saturating_add(1);
             return;
@@ -113,8 +114,8 @@ new_monitor = r'''    fn live_root_monitor(&mut self, reader: &Gen2Reader) {
         let Some(bp) = practical::evaluate_weighted_bucket_inverse(
             bucket, reader.rng_state(), measured_div(), ai, si
         ) else {
-            // No shiny connection under the PRE hypothesis union: keep scanning
-            // naturally.  Nothing is paused and no user action is required.
+            // No shiny connection under any supported PRE hypothesis: keep
+            // scanning naturally.  No pause and no user action are required.
             return;
         };
 
@@ -162,8 +163,7 @@ old_ui = '''            } else if self.practical_candidate_valid {
 new_ui = '''            } else if self.practical_candidate_valid {
                 pnp::println!("S783 PRE SHINY CAND");
                 pnp::println!("W{} M{:02X} DV{:04X}",self.practical_support,self.practical_mask,self.practical_raw);
-                pnp::println!("T{} B{} POST {}/r{}",self.practical_target,self.bucket_current,
-                    if self.bucket_expected_post_proto==0{'?'}else{self.bucket_expected_post_proto as char},self.bucket_expected_post_rot);
+                pnp::println!("T{} B{} A{} D{}",self.practical_target,self.bucket_current,self.bucket_anchor,self.bucket_distance);
                 pnp::println!("B -> RELEASE -> UP");
             } else {
                 pnp::println!("S783 PRE SHINY SCAN");
@@ -177,4 +177,4 @@ t = rep(t, old_ui, new_ui, 'rolling UI')
 t = t.replace('V782', 'V783', 1) if 'V782' in t else t
 T.write_text(t)
 
-print('Applied v7.8.3 PRE Shiny Rolling Search: A/r10 B76 inverse candidate scan + rel40/tail authority retained')
+print('Applied v7.8.3 PRE Shiny Rolling Search: A/r10 supported-bucket inverse candidate scan + rel40/tail authority retained')

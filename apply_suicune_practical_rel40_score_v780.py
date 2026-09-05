@@ -13,12 +13,10 @@ if MARK in p or 'REL40SCORE,V780' in t:
 helper = r'''
 
 // v7.8.0 PRACTICAL REL40 MODAL SCORE
-//
-// This deliberately starts from the ACTUAL rel40 root.  PRE->rel40 was not
-// stable enough in the i/j corpus to justify a pre-input shiny claim.  The
-// canonical tail is only a coordinate system: rows122/G581, persistent
-// -5645 AP4 shift from rel717, and route3 P0/P0 deep.  We then apply the
-// repeatedly observed full-raw residual mode for well-supported POST cells.
+// Observation-only bridge-validation build.  The score starts from ACTUAL
+// rel40 because PRE->rel40 was not stable enough in the i/j corpus to justify
+// a pre-input shiny claim.  The canonical tail is only a coordinate system:
+// rows122/G581, persistent -5645 AP4 shift from rel717, route3 P0/P0 deep.
 // No game memory, RNG, DIV, DV, save, or input is written here.
 #[derive(Clone, Copy, Default)]
 pub struct V780Rel40Score {
@@ -58,10 +56,6 @@ fn v780_canonical_raw(state40: u16, ap40: u16) -> u16 {
 
     let mut st = state40;
     let mut last_ap = ap40 & 0x3fff;
-
-    // Current trace convention: actual rel40 -> canonical DV rel729.
-    // Run the hypothetical normal state THROUGH the DV frame, matching the
-    // corrected offline model, then replace its battle tail with P0/P0 deep.
     let mut rel = 41u32;
     while rel <= 729 {
         let d = (FRAME_M * (rel - 40)) % MOD;
@@ -97,10 +91,10 @@ fn v780_canonical_raw(state40: u16, ap40: u16) -> u16 {
 pub fn evaluate_rel40_mode_v780(proto: u8, rot: u8, state40: u16, ap40: u16) -> V780Rel40Score {
     let canonical = v780_canonical_raw(state40, ap40);
 
-    // Repeated modes only.  Singleton residuals are intentionally excluded.
-    // Counts are from the 45 Pause-compatible i/j traces used for the rel40
-    // model.  LOO translation test with min training cell n=4: 32/136 =
-    // 23.53% shiny among accepted counterfactual states.
+    // Repeated modes only; singleton residuals are intentionally excluded.
+    // i/j Pause45 source counts:
+    // A/r2 (+4,+4) 2/7; B/r9 (-2,-2) 2/4;
+    // C/r2 (-35,-35) 2/7; D/r2 (-2,-2) 4/7.
     let (rh, rl, n, count, empirical_score) = match (proto, rot) {
         (b'A', 2) => (4u8,   4u8,   7u8, 2u8, 29u8),
         (b'B', 9) => (254u8, 254u8, 4u8, 2u8, 50u8),
@@ -133,58 +127,23 @@ old_gate = '''                // v7.6.6 ends every diagnostic run at rel40 after
                 // 700-frame tail and makes each M replicate fast and comparable.
                 self.practical_fail(13);return
 '''
-new_gate = '''                // v7.8.0: the shiny decision begins only from the ACTUAL rel40
-                // root.  PRE->rel40 is deliberately not trusted as a shiny
-                // predictor.  Score >=20 means the repeated residual mode of a
-                // supported POST cell lands on a legal shiny raw DV.
+new_gate = '''                // v7.8.0 EXP: score ACTUAL rel40 but never gate this validation
+                // run.  Every k run reaches the native final DV so PRE->rel40 and
+                // rel40->DV can both be measured without selection bias.
                 let ap40=direct_phase_m(((e.div>>8)&0xff) as u8,e.asub);
                 let q=practical::evaluate_rel40_mode_v780(post.proto,post.rot40,e.state,ap40);
                 self.practical_support=q.score;
                 self.practical_raw=q.predicted_raw;
                 self.practical_mask=q.mode_count;
-                if q.score>=20 {
-                    // Detach the old practical-tail assertions.  From this point
-                    // the game must run naturally; only Trace/result observation
-                    // remains active.  No RNG/DIV/DV/input mutation occurs.
-                    self.practical_active=false;
-                    self.practical_candidate_valid=false;
-                    self.bucket_model_active=false;
-                    self.practical_miss=0;
-                    return
-                }
-                // Non-candidate: stop early at rel40 and recommend a fresh try.
-                self.practical_fail(14);return
+                self.practical_active=false;
+                self.practical_candidate_valid=false;
+                self.bucket_model_active=false;
+                self.practical_miss=0;
+                return
 '''
 if t.count(old_gate) != 1:
     raise SystemExit(f'v780 rel40 gate anchor count {t.count(old_gate)}')
 t = t.replace(old_gate, new_gate, 1)
-
-old_ui = '''            if self.practical_miss==13 {
-                pnp::println!("S766 REL40 CAPTURED");
-'''
-new_ui = '''            if self.practical_miss==14 {
-                pnp::println!("S780 REL40 SKIP");
-                pnp::println!("P{}/r{} SCORE{}",self.practical_post_proto as char,self.practical_post_rot,self.practical_support);
-                pnp::println!("MODE DV{:04X}",self.practical_raw);
-                pnp::println!("SAVE OK - RESET VC");
-            } else if self.practical_miss==13 {
-                pnp::println!("S766 REL40 CAPTURED");
-'''
-if t.count(old_ui) != 1:
-    raise SystemExit(f'v780 UI anchor count {t.count(old_ui)}')
-t = t.replace(old_ui, new_ui, 1)
-
-old_why = '''            } else if self.practical_miss == 13 {
-                pnp::println!("WHY REL40 CAPTURE");
-            } else {'''
-new_why = '''            } else if self.practical_miss == 13 {
-                pnp::println!("WHY REL40 CAPTURE");
-            } else if self.practical_miss == 14 {
-                pnp::println!("WHY REL40 SCORE SKIP");
-            } else {'''
-if t.count(old_why) != 1:
-    raise SystemExit(f'v780 why anchor count {t.count(old_why)}')
-t = t.replace(old_why, new_why, 1)
 
 close = '        pnp::trace_file_close();\n'
 pos = t.rfind(close)
@@ -194,11 +153,11 @@ telemetry = '''        line.clear();
         let _=write!(line,"\\nrel40_score,version,post_proto,post_rot,score,mode_count,pred_raw,decision,miss\\nREL40SCORE,V780,{},{},{},{},{:04X},{},{}\\n",
             if self.practical_post_proto==0{'?'}else{self.practical_post_proto as char},
             self.practical_post_rot,self.practical_support,self.practical_mask,self.practical_raw,
-            if self.practical_support>=20{"CONTINUE"}else{"SKIP"},self.practical_miss);
+            if self.practical_support>=20{"HIGH"}else{"OBSERVE"},self.practical_miss);
         pnp::trace_file_write(line.as_bytes());
 
 '''
 t = t[:pos] + telemetry + t[pos:]
 T.write_text(t)
 
-print('Applied v7.8.0 practical rel40 modal score gate')
+print('Applied v7.8.0 observation-only rel40 modal score probe')

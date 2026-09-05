@@ -42,6 +42,30 @@ c = replace_once(c, old_selector, new_selector, 'root-ready slot selector')
 old_arm = '''            suicune_start_phase_slot = 0;\n            suicune_start_phase_lock_active = true;\n            suicune_start_phase_anchor_tick = 0;'''
 new_arm = '''            // v7.8.5: preserve the user-selected live-start slot across B ARM.\n            suicune_start_phase_lock_active = true;\n            suicune_start_phase_anchor_tick = 0;'''
 c = replace_once(c, old_arm, new_arm, 'preserve selected start slot')
+
+# v7.8.5 audit fix: two legacy v7.4.x paths still forced START back to M0.
+# They are not authoritative for the current FFA4 Exact2 route, but leaving
+# them in place makes Y=-1 selection silently collapse to M0 on the next HID
+# poll and can also mis-label any legacy fixed-run diagnostics.
+old_legacy_start = '''                    const u32 wanted_start_cycle = 0U;'''
+new_legacy_start = '''                    const u32 wanted_start_cycle = suicune_start_phase_slot & 15U;'''
+c = replace_once(c, old_legacy_start, new_legacy_start, 'legacy selected start cycle')
+
+old_legacy_overwrite = '''                    suicune_start_phase_slot = wanted_start_cycle;
+                    suicune_start_phase_anchor_tick = target;
+                    suicune_start_phase_target_tick = target;'''
+new_legacy_overwrite = '''                    suicune_start_phase_anchor_tick = now;
+                    suicune_start_phase_target_tick = target;'''
+c = replace_once(c, old_legacy_overwrite, new_legacy_overwrite, 'legacy start telemetry without slot overwrite')
+
+old_y_reset = '''            // v7.4.1: START phase is not user-selectable during the sweep.
+            // It is always absolute host cycle mod16 == 0.
+            suicune_start_phase_slot = 0;
+'''
+new_y_reset = '''            // v7.8.5: START phase selection persists until changed at ROOT READY.
+'''
+c = replace_once(c, old_y_reset, new_y_reset, 'remove stale Y-block M0 reset')
+
 C.write_text(c)
 
 # Rust side: replace model-based shiny root selector with a controlled A/r10,

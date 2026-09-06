@@ -16,8 +16,8 @@ for old, new in (
      '// display-cycle slot. No RNG/DIV/GB input value is written.'),
     ('// v7.8.5 start-slot selector.  Exact2 release/resume is deliberately',
      '// v7.8.5 start-slot selector. Exact2 release/resume is deliberately'),
-    ('// transport-phase lever under test.',
-     '// transport-phase lever under test.'),
+    ('// transport-phase lever begins.  This isolates',
+     '// transport-phase lever begins. This isolates'),
 ):
     s = s.replace(old, new)
 

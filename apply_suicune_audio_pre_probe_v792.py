@@ -24,8 +24,8 @@ t = rep(t,
 '''const V792_AUDIO_PRE_BASE: u32 = 0x0000c100;\nconst V792_AUDIO_PRE_LEN: usize = 0x1c0; // C100..C2BF inclusive\nstatic mut V792_AUDIO_PRE: [u8; V792_AUDIO_PRE_LEN] = [0; V792_AUDIO_PRE_LEN];\nstatic mut V792_AUDIO_PRE_VALID: bool = false;\nstatic mut V792_AUDIO_PRE_TARGET: u32 = 0xffffffff;\n\nconst V790_CPU_CTX_BASE: u32 = 0x0022f5e0;\n''',
 'globals')
 
-needle = '''        self.probe_result = None;\n        self.probe_active = true;\n        self.probe_session = true;\n        self.state = TraceState::Armed;\n'''
-insert = '''        self.probe_result = None;\n\n        // v7.9.2 PRE-UP audio snapshot. arm_suicune_probe() runs in the host\n        // pause loop, so these 448 read-only guest WRAM reads occur while the\n        // game is frozen and cannot alter the subsequent Exact2/M14 timing.\n        unsafe {\n            for i in 0..V792_AUDIO_PRE_LEN {\n                V792_AUDIO_PRE[i] = gb_mem::read_u8(V792_AUDIO_PRE_BASE + i as u32);\n            }\n            V792_AUDIO_PRE_TARGET = self.probe_target.advance;\n            V792_AUDIO_PRE_VALID = true;\n        }\n\n        self.probe_active = true;\n        self.probe_session = true;\n        self.state = TraceState::Armed;\n'''
+needle = '''        deep_log_clear();\n        self.probe_target = ProbeTarget {\n'''
+insert = '''        deep_log_clear();\n\n        // v7.9.2 PRE-UP audio snapshot. arm_suicune_probe() runs in the host\n        // pause loop, so these 448 read-only guest WRAM reads occur while the\n        // game is frozen and cannot alter the subsequent Exact2/M14 timing.\n        unsafe {\n            for i in 0..V792_AUDIO_PRE_LEN {\n                V792_AUDIO_PRE[i] = gb_mem::read_u8(V792_AUDIO_PRE_BASE + i as u32);\n            }\n            V792_AUDIO_PRE_TARGET = rng_advance();\n            V792_AUDIO_PRE_VALID = true;\n        }\n\n        self.probe_target = ProbeTarget {\n'''
 t = rep(t, needle, insert, 'arm snapshot')
 
 needle2 = '''        line.clear();\n        let _ = write!(line, "\\nstall_cpu_ctx,version,valid,target,pc,div,sub,bank,base,len,ctx_hex\\n");\n'''

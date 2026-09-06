@@ -16,8 +16,8 @@ for old, new in (
      '// display-cycle slot. No RNG/DIV/GB input value is written.'),
     ('// v7.8.5 start-slot selector.  Exact2 release/resume is deliberately',
      '// v7.8.5 start-slot selector. Exact2 release/resume is deliberately'),
-    ('// transport-phase lever begins.  This isolates',
-     '// transport-phase lever begins. This isolates'),
+    ('// which the live masked path begins.  This isolates the upstream',
+     '// which the live masked path begins. This isolates the upstream'),
 ):
     s = s.replace(old, new)
 

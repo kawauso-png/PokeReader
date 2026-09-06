@@ -28,8 +28,8 @@ t = rep(t,
 '''        sample_rom_bank: 0xff,\n        sample_hvblank: 0xff,\n        sample_lcdc: 0xff,\n        sample_vblank_counter: 0xff,\n        sample_if: 0xff,\n        sample_ie: 0xff,\n    };''',
 'defaults')
 
-old = '''        let (sample_pc, sample_live_div, sample_live_sub, sample_rom_bank) = if self.probe_session && sample_rel <= 40 {\n            (reader.pc_reg(), reader.div(), pnp::read::<u8>(0x0022f604), gb_mem::read_u8(0xff9d))\n        } else {\n            (0xffff, 0xff, 0xff, 0xff)\n        };'''
-new = '''        let (sample_pc, sample_live_div, sample_live_sub, sample_rom_bank,\n             sample_hvblank, sample_lcdc, sample_vblank_counter, sample_if, sample_ie) =\n            if self.probe_session && sample_rel <= 40 {\n                (reader.pc_reg(), reader.div(), pnp::read::<u8>(0x0022f604), gb_mem::read_u8(0xff9d),\n                 gb_mem::read_u8(0xff9e), gb_mem::read_u8(0xff40), gb_mem::read_u8(0xff9b),\n                 gb_mem::read_u8(0xff0f), gb_mem::read_u8(0xffff))\n            } else {\n                (0xffff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff)\n            };'''
+old = '''        let (sample_pc, sample_live_div, sample_live_sub, sample_rom_bank) =\n            if self.probe_session && sample_rel <= 40 {\n                (\n                    reader.pc_reg(),\n                    reader.div(),\n                    pnp::read::<u8>(0x0022f604),\n                    gb_mem::read_u8(0xff9d),\n                )\n            } else {\n                (0xffff, 0xff, 0xff, 0xff)\n            };'''
+new = '''        let (sample_pc, sample_live_div, sample_live_sub, sample_rom_bank,\n             sample_hvblank, sample_lcdc, sample_vblank_counter, sample_if, sample_ie) =\n            if self.probe_session && sample_rel <= 40 {\n                (\n                    reader.pc_reg(),\n                    reader.div(),\n                    pnp::read::<u8>(0x0022f604),\n                    gb_mem::read_u8(0xff9d),\n                    gb_mem::read_u8(0xff9e),\n                    gb_mem::read_u8(0xff40),\n                    gb_mem::read_u8(0xff9b),\n                    gb_mem::read_u8(0xff0f),\n                    gb_mem::read_u8(0xffff),\n                )\n            } else {\n                (0xffff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff)\n            };'''
 t = rep(t, old, new, 'capture tuple')
 
 t = rep(t,
@@ -38,13 +38,13 @@ t = rep(t,
 'entry capture')
 
 t = rep(t,
-'''sample_pc,sample_live_div,sample_live_sub,sample_rom_bank\\n"''',
-'''sample_pc,sample_live_div,sample_live_sub,sample_rom_bank,sample_hvblank,sample_lcdc,sample_vblank_counter,sample_if,sample_ie\\n"''',
+'''celebi_species,sample_pc,sample_live_div,sample_live_sub,sample_rom_bank\\n"''',
+'''celebi_species,sample_pc,sample_live_div,sample_live_sub,sample_rom_bank,sample_hvblank,sample_lcdc,sample_vblank_counter,sample_if,sample_ie\\n"''',
 'csv header')
 
 t = rep(t,
-'''                "{},{},{:04X},{:02X},{:02X},{:02X}\\n",\n                (entry.flags & FLAG_WATCH_CHANGED != 0) as u8,\n                (entry.flags & FLAG_CELEBI_SPECIES != 0) as u8,\n                entry.sample_pc,\n                entry.sample_live_div,\n                entry.sample_live_sub,\n                entry.sample_rom_bank\n''',
-'''                "{},{},{:04X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X}\\n",\n                (entry.flags & FLAG_WATCH_CHANGED != 0) as u8,\n                (entry.flags & FLAG_CELEBI_SPECIES != 0) as u8,\n                entry.sample_pc,\n                entry.sample_live_div,\n                entry.sample_live_sub,\n                entry.sample_rom_bank,\n                entry.sample_hvblank,\n                entry.sample_lcdc,\n                entry.sample_vblank_counter,\n                entry.sample_if,\n                entry.sample_ie\n''',
+'''                "{},{},{:04X},{:02X},{:02X},{:02X}\\n",\n                (entry.flags & FLAG_WATCH_CHANGED != 0) as u8,\n                (entry.flags & FLAG_CELEBI_SPECIES != 0) as u8,\n                entry.sample_pc,\n                entry.sample_live_div,\n                entry.sample_live_sub,\n                entry.sample_rom_bank\n            );''',
+'''                "{},{},{:04X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X},{:02X}\\n",\n                (entry.flags & FLAG_WATCH_CHANGED != 0) as u8,\n                (entry.flags & FLAG_CELEBI_SPECIES != 0) as u8,\n                entry.sample_pc,\n                entry.sample_live_div,\n                entry.sample_live_sub,\n                entry.sample_rom_bank,\n                entry.sample_hvblank,\n                entry.sample_lcdc,\n                entry.sample_vblank_counter,\n                entry.sample_if,\n                entry.sample_ie\n            );''',
 'csv tail')
 
 needle = 'STALLPHASE,V788,rel0-40'

@@ -1,0 +1,123 @@
+name: Suicune v7.9.7 K Boundary Blind Build
+
+on:
+  push:
+    branches:
+      - suicune-v797-k-boundary-blind
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+
+      - name: Generate v7.4.4 baseline
+        run: |
+          python3 - <<'PYINNER'
+          from pathlib import Path
+          s=Path('.github/workflows/build_suicune_stage3_v744.yml').read_text()
+          marker='      - name: Generate Stage3 v7.4.4\n        run: |\n'
+          a=s.index(marker)+len(marker)
+          b=s.index('      - name: Build v7.4.4',a)
+          body=s[a:b]
+          Path('/tmp/gen_v744.sh').write_text('\n'.join((x[10:] if x.startswith('          ') else x) for x in body.splitlines())+'\n')
+          PYINNER
+          sh /tmp/gen_v744.sh
+
+      - name: Apply probe chain through v7.9.2
+        run: |
+          set -e
+          for s in \
+            apply_suicune_weighted_root_selector_v760.py \
+            apply_suicune_multipre_inverse_v762.py \
+            apply_suicune_rel40_inverse_gate_v763.py \
+            apply_suicune_rel40_index_fallback_v764.py \
+            apply_suicune_phase_utility_probe_v766.py \
+            run_suicune_live_pass_jitter_probe_v767.py \
+            apply_suicune_live_pass_verify_v767c.py \
+            apply_suicune_live_pass_verify_v767d.py \
+            apply_suicune_live_pass_nomask_baseline_v767e.py \
+            apply_suicune_live_pass_joymap_v767f.py \
+            apply_suicune_closed_loop_exact2_v767h.py \
+            apply_suicune_closed_loop_exact2_v767i.py \
+            apply_suicune_resume_phase_lock_v767j.py \
+            apply_suicune_hybrid_hunt_v780.py \
+            apply_suicune_progressive_exact_tail_v781.py \
+            apply_suicune_rel40_phase_prefilter_v782.py \
+            apply_suicune_pre_shiny_rolling_v783.py \
+            apply_suicune_multipre_rolling_v784.py \
+            apply_suicune_shiny_phase_probe_v785.py \
+            normalize_suicune_v786_inputs.py \
+            apply_suicune_neutral_phase_probe_v786.py \
+            fix_suicune_v786_csv_format.py \
+            apply_suicune_stall_pc_probe_v787.py \
+            apply_suicune_stall_phase_probe_v788.py \
+            apply_suicune_vblank_audio_probe_v789.py \
+            apply_suicune_stall_cpuctx_probe_v790.py \
+            apply_suicune_trace_slot_fix_v791.py \
+            apply_suicune_audio_pre_probe_v792.py
+          do
+            python3 "$s"
+          done
+
+      - name: Apply v7.9.6 mechanistic J predictor
+        run: python3 apply_suicune_mechanistic_j_probe_v796.py
+
+      - name: Apply v7.9.7 K boundary blind probe
+        run: python3 apply_suicune_k_boundary_blind_v797.py
+
+      - name: Verify v7.9.7 invariants
+        run: |
+          grep -q 'JPRED,V796' reader_core/src/crystal/trace.rs
+          grep -Fq 'STALLPHASE,V797,rel0-40+vblankirq+cpuctx84+audiopre+jpred-sd+kbound' reader_core/src/crystal/trace.rs
+          grep -q 'KBOUND,V797' reader_core/src/crystal/trace.rs
+          grep -q 'v797_boundary_capture_start' reader_core/src/crystal/trace.rs
+          grep -q 'v797_boundary_capture_sample' reader_core/src/crystal/hook.rs
+          grep -q 'V797_BOUNDARY_STACK_LEN: usize = 12' reader_core/src/crystal/hook.rs
+          grep -q 'CRYSTAL_CPU_CTX_BASE + 0x1e' reader_core/src/crystal/hook.rs
+          grep -q 'wrapping_add(10)' apply_suicune_k_boundary_blind_v797.py || grep -q 'raw\[10\]' apply_suicune_k_boundary_blind_v797.py
+          grep -q 'v7.9.7 blind-test override' reader_core/src/crystal/trace.rs
+          ! grep -q 'self.practical_miss = 14' reader_core/src/crystal/trace.rs
+          grep -q 'host_v796_table_load' reader_core/src/pnp/bindings.rs
+          grep -q '/luma/plugins/pokereader/suicune_j_table_v796.bin' 3gx/sources/main.c
+          grep -q 'JOY_HJOYPAD_DOWN' reader_core/src/crystal/hook.rs
+          grep -q 'const u32 wanted = 14U' 3gx/sources/main.c
+          ! grep -q 'write_u8' apply_suicune_k_boundary_blind_v797.py
+          ! grep -q 'write_u16' apply_suicune_k_boundary_blind_v797.py
+
+      - name: Build v7.9.7
+        run: make
+
+      - name: Package v7.9.7
+        run: |
+          mkdir -p v797/reader_core/src/crystal v797/reader_core/src/pnp v797/3gx/sources
+          cp out/default.3gx v797/PokeReader-Suicune-v797-KBoundaryBlind.3gx
+          cp reader_core/src/crystal/trace.rs v797/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v797/reader_core/src/crystal/
+          cp reader_core/src/pnp/bindings.rs v797/reader_core/src/pnp/
+          cp reader_core/src/pnp/utils.rs v797/reader_core/src/pnp/
+          cp 3gx/sources/main.c v797/3gx/sources/
+          cp apply_suicune_mechanistic_j_probe_v796.py v797/
+          cp apply_suicune_k_boundary_blind_v797.py v797/
+          printf '%s\n' \
+            'v7.9.7 blind test: exact-tail hard negative does NOT abort at DV-2.' \
+            'Native final DV is allowed to complete and is recorded as ground truth.' \
+            'KBOUND captures rel18..45 VBlank-A SP + SP+10 return-PC candidate + 12 stack bytes.' \
+            'Required SD file: /luma/plugins/pokereader/suicune_j_table_v796.bin' \
+            'Size: 127656 bytes' \
+            'SHA256: f68a7fa6d34e17e764b160f7bfea66465dde6703a92cd8affaca1e4c388ee3e4' \
+            > v797/README_V797.txt
+          sha256sum out/default.3gx > v797/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v797-KBoundaryBlind
+          path: v797
+          retention-days: 7

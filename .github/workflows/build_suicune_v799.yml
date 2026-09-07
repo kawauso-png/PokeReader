@@ -1,0 +1,140 @@
+name: Suicune v7.9.9 Self-Cal Drift Telemetry Build
+
+on:
+  push:
+    branches:
+      - suicune-v799-selfcal-drift-telemetry
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+
+      - name: Generate v7.4.4 baseline
+        run: |
+          python3 - <<'PYINNER'
+          from pathlib import Path
+          s=Path('.github/workflows/build_suicune_stage3_v744.yml').read_text()
+          marker='      - name: Generate Stage3 v7.4.4\n        run: |\n'
+          a=s.index(marker)+len(marker)
+          b=s.index('      - name: Build v7.4.4',a)
+          body=s[a:b]
+          Path('/tmp/gen_v744.sh').write_text('\n'.join((x[10:] if x.startswith('          ') else x) for x in body.splitlines())+'\n')
+          PYINNER
+          sh /tmp/gen_v744.sh
+
+      - name: Apply probe chain through v7.9.2
+        run: |
+          set -e
+          for s in \
+            apply_suicune_weighted_root_selector_v760.py \
+            apply_suicune_multipre_inverse_v762.py \
+            apply_suicune_rel40_inverse_gate_v763.py \
+            apply_suicune_rel40_index_fallback_v764.py \
+            apply_suicune_phase_utility_probe_v766.py \
+            run_suicune_live_pass_jitter_probe_v767.py \
+            apply_suicune_live_pass_verify_v767c.py \
+            apply_suicune_live_pass_verify_v767d.py \
+            apply_suicune_live_pass_nomask_baseline_v767e.py \
+            apply_suicune_live_pass_joymap_v767f.py \
+            apply_suicune_closed_loop_exact2_v767h.py \
+            apply_suicune_closed_loop_exact2_v767i.py \
+            apply_suicune_resume_phase_lock_v767j.py \
+            apply_suicune_hybrid_hunt_v780.py \
+            apply_suicune_progressive_exact_tail_v781.py \
+            apply_suicune_rel40_phase_prefilter_v782.py \
+            apply_suicune_pre_shiny_rolling_v783.py \
+            apply_suicune_multipre_rolling_v784.py \
+            apply_suicune_shiny_phase_probe_v785.py \
+            normalize_suicune_v786_inputs.py \
+            apply_suicune_neutral_phase_probe_v786.py \
+            fix_suicune_v786_csv_format.py \
+            apply_suicune_stall_pc_probe_v787.py \
+            apply_suicune_stall_phase_probe_v788.py \
+            apply_suicune_vblank_audio_probe_v789.py \
+            apply_suicune_stall_cpuctx_probe_v790.py \
+            apply_suicune_trace_slot_fix_v791.py \
+            apply_suicune_audio_pre_probe_v792.py
+          do
+            python3 "$s"
+          done
+
+      - name: Apply v7.9.6 mechanistic J predictor
+        run: python3 apply_suicune_mechanistic_j_probe_v796.py
+
+      - name: Apply v7.9.7 final-DV validation
+        run: python3 apply_suicune_kbranch_finaldv_validation_v797.py
+
+      - name: Apply v7.9.8 self calibration
+        run: |
+          python3 apply_suicune_selfcal_j_v798.py
+          python3 fix_suicune_selfcal_blind_fields_v798b.py
+
+      - name: Apply v7.9.9 lifetime drift telemetry
+        run: python3 apply_suicune_selfcal_drift_v799.py
+
+      - name: Verify v7.9.9 invariants
+        run: |
+          grep -q 'V797_FORCE_FINAL_DV_VALIDATION: bool = true' reader_core/src/crystal/trace.rs
+          grep -q 'const V798_CAL_CAP: usize = 8' reader_core/src/crystal/trace.rs
+          grep -q 'V798_CAL_FALLBACK_K10: i32 = 71089' reader_core/src/crystal/trace.rs
+          grep -q 'const V799_DRIFT_WARN_ABS10: i32 = 150' reader_core/src/crystal/trace.rs
+          grep -q 'static mut V799_LIFE_COUNT: u32 = 0' reader_core/src/crystal/trace.rs
+          grep -q 'static mut V799_LIFE_SUM_K: u32 = 0' reader_core/src/crystal/trace.rs
+          grep -q 'static mut V799_LIFE_SUMSQ_K: u64 = 0' reader_core/src/crystal/trace.rs
+          grep -q 'v798_fnv32(&V798_CAL_RAW\[44..60\])' reader_core/src/crystal/trace.rs
+          grep -q 'LIFECAL,V799' reader_core/src/crystal/trace.rs
+          grep -q 'KDRIFT d10' reader_core/src/crystal/trace.rs
+          grep -q 'S799 SELFCAL READY' reader_core/src/crystal/trace.rs
+          grep -Fq 'STALLPHASE,V799,rel0-40+vblankirq+cpuctx84+audiopre+jpred+selfcal8+lifek+kbranch+finaldv' reader_core/src/crystal/trace.rs
+          grep -q 'PRESS UP BLIND + FINAL DV' reader_core/src/crystal/trace.rs
+          grep -q 'unsafe { v798_save_cal_if_dirty(); }' reader_core/src/crystal/trace.rs
+          grep -q '/luma/plugins/pokereader/suicune_j_cal_v798.bin' 3gx/sources/main.c
+          grep -q '/luma/plugins/pokereader/suicune_j_table_v796.bin' 3gx/sources/main.c
+          grep -q 'JOY_HJOYPAD_DOWN' reader_core/src/crystal/hook.rs
+          grep -q 'const u32 wanted = 14U' 3gx/sources/main.c
+          ! grep -q 'write_u8' apply_suicune_selfcal_drift_v799.py
+          ! grep -q 'write_u16' apply_suicune_selfcal_drift_v799.py
+          ! grep -q 'host_write_mem' apply_suicune_selfcal_drift_v799.py
+
+      - name: Build v7.9.9
+        run: make
+
+      - name: Package v7.9.9
+        run: |
+          mkdir -p v799/reader_core/src/crystal v799/reader_core/src/pnp v799/3gx/sources
+          cp out/default.3gx v799/PokeReader-Suicune-v799-SelfCal-DriftTelemetry.3gx
+          cp reader_core/src/crystal/trace.rs v799/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v799/reader_core/src/crystal/
+          cp reader_core/src/pnp/bindings.rs v799/reader_core/src/pnp/
+          cp reader_core/src/pnp/utils.rs v799/reader_core/src/pnp/
+          cp 3gx/sources/main.c v799/3gx/sources/
+          cp apply_suicune_mechanistic_j_probe_v796.py v799/
+          cp apply_suicune_kbranch_finaldv_validation_v797.py v799/
+          cp apply_suicune_selfcal_j_v798.py v799/
+          cp fix_suicune_selfcal_blind_fields_v798b.py v799/
+          cp apply_suicune_selfcal_drift_v799.py v799/
+          printf '%s\n' \
+            'v7.9.9 keeps v7.9.8 recent-8 K mean as the only active self-cal J estimate.' \
+            'Adds lifetime accepted-K count, mean and variance for drift detection only.' \
+            '64-byte cal file remains backward-readable by v7.9.8: original ring + checksum unchanged.' \
+            'Bytes 44..59 store lifetime count/sum/sumsq; bytes 60..63 store extension checksum.' \
+            'Legacy v7.9.8 cal files migrate lifetime baseline from their preserved recent ring.' \
+            'KDRIFT is diagnostic only at |recent mean - lifetime mean| >= 15.0 M after >8 accepted runs.' \
+            'No RNG/DIV/DV/save writes. Exact2 physical UP + M14 + native final DV path unchanged.' \
+            > v799/README_V799.txt
+          sha256sum out/default.3gx > v799/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v799-SelfCal-DriftTelemetry
+          path: v799
+          retention-days: 7

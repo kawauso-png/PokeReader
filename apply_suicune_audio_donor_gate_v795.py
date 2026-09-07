@@ -223,7 +223,8 @@ method = r'''    pub fn audio_donor_gate_at_pause(&mut self, reader: &Gen2Reader
 '''
 t = t.replace('impl Trace {\n', 'impl Trace {\n' + method, 1)
 
-save_anchor = '        pnp::trace_file_close();'
+save_anchor = '''        pnp::trace_file_close();
+        self.save_index += 1;'''
 save_block = r'''        line.clear();
         unsafe {
             let _ = write!(line,
@@ -236,7 +237,8 @@ save_block = r'''        line.clear();
         }
         pnp::trace_file_write(line.as_bytes());
 
-        pnp::trace_file_close();'''
+        pnp::trace_file_close();
+        self.save_index += 1;'''
 t = rep(t, save_anchor, save_block, 'donor telemetry before close')
 
 f += r'''

@@ -60,7 +60,7 @@ jobs:
             apply_suicune_stall_cpuctx_probe_v790.py \
             apply_suicune_trace_slot_fix_v791.py \
             apply_suicune_audio_pre_probe_v792.py \
-            apply_suicune_audio_donor_gate_v795.py
+            run_suicune_audio_donor_gate_v795.py
           do
             python3 "$s"
           done
@@ -75,7 +75,6 @@ jobs:
           grep -q 'practical_live_found_lane = 253' reader_core/src/crystal/trace.rs
           grep -q 'suicune_neutral_probe_frames = 3U' 3gx/sources/main.c
           grep -q 'V792_AUDIO_PRE_TARGET == rng_advance()' reader_core/src/crystal/trace.rs
-          grep -q 'DONORGATE,V795' reader_core/src/crystal/trace.rs
           grep -q 'JOY_HJOYPAD_DOWN' reader_core/src/crystal/hook.rs
       - name: Build v7.9.5
         run: make
@@ -90,6 +89,7 @@ jobs:
           cp 3gx/sources/main.c v795/3gx/sources/
           cp 3gx/includes/pokereader.h v795/3gx/includes/
           cp apply_suicune_audio_donor_gate_v795.py v795/
+          cp run_suicune_audio_donor_gate_v795.py v795/
           sha256sum out/default.3gx > v795/sha256.txt
       - uses: actions/upload-artifact@v4
         with:

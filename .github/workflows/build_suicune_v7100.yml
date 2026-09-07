@@ -1,0 +1,79 @@
+name: Suicune v7.10.0 S1-Split Self-Cal Build
+
+on:
+  push:
+    branches:
+      - suicune-v7100-s1split-selfcal
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+
+      - name: Generate and verify v7.9.9 source chain
+        run: python3 run_suicune_v799_chain_for_v7100.py
+
+      - name: Apply v7.10.0 s1-split self calibration
+        run: python3 apply_suicune_s1split_selfcal_v7100.py
+
+      - name: Verify v7.10.0 invariants
+        run: |
+          grep -q 'const V7100_CAL_CAP: usize = 8' reader_core/src/crystal/trace.rs
+          grep -q 'const V7100_CAL_BYTES: usize = 128' reader_core/src/crystal/trace.rs
+          grep -q 'V7100_FALLBACK_K27_10: i32 = 70917' reader_core/src/crystal/trace.rs
+          grep -q 'V7100_FALLBACK_K28_10: i32 = 71091' reader_core/src/crystal/trace.rs
+          grep -q 'V7100_J27_10=(c27 as i32)\*10-V7100_PRED_K27_10' reader_core/src/crystal/trace.rs
+          grep -q 'V7100_J28_10=(c28 as i32)\*10-V7100_PRED_K28_10' reader_core/src/crystal/trace.rs
+          grep -q 'v7100_add_sample(cyc,self.early_j_a,s1 as u8' reader_core/src/crystal/trace.rs
+          grep -q 'S1CAL,V7100' reader_core/src/crystal/trace.rs
+          grep -q 'S710 S1CAL N27' reader_core/src/crystal/trace.rs
+          grep -Fq 'STALLPHASE,V7100,rel0-40+vblankirq+cpuctx84+audiopre+jpred+s1cal8x2+lifek2+kbranch+finaldv' reader_core/src/crystal/trace.rs
+          grep -q 'host_v7100_cal_load' reader_core/src/pnp/bindings.rs
+          grep -q 'host_v7100_cal_save' reader_core/src/pnp/bindings.rs
+          grep -q '/luma/plugins/pokereader/suicune_j_cal_v7100.bin' 3gx/sources/main.c
+          grep -q '/luma/plugins/pokereader/suicune_j_table_v796.bin' 3gx/sources/main.c
+          grep -q 'JOY_HJOYPAD_DOWN' reader_core/src/crystal/hook.rs
+          grep -q 'const u32 wanted = 14U' 3gx/sources/main.c
+          ! grep -q 'write_u8' apply_suicune_s1split_selfcal_v7100.py
+          ! grep -q 'write_u16' apply_suicune_s1split_selfcal_v7100.py
+          ! grep -q 'host_write_mem' apply_suicune_s1split_selfcal_v7100.py
+
+      - name: Build v7.10.0
+        run: make
+
+      - name: Package v7.10.0
+        run: |
+          mkdir -p v7100/reader_core/src/crystal v7100/reader_core/src/pnp v7100/3gx/sources
+          cp out/default.3gx v7100/PokeReader-Suicune-v7100-S1Split-SelfCal.3gx
+          cp reader_core/src/crystal/trace.rs v7100/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v7100/reader_core/src/crystal/
+          cp reader_core/src/pnp/bindings.rs v7100/reader_core/src/pnp/
+          cp reader_core/src/pnp/utils.rs v7100/reader_core/src/pnp/
+          cp 3gx/sources/main.c v7100/3gx/sources/
+          cp apply_suicune_s1split_selfcal_v7100.py v7100/
+          cp run_suicune_v799_chain_for_v7100.py v7100/
+          printf '%s\n' \
+            'v7.10.0 splits K self-calibration by actual s1 branch.' \
+            'Independent recent-8 rings: K27 and K28; they are never averaged together for prediction.' \
+            'Pre-UP blind prediction: J27=cycles27-K27mean and J28=cycles28-K28mean.' \
+            'Fallback priors only when a branch ring is empty: K27=7091.7, K28=7109.1.' \
+            'Each branch also has lifetime mean/variance/drift telemetry; lifetime values never gate UP.' \
+            'New 128-byte cal file: /luma/plugins/pokereader/suicune_j_cal_v7100.bin' \
+            'Legacy v798/v799 mixed cal remains separate and diagnostic only.' \
+            'No RNG/DIV/DV/save writes. Exact2 physical UP + M14 + native final DV unchanged.' \
+            > v7100/README_V7100.txt
+          sha256sum out/default.3gx > v7100/sha256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v7100-S1Split-SelfCal
+          path: v7100
+          retention-days: 7

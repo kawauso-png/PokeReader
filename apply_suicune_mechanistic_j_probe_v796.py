@@ -45,6 +45,12 @@ if t.count(needle4) != 1:
     raise SystemExit(f'v796 marker: expected 1 match, got {t.count(needle4)}')
 t = t.replace(needle4, 'STALLPHASE,V796,rel0-40+vblankirq+cpuctx84+audiopre+jpred-sd', 1)
 
+# Show the prediction before physical UP. A missing/bad table is explicitly
+# fail-closed in the overlay so the user does not spend a physical attempt.
+ui_old = '''        } else if self.probe_session && self.probe_active && !self.practical_active {\n            pnp::println!("S732 CONTROL RUN");\n        } else if self.practical_miss != 0 {\n'''
+ui_new = '''        } else if self.probe_session && self.probe_active && !self.practical_active {\n            unsafe {\n                if V796_JPRED_VALID {\n                    pnp::println!("S796 JPRED READY");\n                    pnp::println!("C27 {} C28 {}", V796_JPRED_C27, V796_JPRED_C28);\n                    pnp::println!("Jx10 {} / {}", V796_JPRED_J27_10, V796_JPRED_J28_10);\n                    pnp::println!("WINx10 {}..{}", V796_JPRED_MIN10, V796_JPRED_MAX10);\n                    pnp::println!("PRESS UP BLIND");\n                } else if !V796_J_TABLE_READY {\n                    pnp::println!("S796 TABLE LOAD ERR");\n                    pnp::println!("GOT {} NEED {}", V796_J_TABLE_LOAD_LEN, V796_J_TABLE_BYTES);\n                    pnp::println!("DO NOT PRESS UP");\n                } else {\n                    pnp::println!("S796 TABLE KEY MISS");\n                    pnp::println!("KEY {:08X}", V796_JPRED_KEY);\n                    pnp::println!("DO NOT PRESS UP");\n                }\n            }\n        } else if self.practical_miss != 0 {\n'''
+t = rep(t, ui_old, ui_new, 'pre-UP JPRED UI')
+
 # Rust FFI declaration and test stub.
 b = rep(
     b,
@@ -76,4 +82,4 @@ T.write_text(t)
 B.write_text(b)
 U.write_text(u)
 C.write_text(c)
-print('Applied v7.9.6 mechanistic J predictor: AUDIOPRE -> SD table -> cycles27/28 -> J envelope')
+print('Applied v7.9.6 mechanistic J predictor: AUDIOPRE -> SD table -> cycles27/28 -> J envelope + pre-UP UI')

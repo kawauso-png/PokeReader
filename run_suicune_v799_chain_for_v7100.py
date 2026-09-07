@@ -28,6 +28,12 @@ while i < len(lines):
                 subprocess.run(['sh',fn],check=True)
                 i=k-1
                 break
+            if started and lines[j].startswith('        run: ') and lines[j] != '        run: |':
+                cmd=lines[j][13:]
+                print(f'=== v799 chain: {name} ===',flush=True)
+                subprocess.run(['sh','-c',cmd],check=True)
+                i=j
+                break
             j+=1
     i+=1
 print('v799 generated source + invariants complete; stopping before v799 make')

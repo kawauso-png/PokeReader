@@ -31,6 +31,7 @@ jobs:
       - name: Apply probe chain through v7.9.5
         run: |
           set -e
+          python3 fix_apply_suicune_audio_donor_gate_v795.py
           for s in \
             apply_suicune_weighted_root_selector_v760.py \
             apply_suicune_multipre_inverse_v762.py \

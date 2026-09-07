@@ -5,10 +5,9 @@ T = Path('reader_core/src/crystal/trace.rs')
 t = T.read_text()
 
 # Materialize the compact precomputed table beside trace.rs. The repository stores
-# one zlib+base64 stream split into four text chunks. The ROM itself is not
-# committed; only this derived 15957-entry lookup table is embedded at build time.
+# a zlib+base64 stream split into fifteen small text chunks.
 import base64, zlib
-parts = [Path(f'suicune_j_table_v796_b64_part{i}.txt').read_text().strip() for i in range(4)]
+parts = [Path(f'suicune_j_table_v796_b64_part{i}.txt').read_text().strip() for i in range(15)]
 table_bin = zlib.decompress(base64.b64decode(''.join(parts)))
 expected = 15957 * 8
 if len(table_bin) != expected:

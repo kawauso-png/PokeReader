@@ -1,9 +1,6 @@
 name: Suicune v7.9.6 Mechanistic J Predictor Build
 
 on:
-  push:
-    branches:
-      - suicune-v796-mechanistic-j-predictor
   workflow_dispatch:
 
 jobs:
@@ -73,7 +70,7 @@ jobs:
           from pathlib import Path
           import base64, hashlib, struct, zlib
           parts=[]
-          for i in range(4):
+          for i in range(15):
               p=Path(f'suicune_j_table_v796_b64_part{i}.txt')
               if not p.exists():
                   raise SystemExit(f'missing {p}')

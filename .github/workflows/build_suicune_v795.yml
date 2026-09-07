@@ -1,0 +1,98 @@
+name: Suicune v7.9.5 Audio Donor Gate Build
+
+on:
+  push:
+    branches:
+      - suicune-v795-audio-donor-gate
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependency
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - name: Generate v7.4.4 baseline
+        run: |
+          python3 - <<'PYINNER'
+          from pathlib import Path
+          s=Path('.github/workflows/build_suicune_stage3_v744.yml').read_text()
+          marker='      - name: Generate Stage3 v7.4.4\n        run: |\n'
+          a=s.index(marker)+len(marker)
+          b=s.index('      - name: Build v7.4.4',a)
+          body=s[a:b]
+          Path('/tmp/gen_v744.sh').write_text('\n'.join((x[10:] if x.startswith('          ') else x) for x in body.splitlines())+'\n')
+          PYINNER
+          sh /tmp/gen_v744.sh
+      - name: Apply chain through v7.9.5
+        run: |
+          set -e
+          for s in \
+            apply_suicune_weighted_root_selector_v760.py \
+            apply_suicune_multipre_inverse_v762.py \
+            apply_suicune_rel40_inverse_gate_v763.py \
+            apply_suicune_rel40_index_fallback_v764.py \
+            apply_suicune_phase_utility_probe_v766.py \
+            run_suicune_live_pass_jitter_probe_v767.py \
+            apply_suicune_live_pass_verify_v767c.py \
+            apply_suicune_live_pass_verify_v767d.py \
+            apply_suicune_live_pass_nomask_baseline_v767e.py \
+            apply_suicune_live_pass_joymap_v767f.py \
+            apply_suicune_closed_loop_exact2_v767h.py \
+            apply_suicune_closed_loop_exact2_v767i.py \
+            apply_suicune_resume_phase_lock_v767j.py \
+            apply_suicune_hybrid_hunt_v780.py \
+            apply_suicune_progressive_exact_tail_v781.py \
+            apply_suicune_rel40_phase_prefilter_v782.py \
+            apply_suicune_pre_shiny_rolling_v783.py \
+            apply_suicune_multipre_rolling_v784.py \
+            apply_suicune_shiny_phase_probe_v785.py \
+            normalize_suicune_v786_inputs.py \
+            apply_suicune_neutral_phase_probe_v786.py \
+            fix_suicune_v786_csv_format.py \
+            apply_suicune_stall_pc_probe_v787.py \
+            apply_suicune_stall_phase_probe_v788.py \
+            apply_suicune_vblank_audio_probe_v789.py \
+            apply_suicune_stall_cpuctx_probe_v790.py \
+            apply_suicune_trace_slot_fix_v791.py \
+            apply_suicune_audio_pre_probe_v792.py \
+            apply_suicune_audio_donor_gate_v795.py
+          do
+            python3 "$s"
+          done
+      - name: Verify v7.9.5 invariants
+        run: |
+          grep -q 'V795_DONORS' reader_core/src/crystal/trace.rs
+          grep -q 'audio_donor_gate_at_pause' reader_core/src/crystal/trace.rs
+          grep -q 'suicune_audio_donor_gate' reader_core/src/lib.rs
+          grep -q 'u32 suicune_audio_donor_gate();' 3gx/includes/pokereader.h
+          grep -q 'donor_gate & 0x80000000U' 3gx/sources/main.c
+          grep -q 'evaluate_multi_pre_inverse' reader_core/src/crystal/trace.rs
+          grep -q 'practical_live_found_lane = 253' reader_core/src/crystal/trace.rs
+          grep -q 'suicune_neutral_probe_frames = 3U' 3gx/sources/main.c
+          grep -q 'V792_AUDIO_PRE_TARGET == rng_advance()' reader_core/src/crystal/trace.rs
+          grep -q 'DONORGATE,V795' reader_core/src/crystal/trace.rs
+          grep -q 'JOY_HJOYPAD_DOWN' reader_core/src/crystal/hook.rs
+      - name: Build v7.9.5
+        run: make
+      - name: Package v7.9.5
+        run: |
+          mkdir -p v795/reader_core/src/crystal v795/3gx/sources v795/3gx/includes
+          cp out/default.3gx v795/PokeReader-Suicune-v795-AudioDonorGate.3gx
+          cp reader_core/src/crystal/trace.rs v795/reader_core/src/crystal/
+          cp reader_core/src/crystal/hook.rs v795/reader_core/src/crystal/
+          cp reader_core/src/crystal/frame.rs v795/reader_core/src/crystal/
+          cp reader_core/src/lib.rs v795/reader_core/src/
+          cp 3gx/sources/main.c v795/3gx/sources/
+          cp 3gx/includes/pokereader.h v795/3gx/includes/
+          cp apply_suicune_audio_donor_gate_v795.py v795/
+          sha256sum out/default.3gx > v795/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v795-AudioDonorGate
+          path: v795
+          retention-days: 7

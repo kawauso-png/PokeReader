@@ -19,11 +19,15 @@ with tempfile.TemporaryDirectory() as td:
     subprocess.run([str(d/'test'),'--test-threads=1'],check=True,env={**os.environ,'SNAPSHOT_TEST_OUT':str(d/'good.csv')})
     meta,blocks=parse(d/'good.csv');assert len(blocks)==7 and meta['target']==1144
     original=(d/'good.csv').read_text()
+    legacy=d/'legacy.csv';legacy.write_text(original+'BUCKET738,old,\0\n')
+    assert parse(legacy)==(meta,blocks)
     # Reject truncation, duplicate records, data corruption, invalid captures.
     for name,bad in [('truncated',original.rsplit('R7111_SNAPSHOT_END',1)[0]),
       ('duplicate',original+next(s for s in original.splitlines() if s.startswith('R7111_DATA,'))+'\n'),
       ('corrupt',original.replace('0001020304050607','0101020304050607',1)),
-      ('invalid',original.replace(',1144,1,',',1144,0,',1))]:
+      ('invalid',original.replace(',1144,1,',',1144,0,',1)),
+      ('nul_snapshot',original.replace('R7111_DATA,','R7111_DATA,\0',1)),
+      ('nul_other',original+'OTHER,\0\n')]:
         f=d/(name+'.csv');f.write_text(bad)
         try:parse(f)
         except ValueError:pass

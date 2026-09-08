@@ -1,0 +1,22 @@
+extern crate alloc;
+use std::sync::Mutex;
+struct Fake{tick:u64,out:Vec<u8>,missing:bool,torn:bool,version:u32,reads:u32}
+static F:Mutex<Fake>=Mutex::new(Fake{tick:0,out:Vec::new(),missing:false,torn:false,version:0,reads:0});
+mod pnp {
+ pub fn test_byte(a:u32)->u8 {assert!((0x1ff81000..0x1ff82000).contains(&a));let f=crate::F.lock().unwrap();if a<0x1ff81004 {f.version.to_le_bytes()[(a-0x1ff81000) as usize]}else{(a&255) as u8}}
+ pub fn system_tick()->u64 {let mut f=crate::F.lock().unwrap();f.tick+=10;f.tick}
+ pub fn is_memory_mapped(_:u32)->bool {!crate::F.lock().unwrap().missing}
+ pub unsafe fn read_into_raw(a:u32,d:*mut u8,n:usize){for i in 0..n {*d.add(i)=test_byte(a+i as u32);}let mut f=crate::F.lock().unwrap();f.reads+=1;if f.torn {f.version+=1;}}
+ pub fn trace_file_write(b:&[u8]){crate::F.lock().unwrap().out.extend_from_slice(b);}
+}
+#[path=RTC_PATH] mod rtc;
+#[test]fn rtc_observation_is_bounded_and_validated(){
+ rtc::arm(3213,true);assert_eq!(rtc::suicune_rtc7112_launch(),1);let count=F.lock().unwrap().reads;
+ assert_eq!(rtc::suicune_rtc7112_launch(),1);assert_eq!(F.lock().unwrap().reads,count);
+ rtc::save();let out=F.lock().unwrap().out.clone();std::fs::write(std::env::var("RTC_TEST_OUT").unwrap(),out).unwrap();
+ {let mut f=F.lock().unwrap();f.torn=true;f.reads=0;}
+ rtc::arm(3214,true);assert_eq!(rtc::suicune_rtc7112_launch(),0);assert_eq!(F.lock().unwrap().reads,6);
+ {let mut f=F.lock().unwrap();f.missing=true;f.reads=0;f.torn=false;}
+ rtc::arm(3215,true);assert_eq!(rtc::suicune_rtc7112_launch(),0);assert_eq!(F.lock().unwrap().reads,0);
+ rtc::arm(3216,false);assert_eq!(rtc::suicune_rtc7112_launch(),1);
+}

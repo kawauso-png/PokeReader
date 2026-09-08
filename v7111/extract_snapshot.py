@@ -1,6 +1,6 @@
 """Validate frozen page records and extract known memory for native replay."""
 from pathlib import Path
-import csv,json,hashlib,argparse
+import csv,json,hashlib,argparse,io
 PAGE=4096;STATIC_PAGES=0x14f;PAGES=STATIC_PAGES+256
 def fnv(b):
     h=2166136261
@@ -8,7 +8,10 @@ def fnv(b):
     return h
 def parse(path):
     meta=None;end=None;pages={};chunks={}
-    with path.open() as f:
+    raw=path.read_bytes()
+    if any(not line.startswith(b'BUCKET738,') for line in raw.splitlines() if b'\0' in line):
+        raise ValueError('NUL outside legacy BUCKET738 field')
+    with io.StringIO(raw.replace(b'\0',b'').decode()) as f:
         for row in csv.reader(f):
             if not row:continue
             if row[0]=='R7111_SNAPSHOT':

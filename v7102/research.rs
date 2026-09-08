@@ -50,6 +50,9 @@ impl Sample { const EMPTY:Self=Self {
 }; }
 static mut FRAMES:[Sample;plan::FRAME_CAP]=[Sample::EMPTY;plan::FRAME_CAP];
 static mut DEEP:[Sample;plan::DEEP_CAP]=[Sample::EMPTY;plan::DEEP_CAP];
+static mut LCD:[Sample;32]=[Sample::EMPTY;32];
+static mut NL:usize=0;
+static mut DROP_L:u32=0;
 static mut NF:usize=0;
 static mut ND:usize=0;
 static mut DROP_F:u32=0;
@@ -92,7 +95,7 @@ fn capture_pre(target:u32) {
     unsafe {
         ACTIVE=false;PRE_OK=false;MAP_OK=false;END_VALID=false;
         capture_native_frozen();
-        MODE=host_suicune_research_mode().min(2);TARGET=target;NF=0;ND=0;DROP_F=0;DROP_D=0;
+        MODE=host_suicune_research_mode().min(2);TARGET=target;NF=0;ND=0;NL=0;DROP_L=0;DROP_F=0;DROP_D=0;
         // Frozen RAM-only reads. No ROM/save/IO accesses and no guest execution.
         for i in 0..RAM_LEN { PRE_RAM[i]=gb_mem::read_u8(0xc000+i as u32); }
         for i in 0..HRAM_LEN { PRE_HRAM[i]=gb_mem::read_u8(0xff80+i as u32); }
@@ -179,6 +182,16 @@ pub fn div_boundary(advance:u32,pc:u16,regs:&[u32],stack:*mut u32) {
     }
 }
 
+// Crystal JP LCD ISR: PUSH AF at 0552, LDH A,[FFC6] at 0553.
+// The GB read hook sees the operand PC 0554. Observe it without injecting IRQs.
+pub fn lcd_boundary(advance:u32,pc:u16,regs:&[u32],stack:*mut u32) {
+    unsafe {
+        if !ACTIVE || MODE!=2 || !MAP_OK || pc!=0x0554 {return;}
+        if NL>=32 {DROP_L=DROP_L.saturating_add(1);return;}
+        sample(core::ptr::addr_of_mut!(LCD).cast::<Sample>().add(NL),u32::MAX,advance,pc,Some((regs,stack)));
+        NL+=1;
+    }
+}
 pub fn finish() {
     unsafe {
         if !ACTIVE {return;}
@@ -211,8 +224,8 @@ fn emit_sample(kind:&str,i:usize,s:&Sample,line:&mut String) {
 pub fn save() {
     let mut line=String::new();
     unsafe {
-        let _=write!(line,"\nresearch7102,mode,target,pre_ok,map_ok,frames,deep,dropped_frames,dropped_deep,end_advance,end_valid,root_advance,root_state,pre_ap,pre_sp,audio_host,hram_host,div_source,div_host,native_ok,emu_ok,native_base,native_len,emu_len\nR7102_META,{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:08X},{:08X},indirect,{:08X},{},{},{:08X},{},{}\n",
-            mode_name(),TARGET,PRE_OK as u8,MAP_OK as u8,NF,ND,DROP_F,DROP_D,END_ADV,END_VALID as u8,ROOT_ADV,ROOT_STATE,PRE_AP,PRE_SP,AUDIO_HOST,HRAM_HOST,DIV_HOST,NATIVE_OK as u8,EMU_OK as u8,NATIVE_BASE,NATIVE_LEN,EMU_LEN);
+        let _=write!(line,"\nresearch7102,mode,target,pre_ok,map_ok,frames,deep,dropped_frames,dropped_deep,end_advance,end_valid,root_advance,root_state,pre_ap,pre_sp,audio_host,hram_host,div_source,div_host,native_ok,emu_ok,native_base,native_len,emu_len,lcd_samples,dropped_lcd\nR7102_META,{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:08X},{:08X},indirect,{:08X},{},{},{:08X},{},{},{},{}\n",
+            mode_name(),TARGET,PRE_OK as u8,MAP_OK as u8,NF,ND,DROP_F,DROP_D,END_ADV,END_VALID as u8,ROOT_ADV,ROOT_STATE,PRE_AP,PRE_SP,AUDIO_HOST,HRAM_HOST,DIV_HOST,NATIVE_OK as u8,EMU_OK as u8,NATIVE_BASE,NATIVE_LEN,EMU_LEN,NL,DROP_L);
         pnp::trace_file_write(line.as_bytes());
         if NATIVE_OK {blob("NATIVE_CODE",NATIVE_BASE,&*core::ptr::addr_of!(NATIVE_CODE),&mut line);}
         if EMU_OK {blob("PRE_EMU",CPU,&*core::ptr::addr_of!(PRE_EMU),&mut line);}
@@ -221,5 +234,6 @@ pub fn save() {
         pnp::trace_file_write(b"research_sample,kind,index,frame,advance,rel,pc,state,div_before,sub_before,div_after,sub_after,tick_begin,tick_end,cpu_hex,audio_hex,hram_hex,arm_regs_hex,host_stack_hex,gb_stack_c000_c0ff_hex,div_remaining_before,div_remaining_after\n");
         for i in 0..NF {emit_sample("FRAME",i,&FRAMES[i],&mut line);}
         for i in 0..ND {emit_sample("DIV",i,&DEEP[i],&mut line);}
+        for i in 0..NL {emit_sample("LCD",i,&LCD[i],&mut line);}
     }
 }

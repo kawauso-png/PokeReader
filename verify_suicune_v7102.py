@@ -8,7 +8,7 @@ with tempfile.TemporaryDirectory(prefix='suicune-v7102-') as d:
     p=Path(d);(p/'test.rs').write_text(code)
     subprocess.run(['rustc','--edition=2021','--test','-O',str(p/'test.rs'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test'),'--test-threads=1'],env={**os.environ,'V7102_TEST_DIR':str(p)},check=True)
-    for name,count in [('base',0),('tail',384),('deep',32)]:
+    for name,count in [('base',0),('tail',384),('deep',64)]:
         rec,frames,samples,blobs=read(p/(name+'.csv'))
         assert rec['R7102_META']['mode']==name.upper() and len(samples)==count
         assert len(blobs['NATIVE_CODE'])==0xb1000 and len(blobs['PRE_EMU'])==0x480

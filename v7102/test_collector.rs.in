@@ -56,6 +56,7 @@ fn actual_collector_modes_bounds_and_failed_arming() {
     use crystal::research as r;
     init(0);r::arm(100,97,0);assert_eq!(r::suicune_research_arm_ok(),1);
     r::frame(0,101);let mut stack=[0;8];r::div_boundary(112,0x2f60,&[0;15],stack.as_mut_ptr());
+    r::lcd_boundary(112,0x0554,&[0;15],stack.as_mut_ptr());
     r::finish();r::save();let base=output();
     assert!(base.contains("R7102_META,BASE,100,1,1,0,0,0,0,100,1"));
     assert!(!base.contains("R7102_SAMPLE,"));
@@ -76,7 +77,11 @@ fn actual_collector_modes_bounds_and_failed_arming() {
     init(2);r::arm(100,97,0);
     r::frame(0,101);
     for _ in 0..40 {r::div_boundary(112,0x2f60,&[0x12345678;15],stack.as_mut_ptr());}
+    r::lcd_boundary(112,0x0553,&[0;15],stack.as_mut_ptr());
+    for _ in 0..40 {r::lcd_boundary(112,0x0554,&[0;15],stack.as_mut_ptr());}
     r::finish();r::save();let deep=output();
+    assert_eq!(deep.lines().filter(|l|l.starts_with("R7102_SAMPLE,LCD,")).count(),32);
+    assert!(deep.contains(",32,8\n"));
     assert!(deep.contains("R7102_META,DEEP,100,1,1,0,32,0,8,100,1"));
     assert_eq!(deep.lines().filter(|l|l.starts_with("R7102_SAMPLE,DIV,")).count(),32);
     if let Ok(dir)=std::env::var("V7102_TEST_DIR") {std::fs::write(std::path::Path::new(&dir).join("deep.csv"),&deep).unwrap();}

@@ -112,9 +112,31 @@ def analyze(path):
         if meta[k]!='1':issue.append(k+' false')
     for k in ('dropped_frames','dropped_deep'):
         if int(meta[k]):issue.append(k+'='+meta[k])
-    fs=[s for s in samples if s['kind']=='FRAME'];ds=[s for s in samples if s['kind']=='DIV']
+    fs=[s for s in samples if s['kind']=='FRAME'];ds=[s for s in samples if s['kind']=='DIV'];ls=[s for s in samples if s['kind']=='LCD']
+    if 'lcd_samples' in meta:
+        if len(ls)!=int(meta['lcd_samples']):issue.append('LCD sample count mismatch')
+        if int(meta['dropped_lcd']):issue.append('LCD samples dropped')
+        result['lcd_events']=[]
+        for s in ls:
+            row=dict(index=s['index'],advance=s['advance'],tick=s['tick_begin'],ffc6=s['hram'][0x46],pc=f"{s['pc']:04X}")
+            try:row['phase']=f"{countdown_phase(s['div_before'],s['div_remaining_before'],s['sub_before']):04X}"
+            except ValueError as e:row['error']=str(e)
+            result['lcd_events'].append(row)
+        final_as=[s for s in ds if s['pc']==0x2f60]
+        result['dv_call_interval_checks']=[]
+        for a,b in zip(final_as,final_as[1:]):
+            def caller(s):
+                off=int.from_bytes(s['cpu'][30:32],'little')-0xc000
+                return int.from_bytes(s['gb_stack'][off+6:off+8],'little') if 0<=off<=248 else None
+            if (caller(a),caller(b))!=(0x69b2,0x69b6):continue
+            events=[s for s in ls if a['tick_begin']<s['tick_begin']<b['tick_begin']]
+            try:
+                gap=(countdown_phase(b['div_before'],b['div_remaining_before'],b['sub_before'])-countdown_phase(a['div_before'],a['div_remaining_before'],a['sub_before']))&0x3fff
+                expected=109+22*len(events) if all(s['hram'][0x46]==0 for s in events) else None
+                result['dv_call_interval_checks'].append(dict(observed_gap=gap,short_lcd_events=len(events),expected_if_only_short_lcd_interrupts=expected,matches=gap==expected if expected is not None else None))
+            except ValueError as e:issue.append('invalid countdown in DV interval: '+str(e))
     if len(fs)!=int(meta['frames']) or len(ds)!=int(meta['deep']):issue.append('sample count mismatch')
-    for ss in (fs,ds):
+    for ss in (fs,ds,ls):
         if [s['index'] for s in ss]!=list(range(len(ss))):issue.append('sample index gap')
     for s in samples:
         if s['rel']!=(s['advance']-target-1)&0xffffffff:issue.append('relative-advance mismatch')

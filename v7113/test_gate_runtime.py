@@ -3,6 +3,8 @@ import subprocess,tempfile
 r=Path(__file__).resolve().parent
 header=r'''#include <stdint.h>
 #include <stddef.h>
+#include <string.h>
+extern char gate_output[2048];
 typedef int Result;typedef int Handle;typedef int FS_Archive;
 #define KEY_SELECT 2048
 #define R_FAILED(x) ((x)<0)
@@ -19,7 +21,7 @@ static inline int FSUSER_CreateDirectory(int a,int b,int c){return 0;}
 static inline int FSUSER_OpenFile(int*a,int b,int c,int d,int e){*a=1;return 0;}
 static inline int FSUSER_CloseArchive(int a){return 0;}
 static inline int FSFILE_GetSize(int a,uint64_t*b){*b=0;return 0;}
-static inline int FSFILE_Write(int a,uint32_t*b,uint64_t c,const void*d,unsigned e,int f){*b=e;return 0;}
+static inline int FSFILE_Write(int a,uint32_t*b,uint64_t c,const void*d,unsigned e,int f){if(e>=2048)return -1;memcpy(gate_output,d,e);gate_output[e]=0;*b=e;return 0;}
 static inline int FSFILE_Flush(int a){return 0;}static inline int FSFILE_Close(int a){return 0;}
 '''
 source=r'''#include <assert.h>
@@ -27,6 +29,7 @@ source=r'''#include <assert.h>
 #define shadow7113_run test_shadow_run
 #include "gate_runtime.c"
 #undef shadow7113_run
+char gate_output[2048];static uint64_t bench_extra_ticks;
 static uint64_t now=1000000;static unsigned rank=100,calls,bad,change_state;
 static uint16_t dvs[2];
 uint64_t svcGetSystemTick(void){now+=1000;return now;}
@@ -47,9 +50,10 @@ uint8_t*suicune_shadow7113_capture(uint32_t a,uint32_t*h){static uint8_t x;*h=0x
 void host7113_progress(uint32_t a,uint32_t b,uint32_t c){}
 uint32_t host_trace_file_write(const char*a,uint32_t b){return b;}
 void rank7108_begin(void){}int rank7108_evaluate(void){return 0;}uint32_t rank7108_error(void){return 1;}uint32_t rank7108_cycles(void){return 9000;}uint32_t rank7108_best_rank(void){return rank;}uint32_t rank7108_support(void){return 1;}
-Shadow7113Result test_shadow_run(const Shadow7113Input*i,unsigned frames){Shadow7113Result r={0};r.instructions=5000000;calls++;if(frames==20)return r;unsigned index=(calls-2)&1;r.dv=dvs[index];r.shiny=(r.dv&0xfff)==0xaaa&&((r.dv>>12)&2);if(bad&&index==1)r.error=7;return r;}
-static void reset(void){now=1000000;calls=bad=change_state=0;rank=100;dvs[0]=dvs[1]=0x43e8;gate7113_begin();}
+Shadow7113Result test_shadow_run(const Shadow7113Input*i,unsigned frames){Shadow7113Result r={0};r.instructions=5000000;calls++;if(frames==20){now+=bench_extra_ticks;return r;}unsigned index=(calls-2)&1;r.dv=dvs[index];r.shiny=(r.dv&0xfff)==0xaaa&&((r.dv>>12)&2);if(bad&&index==1)r.error=7;return r;}
+static void reset(void){now=1000000;bench_extra_ticks=0;calls=bad=change_state=0;rank=100;dvs[0]=dvs[1]=0x43e8;gate7113_begin();}
 int main(void){
+ reset();bench_extra_ticks=2681118560ULL;assert(gate7113_evaluate()<0&&gate7113_error()==0x711314&&!gate7113_active());assert(gate7113_log_scan(-1));assert(strstr(gate_output,"GATE7114_BENCH,1,")&&strstr(gate_output,",5000000,"));
  reset();rank=9999;assert(gate7113_evaluate()==0&&calls==0&&!gate7113_active());
  reset();assert(gate7113_evaluate()==0&&calls==3&&!gate7113_active());
  reset();dvs[0]=0x6aaa;assert(gate7113_evaluate()==1&&gate7113_dv()==0x6aaa&&gate7113_models()==1);assert((gate7113_resume_tick()/4481233)&15U==14U);assert(gate7113_log_scan(1));assert(gate7113_commit());
@@ -65,4 +69,4 @@ with tempfile.TemporaryDirectory() as td:
  d=Path(td);(d/'3ds.h').write_text('#pragma once\n'+header);(d/'pnp.h').write_text('#include <stdint.h>\nint is_memory_mapped(uint32_t);\n');(d/'hid.h').write_text('#include <stdint.h>\nvoid scan_input(void);uint32_t get_current_keys(void);\n');(d/'test.c').write_text(source)
  subprocess.run(['cc','-std=c99','-Wno-int-to-pointer-cast','-I'+str(d),'-I'+str(r),'-I'+str(r.parent/'v7108'),str(d/'test.c'),str(r/'shadow.c'),str(r/'arm_core.c'),'-o',str(d/'test')],check=True)
  subprocess.run([str(d/'test')],check=True)
-print('PASS: shortlist never selects alone, full replay selects either shiny hypothesis, replay errors/state drift/expired commit cannot select, planned M14 slot')
+print('PASS: shortlist never selects alone, full replay selects either shiny hypothesis, replay errors/state drift/expired commit cannot select, planned M14 slot; slow benchmark logs measurements and cannot select')

@@ -2,6 +2,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+/* Specialize callback targets inside the hot interpreter loop. */
+#define ARM7113_API static inline __attribute__((always_inline))
+#define arm7113_step shadow_arm_inline
+#ifdef __3DS__
+#include "v7113_arm_core.c"
+#else
+#include "arm_core.c"
+#endif
+#undef arm7113_step
+#undef ARM7113_API
 static const Shadow7113Input *in;
 static Arm7113 cpu;
 static unsigned fail,frame,normals,finals,divs,lcd,lcdlong,timer;
@@ -25,8 +35,22 @@ static uint8_t*view(uint32_t addr,unsigned n,int write){
  for(unsigned j=0;j<n;j++){if(write)p->known[off+j]=1;else if(!p->known[off+j]){fail=106;return NULL;}}
  return p->data+off;
 }
-static uint32_t readmem(uint32_t addr,unsigned n){uint32_t v=0;uint8_t*p=view(addr,n,0);if(p)memcpy(&v,p,n);return v;}
-static void writemem(uint32_t addr,uint32_t v,unsigned n){uint8_t*p=view(addr,n,1);if(p)memcpy(p,&v,n);}
+static uint32_t readmem(uint32_t addr,unsigned n){
+ if(n==4&&(addr&3)==0&&addr>=0x100000&&addr<0x1b1000&&((uintptr_t)in->code&3)==0)return ((const uint32_t*)in->code)[(addr-0x100000)>>2];
+ uint8_t*p=view(addr,n,0);if(!p)return 0;
+ if(n==1)return *p;
+ if(n==4&&((uintptr_t)p&3)==0)return *(const uint32_t*)p;
+ if(n==2&&((uintptr_t)p&1)==0)return *(const uint16_t*)p;
+ uint32_t v=(uint32_t)p[0]|(uint32_t)p[1]<<8;
+ return n==4?v|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24:v;
+}
+static void writemem(uint32_t addr,uint32_t v,unsigned n){
+ uint8_t*p=view(addr,n,1);if(!p)return;
+ if(n==1){*p=v;return;}
+ if(n==4&&((uintptr_t)p&3)==0){*(uint32_t*)p=v;return;}
+ if(n==2&&((uintptr_t)p&1)==0){*(uint16_t*)p=v;return;}
+ p[0]=v;p[1]=v>>8;if(n==4){p[2]=v>>16;p[3]=v>>24;}
+}
 static int hook(void){uint32_t a=cpu.r[15];if(a==0x178abc){uint64_t rtc=in->rtc(frame,in->opaque);cpu.r[0]=rtc;cpu.r[1]=rtc>>32;cpu.r[15]=cpu.r[14];return 1;}if(a==0x1a7584){cpu.r[15]=cpu.r[14];return 1;}if(a==0x19cd10&&!(readmem(io+2,1)&128)){cpu.r[0]=1;cpu.r[15]=cpu.r[14];return 1;}if(a==0x14aa9c){cpu.r[15]=0x169018;return 1;}
  if(a==0x1af11c){uint32_t p=readmem(0x22f5fc,4)&65535,addr=cpu.r[0];if(addr==0xffc6&&p==0x554){lcd++;if(readmem(io+0xc6,1))lcdlong++;}if(addr==0xffe9&&p==0x3e25)timer++;
  if(addr==0xff04&&(p==0x2b6||p==0x2be||p==0x2f60||p==0x2f68)){unsigned e=readmem(0x22f604,4),rem=readmem(0x22fa50,4),dv=readmem(io+4,1);if(in->event)in->event(frame,p,(readmem(io+0xe1,1)<<8)|readmem(io+0xe2,1),dv,e,rem,lcd,lcdlong,timer,in->opaque);
@@ -43,7 +67,7 @@ Shadow7113Result shadow7113_run(const Shadow7113Input *input,unsigned maxframes)
   cpu.r[13]=0x700ffc8;writemem(0x700ffec,0x7000000,4);cpu.r[14]=0x7000000;cpu.r[0]=readmem(readmem(0x1a857c,4),4);cpu.r[15]=0x1a824c;
   if(frame)writemem(0x22f766,frame==1||frame==2?0xffbf:0xffff,2);
   unsigned local=0;
-  while(cpu.r[15]!=0x7000000&&!cpu.error&&!fail){if(!hook())arm7113_step(&cpu,readmem,writemem);if(++local>10000000){fail=107;break;}}
+  while(cpu.r[15]!=0x7000000&&!cpu.error&&!fail){if(!hook())shadow_arm_inline(&cpu,readmem,writemem);if(++local>10000000){fail=107;break;}}
   if(cpu.error||fail||finals>=3)break;
   if(in->progress&&!in->progress(frame,cpu.steps,in->opaque)){fail=108;break;}
  }

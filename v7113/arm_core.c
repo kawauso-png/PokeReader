@@ -17,11 +17,15 @@ static uint32_t shift(uint32_t x,unsigned kind,unsigned n,int byreg,unsigned *ca
 static uint32_t rr(Arm7113*a,unsigned n,uint32_t pc){return n==15?pc+8:a->r[n];}
 static void nz(Arm7113*a,uint32_t x){a->flags=(a->flags&~(N|Z))|(x&N)|(x?0:Z);}
 static uint32_t add(Arm7113*a,uint32_t x,uint32_t y,unsigned c,int s){uint64_t t=(uint64_t)x+y+c;uint32_t r=t;if(s){int64_t st=(int64_t)(int32_t)x+(int32_t)y+c;a->flags=(a->flags&~(N|Z|C|V))|(r&N)|(r?0:Z)|((t>>32)?C:0)|((st>2147483647LL||st<(-2147483647LL-1))?V:0);}return r;}
-void arm7113_step(Arm7113*a,ArmRead read,ArmWrite write){
+#ifndef ARM7113_API
+#define ARM7113_API
+#endif
+ARM7113_API void arm7113_step(Arm7113*a,ArmRead read,ArmWrite write){
  uint32_t pc=a->r[15],op=read(pc,4),next=pc+4;a->steps++;
  if((op&0xff70f000)==0xf550f000){a->r[15]=next;return;}
  if(!cond(a->flags,op>>28)){if((op>>28)==15){a->error=1;goto bad;}a->r[15]=next;return;}
  unsigned rn=(op>>16)&15,rd=(op>>12)&15,rm=op&15;uint32_t x=rr(a,rn,pc),v=0;
+ switch((op>>25)&7){case 2:goto single_transfer;case 3:if(!(op&16))goto single_transfer;break;case 4:goto multiple_transfer;case 5:goto branch_transfer;}
  if((op&0x0ffffff0)==0x012fff10||(op&0x0ffffff0)==0x012fff30){v=rr(a,rm,pc);if(op&0x20)a->r[14]=pc+4;if(v&1){a->error=2;goto bad;}next=v;}
  else if((op&0x0ff000f0)==0x01600010){v=rr(a,rm,pc);a->r[rd]=v?__builtin_clz(v):32;}
  else if((op&0x0fbf0fff)==0x010f0000){a->r[rd]=a->flags|0x10;}
@@ -38,18 +42,18 @@ void arm7113_step(Arm7113*a,ArmRead read,ArmWrite write){
  else if((op&0x0fff0ff0)==0x06bf0f30){a->r[rd]=__builtin_bswap32(rr(a,rm,pc));}
  else if((op&0x0fff0ff0)==0x06ff0fb0){v=rr(a,rm,pc);a->r[rd]=(uint32_t)(int32_t)(int16_t)(((v&255)<<8)|((v>>8)&255));}
  else if((op&0x0f8000f0)==0x06800070){unsigned k=(op>>20)&7;v=rot(rr(a,rm,pc),((op>>10)&3)*8);if(k==7)v&=65535;else if(k==6)v&=255;else if(k==3)v=(uint32_t)(int32_t)(int16_t)v;else if(k==2)v=(uint32_t)(int32_t)(int8_t)v;else{a->error=8;goto bad;}a->r[rd]=v+(rn==15?0:x);}
- else if((op&0x0c000000)==0x04000000){
+ else if((op&0x0c000000)==0x04000000){single_transfer:;
   uint32_t off=op&4095;if(op&(1<<25)){if(op&16){a->error=4;goto bad;}unsigned carry=!!(a->flags&C);off=shift(rr(a,rm,pc),(op>>5)&3,(op>>7)&31,0,&carry);}
   uint32_t dest=(op&(1<<23))?x+off:x-off,addr=(op&(1<<24))?dest:x;unsigned n=(op&(1<<22))?1:4;
   if(op&(1<<20)){v=read(addr,n);if(rd==15){if(v&1){a->error=2;goto bad;}next=v;}else a->r[rd]=v;}else write(addr,rd==15?pc+12:a->r[rd],n);
   if(!(op&(1<<24))||(op&(1<<21)))a->r[rn]=dest;
  }
- else if((op&0x0e000000)==0x08000000){
+ else if((op&0x0e000000)==0x08000000){multiple_transfer:;
   if(op&(1<<22)){a->error=5;goto bad;}unsigned list=op&65535,count=__builtin_popcount(list);uint32_t addr=(op&(1<<23))?x:x-4*count;if(!!(op&(1<<24))==!!(op&(1<<23)))addr+=4;
   for(unsigned i=0;i<16;i++)if(list&(1<<i)){if(op&(1<<20)){v=read(addr,4);if(i==15){if(v&1){a->error=2;goto bad;}next=v;}else a->r[i]=v;}else write(addr,i==15?pc+12:a->r[i],4);addr+=4;}
   if(op&(1<<21))a->r[rn]=(op&(1<<23))?x+count*4:x-count*4;
  }
- else if((op&0x0e000000)==0x0a000000){int32_t off=(int32_t)(op<<8)>>6;if(op&(1<<24))a->r[14]=pc+4;next=pc+8+off;}
+ else if((op&0x0e000000)==0x0a000000){branch_transfer:;int32_t off=(int32_t)(op<<8)>>6;if(op&(1<<24))a->r[14]=pc+4;next=pc+8+off;}
  else if((op&0x0c000000)==0){
   unsigned k=(op>>21)&15,s=!!(op&(1<<20)),carry=!!(a->flags&C);uint32_t y;
   if(op&(1<<25)){unsigned n=((op>>8)&15)*2;y=rot(op&255,n);if(n)carry=y>>31;}

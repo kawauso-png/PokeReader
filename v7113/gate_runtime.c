@@ -17,7 +17,8 @@ extern uint32_t host_trace_file_write(const char*,uint32_t);
 static uint32_t error,checks,advance,seed,selected,models,profile,committed;
 static uint32_t lead_seconds=300,bench_ready;
 static uint64_t search_id,launch,resume,clock_ms,clock_tick;static uint32_t clock_hz;
-static Shadow7113Result results[2];
+static Shadow7113Result results[2],bench_result;
+static uint64_t bench_elapsed,bench_seconds;
 #ifdef GATE7113_TEST
 extern uint32_t gate_test_read(uint32_t,unsigned);
 static uint32_t word(uint32_t a){return gate_test_read(a,4);}
@@ -43,7 +44,7 @@ static int progress(unsigned f,uint64_t steps,void*unused){
  if((f&15)==0){scan_input();if(get_current_keys()&KEY_SELECT){error=0x711301;return 0;}host7113_progress(checks,profile,f);}
  if(svcGetSystemTick()+2ULL*clock_hz>=launch){error=0x711302;return 0;}return 1;
 }
-void gate7113_begin(void){lead_seconds=300;bench_ready=0;error=checks=selected=models=committed=0;launch=resume=0;search_id=svcGetSystemTick();rank7108_begin();}
+void gate7113_begin(void){memset(&bench_result,0,sizeof(bench_result));bench_elapsed=bench_seconds=0;lead_seconds=300;bench_ready=0;error=checks=selected=models=committed=0;launch=resume=0;search_id=svcGetSystemTick();rank7108_begin();}
 uint32_t gate7113_error(void){return error;}
 uint32_t gate7113_checks(void){return checks;}
 uint32_t gate7113_dv(void){return selected;}
@@ -75,10 +76,10 @@ int gate7113_evaluate(void){
  uint64_t cycle=(launch+5ULL*clock_hz)/4481233ULL+1;while((cycle&15)!=14)cycle++;resume=cycle*4481233ULL;
  if(!bench_ready){
   profile=0;Shadow7113Input in={0};in.code=(const uint8_t*)0x100000;in.rom_base=word(0x22f6c4);in.rom=(const uint8_t*)in.rom_base;in.rom_size=2097152;in.heap_base=heap;in.static_data=data;in.heap_data=data+0x14f000;in.rtc=rtc;in.progress=progress;
-  uint64_t start=svcGetSystemTick();Shadow7113Result b=shadow7113_run(&in,20);uint64_t elapsed=svcGetSystemTick()-start;
+  uint64_t start=svcGetSystemTick();Shadow7113Result b=shadow7113_run(&in,20);uint64_t elapsed=svcGetSystemTick()-start;bench_result=b;bench_elapsed=elapsed;
   if(b.error||!b.instructions){results[0]=b;if(!error)error=0x711400+b.error;return -1;}
   uint64_t estimate=(elapsed/b.instructions)*700000000ULL+(elapsed%b.instructions)*700000000ULL/b.instructions;
-  uint64_t seconds=estimate/clock_hz+20;if(seconds<30)seconds=30;if(seconds>900){error=0x711314;return -1;}
+  uint64_t seconds=estimate/clock_hz+20;bench_seconds=seconds;if(seconds<30)seconds=30;if(seconds>900){error=0x711314;return -1;}
   lead_seconds=seconds;bench_ready=1;goto plan_again;
  }
  for(profile=0;profile<2;profile++){
@@ -97,6 +98,18 @@ static int append_file(const char*path,const char*line,int fresh){
  if(ok)ok=!R_FAILED(FSFILE_Write(file,&wrote,n,line,len,0))&&wrote==len;
  Result fl=FSFILE_Flush(file),cl=FSFILE_Close(file);fsExit();return ok&&!R_FAILED(fl)&&!R_FAILED(cl);
 }
-int gate7113_log_scan(int decision){char path[160],line[640];snprintf(path,sizeof(path),"/luma/plugins/pokereader/traces/shiny7113_%016llX.csv",(unsigned long long)search_id);snprintf(line,sizeof(line),"GATE7113,%u,%u,%04X,%u,%d,%08X,%04X,%u,%04X,%u,%04X,%u,%llu,%llu,%llu\n",checks,advance,seed,rank7108_best_rank(),decision,error,selected,models,results[0].dv,results[0].error,results[1].dv,results[1].error,(unsigned long long)results[0].instructions,(unsigned long long)launch,(unsigned long long)resume);if(!append_file(path,line,checks==1)){error=0x711310;return 0;}return 1;}
+int gate7113_log_scan(int decision){
+ char path[160],line[1024];
+ snprintf(path,sizeof(path),"/luma/plugins/pokereader/traces/shiny7114_%016llX.csv",(unsigned long long)search_id);
+ int used=snprintf(line,sizeof(line),"GATE7114,%u,%u,%04X,%u,%d,%08X,%04X,%u,%04X,%u,%04X,%u,%llu,%llu,%llu\n",checks,advance,seed,rank7108_best_rank(),decision,error,selected,models,results[0].dv,results[0].error,results[1].dv,results[1].error,(unsigned long long)results[0].instructions,(unsigned long long)launch,(unsigned long long)resume);
+ if(used<0||(unsigned)used>=sizeof(line)){error=0x711310;return 0;}
+ int n=snprintf(line+used,sizeof(line)-used,"GATE7114_BENCH,%u,%llu,%llu,%llu,%u,%u,%u,%08X,%08X\n",checks,(unsigned long long)bench_elapsed,(unsigned long long)bench_result.instructions,(unsigned long long)bench_seconds,lead_seconds,bench_ready,bench_result.error,bench_result.arm_pc,bench_result.arm_op);
+ if(n<0||(unsigned)n>=sizeof(line)-used){error=0x711310;return 0;}used+=n;
+ for(unsigned p=0;p<2;p++){
+  Shadow7113Result*r=&results[p];n=snprintf(line+used,sizeof(line)-used,"GATE7114_CPU,%u,%u,%u,%08X,%08X,%04X,%u,%u,%u,%u,%llu\n",checks,p,r->error,r->arm_pc,r->arm_op,r->guest_pc,r->frame,r->normal,r->final,r->reads,(unsigned long long)r->instructions);
+  if(n<0||(unsigned)n>=sizeof(line)-used){error=0x711310;return 0;}used+=n;
+ }
+ if(!append_file(path,line,checks==1)){error=0x711310;return 0;}return 1;
+}
 int gate7113_commit(void){uint32_t a=0,s=suicune_rank_pre_state(&a);if(!selected||a!=advance||!(s&0x80000000U)||(s&65535)!=seed||svcGetSystemTick()+5ULL*clock_hz>=launch){error=0x711311;return 0;}committed=1;return 1;}
-void gate7113_append_result(uint32_t a,uint32_t present,uint32_t dv){if(!committed)return;char line[256];snprintf(line,sizeof(line),"\nGATE7113_RESULT,%u,%u,%04X,%u,%04X,%u,%u\n",advance,a,selected,models,dv,present,a==advance&&present&&dv==selected);host_trace_file_write(line,strlen(line));}
+void gate7113_append_result(uint32_t a,uint32_t present,uint32_t dv){if(!committed)return;char line[256];snprintf(line,sizeof(line),"\nGATE7114_RESULT,%u,%u,%04X,%u,%04X,%u,%u\n",advance,a,selected,models,dv,present,a==advance&&present&&dv==selected);host_trace_file_write(line,strlen(line));}

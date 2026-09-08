@@ -1,0 +1,73 @@
+{
+  "status": "EXPERIMENTAL_COUNTERFACTUAL_NOT_VALIDATED",
+  "path_count": 3159,
+  "target_count": 5887,
+  "root_count": 5887,
+  "density": 0.0898284912109375,
+  "templates": [
+    {
+      "cell": "A/r1",
+      "ap40": "2486",
+      "prefix_a": 5189,
+      "prefix_s": 5196,
+      "paths": 694,
+      "accepted": 0
+    },
+    {
+      "cell": "A/r1",
+      "ap40": "2746",
+      "prefix_a": 5077,
+      "prefix_s": 5083,
+      "paths": 694,
+      "accepted": 0
+    },
+    {
+      "cell": "D/r1",
+      "ap40": "23C7",
+      "prefix_a": 5150,
+      "prefix_s": 5157,
+      "paths": 256,
+      "accepted": 362
+    },
+    {
+      "cell": "A/r1",
+      "ap40": "2606",
+      "prefix_a": 5011,
+      "prefix_s": 5018,
+      "paths": 694,
+      "accepted": 4376
+    },
+    {
+      "cell": "D/r1",
+      "ap40": "2CC7",
+      "prefix_a": 5106,
+      "prefix_s": 5113,
+      "paths": 256,
+      "accepted": 0
+    },
+    {
+      "cell": "D/r1",
+      "ap40": "2A07",
+      "prefix_a": 4963,
+      "prefix_s": 4970,
+      "paths": 256,
+      "accepted": 1053
+    },
+    {
+      "cell": "D/r1",
+      "ap40": "2407",
+      "prefix_a": 5163,
+      "prefix_s": 5170,
+      "paths": 256,
+      "accepted": 0
+    },
+    {
+      "cell": "B/r8",
+      "ap40": "2607",
+      "prefix_a": 5012,
+      "prefix_s": 5018,
+      "paths": 53,
+      "accepted": 792
+    }
+  ]
+}

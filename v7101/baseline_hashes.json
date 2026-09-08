@@ -1,0 +1,7 @@
+{
+  "3gx/sources/main.c": "ebc88313fdfdfb1602525322e6b91b332ef64c142d0ded09c116b2adce101ae6",
+  "reader_core/src/crystal/hook.rs": "be95e16c63ded0649ab4dfb5041b344d00fb26b907cd801d583525a063c40394",
+  "reader_core/src/crystal/trace.rs": "d801661ea57acef8525cab63904bbf3b29ade118ab372c963bc26361e66da72e",
+  "reader_core/src/pnp/bindings.rs": "6484ed358255ea3c61ff4cf37b935666e54c240b896054a3f3ce45303b3f4c80",
+  "reader_core/src/pnp/utils.rs": "2e7385a1114f208a6dee723893db743a3374558f6160401961cfdafe000a6b3b"
+}

@@ -1,0 +1,39 @@
+name: Suicune v7.10.1 PRE Candidate Pilot
+on:
+  push:
+    branches: [suicune-v7101-pre-candidate-pilot]
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    container: zaksabeast/devkitarm-rust
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python
+        run: |
+          apt-get update --allow-releaseinfo-change
+          apt-get install -y python3
+      - name: Generate pinned v7100 baseline
+        run: |
+          python3 run_suicune_v799_chain_for_v7100.py
+          python3 apply_suicune_s1split_selfcal_v7100.py
+      - name: Apply candidate pilot
+        run: python3 apply_suicune_pre_candidate_v7101.py
+      - name: Exhaustive candidate and input-path checks
+        run: python3 verify_suicune_v7101.py
+      - name: Build 3GX
+        run: make
+      - name: Package
+        run: |
+          mkdir -p v7101-package/generated/reader_core/src/crystal v7101-package/generated/3gx/sources
+          cp out/default.3gx v7101-package/PokeReader-Suicune-v7101-Candidate-Pilot.3gx
+          cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/v7101_model.rs reader_core/src/crystal/roots.bin v7101-package/generated/reader_core/src/crystal/
+          cp 3gx/sources/main.c v7101-package/generated/3gx/sources/
+          cp -r v7101 v7101-package/
+          cp apply_suicune_pre_candidate_v7101.py verify_suicune_v7101.py v7101-package/
+          sha256sum out/default.3gx > v7101-package/sha256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PokeReader-Suicune-v7101-Candidate-Pilot
+          path: v7101-package
+          retention-days: 30

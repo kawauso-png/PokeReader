@@ -1,4 +1,4 @@
-name: Suicune v7.10.8 Experimental Ranked Hunt
+name: Suicune v7.10.8d ROM Diagnostic
 on:
   push:
     branches: [suicune-v7108-ranked-hunt]
@@ -39,6 +39,6 @@ jobs:
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7108-Ranked-Hunt
+          name: PokeReader-Suicune-v7108d-ROM-Diagnostic
           path: v7102-package
           retention-days: 30

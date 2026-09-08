@@ -2,6 +2,8 @@
 #define RANK7108_RUNTIME_H
 #include <stdint.h>
 void rank7108_begin(void);
+int rank7108_rom_preflight(void); /* frozen, before search or game input */
+int rank7108_rom_dump_ok(void);
 int rank7108_evaluate(void); /* 1 candidate, 0 reject, -1 diagnostic stop */
 int rank7108_log_scan(int decision); /* save rejected candidates too */
 int rank7108_commit(void);   /* durable PRE record before physical UP */

@@ -65,8 +65,16 @@ c=rep(c,'''            // Stage3 current-root live scan start.
             {''','''            // Ranked experiment: auto-check frozen PRE candidates before UP.
             if (just_pressed & KEY_DDOWN)
             {
-                rank7108_begin();rank7108_hunting=true;suicune_live_pass_ready=false;''')
-c=c.replace('S7107','S7108')
+                rank7108_begin();rank7108_hunting=false;suicune_live_pass_ready=false;
+                if(!rank7108_rom_preflight()) {
+                    suicune_root_lock_active=false;suicune_root_lock_ready=false;suicune_root_lock_failed=true;
+                    suicune_neutral_probe_pending=false;suicune_wait_up_after_b=false;
+                    char info[32];snprintf(info,sizeof(info),"ERROR %08lX",(unsigned long)rank7108_error());
+                    v7102_panel("S7108D ROM CHECK STOP",info,rank7108_rom_dump_ok()?"ROM DUMP SAVED - RETURN SD":"NO UP - DIAGNOSTIC NOT SAVED");
+                    continue;
+                }
+                rank7108_hunting=true;''')
+c=c.replace('S7107','S7108').replace('S7108 ','S7108D ')
 f.write_text(c)
 
 f=root/'reader_core/src/crystal/trace.rs';t=f.read_text()

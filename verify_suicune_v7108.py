@@ -1,6 +1,7 @@
 from pathlib import Path
 import subprocess,tempfile
 root=Path(__file__).resolve().parent
+subprocess.run(['python3',str(root/'v7108/test_rom_diag.py')],check=True)
 c=(root/'3gx/sources/main.c').read_text()
 t=(root/'reader_core/src/crystal/trace.rs').read_text()
 with tempfile.TemporaryDirectory() as td:

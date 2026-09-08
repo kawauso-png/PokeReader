@@ -11,6 +11,7 @@ static uint8_t ram[8192],io[256];
 static uint32_t error_code,checks,cycles,pre_advance,seed,candidates,rom_seen,rom_hash,pre_hash;
 static uint64_t pre_id,search_id;
 static int committed,valid,scored;
+static int rom_dump_ok;
 #define RANK_LIMIT 128U
 static int mapped(uint32_t ptr,uint32_t length) {
     if(!ptr||!length||ptr>UINT32_MAX-(length-1))return 0;
@@ -21,7 +22,46 @@ static int mapped(uint32_t ptr,uint32_t length) {
 }
 static uint32_t word_at(uint32_t addr){return *(const volatile uint32_t*)addr;}
 static uint32_t fnv(const uint8_t *data,uint32_t n,uint32_t h){for(uint32_t i=0;i<n;i++)h=(h^data[i])*16777619U;return h;}
-void rank7108_begin(void){error_code=checks=cycles=committed=valid=scored=0;pre_id=0;pre_advance=seed=pre_hash=0;search_id=svcGetSystemTick();}
+void rank7108_begin(void){error_code=checks=cycles=committed=valid=scored=0;rom_dump_ok=0;pre_id=0;pre_advance=seed=pre_hash=0;search_id=svcGetSystemTick();}
+/* Diagnostic export only. The game's loaded ROM is read, never modified.
+   Do not accept a different ROM merely because the observed hash is stable. */
+static int save_diag_file(FS_Archive sd,const char *name,const uint8_t *data,uint32_t length) {
+    Handle file;uint64_t size=0;
+    if(R_FAILED(FSUSER_OpenFile(&file,sd,fsMakePath(PATH_ASCII,name),FS_OPEN_WRITE|FS_OPEN_CREATE,0)))return 0;
+    int ok=!R_FAILED(FSFILE_GetSize(file,&size)) && size==0;
+    for(uint32_t offset=0;ok && offset<length;) {
+        uint32_t count=length-offset,written=0;if(count>16384)count=16384;
+        Result r=FSFILE_Write(file,&written,offset,data+offset,count,0);
+        if(R_FAILED(r)||written!=count){ok=0;break;}offset+=count;
+    }
+    Result flush=FSFILE_Flush(file),close=FSFILE_Close(file);
+    return ok && !R_FAILED(flush) && !R_FAILED(close);
+}
+static void dump_rom(uint32_t rom) {
+    if(R_FAILED(fsInit()))return;
+    FS_Archive sd;
+    if(R_FAILED(FSUSER_OpenArchive(&sd,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,"")))){fsExit();return;}
+    FSUSER_CreateDirectory(sd,fsMakePath(PATH_ASCII,"/luma/plugins/pokereader"),0);
+    FSUSER_CreateDirectory(sd,fsMakePath(PATH_ASCII,"/luma/plugins/pokereader/traces"),0);
+    char name[160],info[384];
+    snprintf(name,sizeof(name),"/luma/plugins/pokereader/traces/rank7108_rom_%016llX.bin",(unsigned long long)search_id);
+    int saved=save_diag_file(sd,name,(const uint8_t*)rom,2097152);
+    snprintf(info,sizeof(info),"version=S7108D\nsearch_id=%016llX\nrom_pointer=%08X\nlength=2097152\nexpected_fnv=6C177283\nobserved_fnv=%08X\nbinary_saved=%d\n",
+        (unsigned long long)search_id,(unsigned)rom,(unsigned)rom_hash,saved);
+    snprintf(name,sizeof(name),"/luma/plugins/pokereader/traces/rank7108_rom_%016llX.txt",(unsigned long long)search_id);
+    int meta=save_diag_file(sd,name,(const uint8_t*)info,strlen(info));
+    rom_dump_ok=saved && meta;FSUSER_CloseArchive(sd);fsExit();
+}
+int rank7108_rom_dump_ok(void){return rom_dump_ok;}
+int rank7108_rom_preflight(void) {
+    error_code=0;rom_dump_ok=0;
+    if(!mapped(0x22f6c4,4)){error_code=2;return 0;}
+    uint32_t rom=word_at(0x22f6c4);
+    if(!mapped(rom,2097152)){error_code=4;return 0;}
+    rom_hash=fnv((const uint8_t*)rom,2097152,2166136261U);
+    if(rom_hash!=0x6c177283U){rom_seen=0;error_code=5;dump_rom(rom);return 0;}
+    rom_seen=rom;return 1;
+}
 uint32_t rank7108_error(void){return error_code;}
 uint32_t rank7108_checks(void){return checks;}
 uint32_t rank7108_cycles(void){return cycles;}

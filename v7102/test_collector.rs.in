@@ -1,0 +1,80 @@
+extern crate alloc;
+use std::sync::Mutex;
+struct Fake {ram:Vec<u8>,out:Vec<u8>,mode:u32,advance:u32,tick:u64,bad_map:bool}
+static FAKE:Mutex<Option<Fake>>=Mutex::new(None);
+fn init(mode:u32) {
+    let mut ram=vec![0;65536];
+    for i in 0..448 {ram[0xc100+i]=(i&255) as u8;}
+    ram[0xffe1]=0xc2;ram[0xffe2]=0x3c;
+    *FAKE.lock().unwrap()=Some(Fake{ram,out:Vec::new(),mode,advance:100,tick:0,bad_map:false});
+}
+fn mutate(f:impl FnOnce(&mut Fake)) {f(FAKE.lock().unwrap().as_mut().unwrap());}
+fn output()->String {String::from_utf8(FAKE.lock().unwrap().as_ref().unwrap().out.clone()).unwrap()}
+#[no_mangle] extern "C" fn host_suicune_research_mode()->u32 {FAKE.lock().unwrap().as_ref().unwrap().mode}
+mod pnp {
+    pub fn test_byte(addr:u32)->u8 {
+        let lock=crate::FAKE.lock().unwrap();let s=lock.as_ref().unwrap();
+        match addr {
+            0x10000000..=0x10001fff=>s.ram[(addr-0x10000000+0xc000) as usize],
+            0x10010000..=0x1001007e=>s.ram[(addr-0x10010000+0xff80) as usize],
+            0x0022f6c8..=0x0022f6cb=>0x10000000u32.to_le_bytes()[(addr-0x22f6c8) as usize],
+            0x0022f6d8..=0x0022f6db=>0x10010000u32.to_le_bytes()[(addr-0x22f6d8) as usize],
+            0x0022f5fc=>0xb6,0x0022f5fd=>2,0x0022f604=>0x35,0x0022f794=>0xa8,
+            0x0022f5e0..=0x0022f61f=>0,
+            _=>panic!("unmapped read {:x}",addr),
+        }
+    }
+    pub fn is_memory_mapped(_:u32)->bool {!crate::FAKE.lock().unwrap().as_ref().unwrap().bad_map}
+    pub unsafe fn read_into_raw(addr:u32,dst:*mut u8,len:usize) {for i in 0..len {*dst.add(i)=test_byte(addr+i as u32);}}
+    pub fn system_tick()->u64 {let mut l=crate::FAKE.lock().unwrap();let s=l.as_mut().unwrap();s.tick+=10;s.tick}
+    pub fn trace_file_open(_:u32)->bool {crate::mutate(|s|s.out.clear());true}
+    pub fn trace_file_write(b:&[u8]) {crate::mutate(|s|s.out.extend_from_slice(b));}
+    pub fn trace_file_close() {}
+}
+mod crystal {
+    pub mod hook {
+        pub fn rng_advance()->u32 {crate::FAKE.lock().unwrap().as_ref().unwrap().advance}
+        pub fn measured_div()->u16 {0xa8a9}
+        pub fn adiv_subtick()->u8 {0x35}
+        pub fn sdiv_subtick()->u8 {0}
+    }
+    pub mod game_lib {pub mod gb_mem {
+        pub fn read_u8(addr:u32)->u8 {
+            assert!((0xc000..=0xdfff).contains(&addr)||(0xff80..=0xfffe).contains(&addr));
+            crate::FAKE.lock().unwrap().as_ref().unwrap().ram[addr as usize]
+        }
+        pub fn read_u16(addr:u32)->u16 {((read_u8(addr) as u16)<<8)|read_u8(addr+1) as u16}
+    }}
+    #[path=RESEARCH_PATH] pub mod research;
+}
+#[test]
+fn actual_collector_modes_bounds_and_failed_arming() {
+    use crystal::research as r;
+    init(0);r::arm(100,97,0);assert_eq!(r::suicune_research_arm_ok(),1);
+    r::frame(0,101);let mut stack=[0;8];r::div_boundary(112,0x2f60,&[0;15],stack.as_mut_ptr());
+    r::finish();r::save();let base=output();
+    assert!(base.contains("R7102_META,BASE,100,1,1,0,0,0,0,100,1"));
+    assert!(!base.contains("R7102_SAMPLE,"));
+    assert_eq!(base.lines().filter(|l|l.starts_with("R7102_BLOB,PRE_RAM,")).count(),128);
+    if let Ok(dir)=std::env::var("V7102_TEST_DIR") {std::fs::write(std::path::Path::new(&dir).join("base.csv"),&base).unwrap();}
+    init(1);r::arm(100,97,0);
+    for i in 0..394 {r::frame(i,128);}
+    r::finish();r::save();let tail=output();
+    assert!(tail.contains("R7102_META,TAIL,100,1,1,384,0,10,0,100,1"));
+    assert_eq!(tail.lines().filter(|l|l.starts_with("R7102_SAMPLE,FRAME,")).count(),384);
+    if let Ok(dir)=std::env::var("V7102_TEST_DIR") {std::fs::write(std::path::Path::new(&dir).join("tail.csv"),&tail).unwrap();}
+    let row=tail.lines().find(|l|l.starts_with("R7102_SAMPLE,FRAME,")).unwrap().split(',').collect::<Vec<_>>();
+    assert_eq!(row.len(),19);assert_eq!(row[7],"C23C");assert_eq!(row[14].len(),128);assert_eq!(row[15].len(),896);assert_eq!(row[16].len(),254);
+    init(2);r::arm(100,97,0);
+    r::frame(0,101);
+    for _ in 0..40 {r::div_boundary(112,0x2f60,&[0x12345678;15],stack.as_mut_ptr());}
+    r::finish();r::save();let deep=output();
+    assert!(deep.contains("R7102_META,DEEP,100,1,1,0,32,0,8,100,1"));
+    assert_eq!(deep.lines().filter(|l|l.starts_with("R7102_SAMPLE,DIV,")).count(),32);
+    if let Ok(dir)=std::env::var("V7102_TEST_DIR") {std::fs::write(std::path::Path::new(&dir).join("deep.csv"),&deep).unwrap();}
+    init(0);r::arm(100,98,0);assert_eq!(r::suicune_research_arm_ok(),0);
+    assert!(output().contains("R7102_META,BASE,100,0,1,0,0,0,0,"));
+    init(0);mutate(|s|s.bad_map=true);r::arm(100,97,0);assert_eq!(r::suicune_research_arm_ok(),0);
+    assert!(output().contains("R7102_META,BASE,100,0,0,0,0,0,0,"));
+    init(0);r::arm(100,97,1);assert_eq!(r::suicune_research_arm_ok(),0);
+}

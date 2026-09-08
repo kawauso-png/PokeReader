@@ -1,0 +1,40 @@
+extern crate alloc;
+use std::sync::Mutex;
+struct Fake {ram:Vec<u8>,out:Vec<u8>,unstable:bool,div_reads:u32}
+static FAKE:Mutex<Option<Fake>>=Mutex::new(None);
+fn init(){let mut ram=vec![0;65536];ram[0xff04]=0xa8;ram[0xff05]=39;ram[0xff07]=4;ram[0xffff]=15;ram[0xffe1]=0xc2;ram[0xffe2]=0x3c;
+    *FAKE.lock().unwrap()=Some(Fake{ram,out:Vec::new(),unstable:false,div_reads:0});}
+fn output()->String{String::from_utf8(FAKE.lock().unwrap().as_ref().unwrap().out.clone()).unwrap()}
+mod pnp {
+    pub fn test_byte(addr:u32)->u8 {
+        let mut l=crate::FAKE.lock().unwrap();let s=l.as_mut().unwrap();
+        if addr==0x1000ff04 {s.div_reads+=1;return s.ram[0xff04]+if s.unstable && s.div_reads%2==0 {1}else{0};}
+        match addr {
+            0x10000000..=0x1000ffff=>s.ram[(addr-0x10000000) as usize],
+            0x22f604=>53,0x22fa50=>60,0x22fa48=>107,0x22f600=>60,
+            0x22f600..=0x22fa53=>0,
+            _=>panic!("unmapped {:x}",addr),
+        }
+    }
+    pub fn trace_file_write(b:&[u8]){crate::FAKE.lock().unwrap().as_mut().unwrap().out.extend_from_slice(b);}
+}
+#[path=CLOCK_PATH] mod clock;
+#[test] fn exact_rows_counters_bounds_and_no_hot_io(){
+    init();clock::arm(100,0,false);clock::observe(100,0x2b6,0xff04);assert!(!clock::ready());
+    clock::arm(100,0x1000ff00,true);clock::frame(0);let before=FAKE.lock().unwrap().as_ref().unwrap().ram.clone();
+    clock::observe(100,0x2b6,0xff04);clock::observe(100,0x1234,0xffe9);
+    clock::observe(100,0x0554,0xffc6);clock::observe(100,0x3e25,0xffe9);clock::observe(100,0x2be,0xff04);
+    assert!(output().is_empty());assert_eq!(FAKE.lock().unwrap().as_ref().unwrap().ram,before);
+    clock::finish();clock::observe(101,0x2b6,0xff04);clock::save();let s=output();
+    assert!(s.contains("R7110_CLOCKMETA,100,1,3,0,1,0,1,DIAGNOSTIC_NO_SHINY_GATE"));
+    assert!(s.contains("R7110_CLOCK,0,DIV,100,0,02B6,C23C,A8,53,60,27,00,04,0F,00"));
+    assert_eq!(s.lines().filter(|l|l.starts_with("R7110_CLOCK,")).count(),3);
+    for l in s.lines().filter(|l|l.starts_with("R7110_CLOCK,")){assert_eq!(l.split(',').count(),28);assert!(l.ends_with(",1"));}
+    if let Ok(p)=std::env::var("CLOCK_TEST_OUT"){std::fs::write(p,s).unwrap();}
+    init();clock::arm(100,0x1000ff00,true);
+    for _ in 0..4100{clock::observe(100,0x2b6,0xff04);}
+    clock::finish();clock::save();assert!(output().contains("R7110_CLOCKMETA,100,1,4096,4,0,0,0,"));
+    init();clock::arm(100,0x1000ff00,true);FAKE.lock().unwrap().as_mut().unwrap().unstable=true;
+    clock::observe(100,0x2b6,0xff04);clock::finish();clock::save();
+    assert!(output().lines().find(|l|l.starts_with("R7110_CLOCK,")).unwrap().ends_with(",0"));
+}

@@ -1,4 +1,4 @@
-name: Suicune v7.10.9 Verified VC ROM Support
+name: Suicune v7.10.10 Continuous Clock Collector
 on:
   push:
     branches: [suicune-v7108-ranked-hunt]
@@ -23,6 +23,10 @@ jobs:
         run: python3 apply_suicune_ranked_hunt_v7108.py
       - name: Verify ranked PRE experiment
         run: python3 verify_suicune_v7108.py
+      - name: Apply complete clock collector
+        run: python3 apply_suicune_clock_v7110.py
+      - name: Verify complete clock collector
+        run: python3 verify_suicune_clock_v7110.py
       - name: Verify collector and analysis
         run: python3 verify_suicune_v7102.py
       - name: Build 3GX
@@ -31,14 +35,15 @@ jobs:
         run: |
           mkdir -p v7102-package/generated/reader_core/src/crystal v7102-package/generated/3gx/sources
           cp out/default.3gx v7102-package/default.3gx
-          cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/research.rs reader_core/src/crystal/capture_plan.rs reader_core/src/crystal/mod.rs v7102-package/generated/reader_core/src/crystal/
+          cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/research.rs reader_core/src/crystal/capture_plan.rs reader_core/src/crystal/mod.rs reader_core/src/crystal/clock7110.rs v7102-package/generated/reader_core/src/crystal/
           cp 3gx/sources/main.c 3gx/sources/pnp.c v7102-package/generated/3gx/sources/
-          cp -r v7102 v7108 v7102-package/
+          cp -r v7102 v7108 v7110 v7102-package/
+          cp apply_suicune_clock_v7110.py verify_suicune_clock_v7110.py v7102-package/
           cp apply_suicune_ranked_hunt_v7108.py verify_suicune_v7108.py v7102-package/
           cp apply_suicune_causal_collector_v7102.py analyze_suicune_v7102.py verify_suicune_v7102.py v7102-package/
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7109-VC-ROM-Support
+          name: PokeReader-Suicune-v7110-Clock-Collector
           path: v7102-package
           retention-days: 30

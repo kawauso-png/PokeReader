@@ -8,9 +8,11 @@ with tempfile.TemporaryDirectory(prefix='suicune-v7102-') as d:
     p=Path(d);(p/'test.rs').write_text(code)
     subprocess.run(['rustc','--edition=2021','--test','-O',str(p/'test.rs'),'-o',str(p/'test')],check=True)
     subprocess.run([str(p/'test'),'--test-threads=1'],env={**os.environ,'V7102_TEST_DIR':str(p)},check=True)
-    for name,count in [('base',0),('tail',384),('deep',64)]:
+    for name,count in [('base',0),('tail',384),('deep',544),('all',928)]:
         rec,frames,samples,blobs=read(p/(name+'.csv'))
         assert rec['R7102_META']['mode']==name.upper() and len(samples)==count
+        if name=='all':
+            assert rec['R7107_LCDTOTAL']==dict(total=622,dropped=2) and rec['R7107_LCDCOUNT']=={1:100,12:520}
         assert len(blobs['NATIVE_CODE'])==0xb1000 and len(blobs['PRE_EMU'])==0x480
         assert len(blobs['PRE_RAM'])==8192 and blobs['PRE_HRAM'][0x61:0x63]==bytes.fromhex('C23C')
     for a in range(256):
@@ -103,6 +105,8 @@ assert 'if super::research::mode()==0 { unsafe { v798_save_cal_if_dirty(); v7100
 assert 'suicune_neutral_probe_remaining=3U;' in c and 'const u32 wanted = 14U;' in c
 assert 'suicune_neutral_probe_frames++' not in c
 assert 'super::research::div_boundary(rng_advance(),pc,regs,_stack_pointer);' in h
+assert 'static u32 v7102_mode=3;' in c and 'v7102_mode=(v7102_mode+1U)%4U;' in c
+assert 'unsafe { ENDPOINT_FAST_TAIL } || super::research::mode()==3' in h
 # The new module observes memory; it never calls a guest-write primitive.
 research=(base/'v7102/research.rs').read_text()
 for forbidden in ('host_write_mem','pnp::write','gb_mem::write','write_volatile'):

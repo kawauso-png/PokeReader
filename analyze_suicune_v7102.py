@@ -78,6 +78,14 @@ def read(path):
             tag=r[1];off=int(r[3]);b=bytes.fromhex(r[4]);parts=blobs.setdefault(tag,{})
             if off in parts:raise ValueError('duplicate blob chunk')
             parts[off]=b
+        elif r[0]=='R7107_LCDTOTAL':
+            if len(r)!=3 or 'R7107_LCDTOTAL' in rec:raise ValueError('bad LCD total')
+            rec['R7107_LCDTOTAL']=dict(total=int(r[1]),dropped=int(r[2]))
+        elif r[0]=='R7107_LCDCOUNT':
+            if len(r)!=3:raise ValueError('bad LCD count')
+            offset,count=map(int,r[1:]);counts=rec.setdefault('R7107_LCDCOUNT',{})
+            if offset in counts or not 0<=offset<2048 or not 0<count<=0xffffffff:raise ValueError('invalid LCD count')
+            counts[offset]=count
         elif r[0]=='R7102_SAMPLE':
             if len(r) not in (20,22):raise ValueError('bad sample row length')
             s=dict(kind=r[1],index=int(r[2]),frame=int(r[3]),advance=int(r[4]),rel=int(r[5]),
@@ -132,8 +140,9 @@ def analyze(path):
             events=[s for s in ls if a['tick_begin']<s['tick_begin']<b['tick_begin']]
             try:
                 gap=(countdown_phase(b['div_before'],b['div_remaining_before'],b['sub_before'])-countdown_phase(a['div_before'],a['div_remaining_before'],a['sub_before']))&0x3fff
-                expected=109+22*len(events) if all(s['hram'][0x46]==0 for s in events) else None
-                result['dv_call_interval_checks'].append(dict(observed_gap=gap,short_lcd_events=len(events),expected_if_only_short_lcd_interrupts=expected,matches=gap==expected if expected is not None else None))
+                coverage=int(meta['dropped_lcd'])==0 and len(ls)==int(meta['lcd_samples'])
+                expected=109+22*len(events) if coverage and all(s['hram'][0x46]==0 for s in events) else None
+                result['dv_call_interval_checks'].append(dict(observed_gap=gap,lcd_coverage_complete=coverage,observed_lcd_events=len(events),expected_if_only_short_lcd_interrupts=expected,matches=gap==expected if expected is not None else None))
             except ValueError as e:issue.append('invalid countdown in DV interval: '+str(e))
     if len(fs)!=int(meta['frames']) or len(ds)!=int(meta['deep']):issue.append('sample count mismatch')
     for ss in (fs,ds,ls):
@@ -141,8 +150,18 @@ def analyze(path):
     for s in samples:
         if s['rel']!=(s['advance']-target-1)&0xffffffff:issue.append('relative-advance mismatch')
         if s['tick_end']<s['tick_begin']:issue.append('negative capture duration')
+    if mode not in ('BASE','TAIL','DEEP','ALL'):issue.append('unknown capture mode')
     if mode=='BASE' and samples:issue.append('BASE has active samples')
-    if mode=='TAIL':
+    totals=rec.get('R7107_LCDTOTAL');counts=rec.get('R7107_LCDCOUNT',{})
+    if totals is not None:
+        result['lcd_counts_by_advance_offset']=counts
+        result['lcd_count_totals']=totals
+        if sum(counts.values())+totals['dropped']!=totals['total']:issue.append('LCD count total mismatch')
+        if totals['dropped']:issue.append('LCD count offsets out of range')
+        if mode in ('BASE','TAIL') and totals['total']:issue.append('LCD counts in inactive mode')
+        if len(ls)+int(meta.get('dropped_lcd',0))>totals['total']:issue.append('LCD detailed samples exceed total')
+    elif mode=='ALL':issue.append('ALL missing LCD counts')
+    if mode in ('TAIL','ALL'):
         expected={i for i,f in enumerate(frames) if wanted(int(f['advance'])-target-1)}
         got={s['frame'] for s in fs};missing=sorted(expected-got)
         result['missing_frame_snapshots']=missing
@@ -151,7 +170,7 @@ def analyze(path):
             i=s['frame']
             if i>=len(frames) or int(frames[i]['advance'])!=s['advance'] or int(frames[i]['state'],16)!=s['state']:
                 issue.append('frame join mismatch');break
-    if mode=='DEEP' and not ds:issue.append('no final-window DIV boundaries')
+    if mode in ('DEEP','ALL') and not ds:issue.append('no final-window DIV boundaries')
     neu=rec.get('NEUTRALPROBE',{});ex=rec.get('EXACT2',{});su=rec.get('SUICUNE',{})
     if neu.get('advance_delta')!='3' or neu.get('neutral_requested')!='3':issue.append('neutral3 not confirmed')
     if neu.get('resume_actual_mod16')!='14':issue.append('M14 not confirmed')
@@ -200,7 +219,7 @@ def main():
     for path in sorted(a.inputs.glob('celebi_trace_*.csv')):
         try:reports.append(analyze(path))
         except Exception as e:reports.append(dict(file=path.name,error=repr(e),data_quality='unreadable'))
-    modes={m:sum(r.get('mode')==m and r.get('data_quality')=='complete_for_this_mode' for r in reports) for m in ('BASE','TAIL','DEEP')}
+    modes={m:sum(r.get('mode')==m and r.get('data_quality')=='complete_for_this_mode' for r in reports) for m in ('BASE','TAIL','DEEP','ALL')}
     out=dict(runs=reports,complete_mode_counts=modes,next_step='まず各モードの欠落・入力条件・観測負荷を確認し、POST条件を合わせて分岐変数を比較する。3本だけで法則確定や観測無影響とは判定しない。')
     a.output.parent.mkdir(parents=True,exist_ok=True);a.output.write_text(json.dumps(out,ensure_ascii=False,indent=2))
     print(json.dumps({'complete_mode_counts':modes,'files':len(reports)},ensure_ascii=False))

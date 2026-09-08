@@ -50,8 +50,12 @@ impl Sample { const EMPTY:Self=Self {
 }; }
 static mut FRAMES:[Sample;plan::FRAME_CAP]=[Sample::EMPTY;plan::FRAME_CAP];
 static mut DEEP:[Sample;plan::DEEP_CAP]=[Sample::EMPTY;plan::DEEP_CAP];
-static mut LCD:[Sample;32]=[Sample::EMPTY;32];
+const LCD_CAP:usize=512; // 0024/0025 observed 268 events in the final window.
+static mut LCD:[Sample;LCD_CAP]=[Sample::EMPTY;LCD_CAP];
 static mut NL:usize=0;
+static mut LCD_COUNTS:[u32;2048]=[0;2048];
+static mut LCD_TOTAL:u32=0;
+static mut LCD_COUNT_DROP:u32=0;
 static mut DROP_L:u32=0;
 static mut NF:usize=0;
 static mut ND:usize=0;
@@ -88,14 +92,14 @@ static mut END_VALID:bool=false;
 #[inline] unsafe fn word(addr:u32)->u32 {u32::from_le_bytes([byte(addr),byte(addr+1),byte(addr+2),byte(addr+3)])}
 unsafe fn copy(addr:u32,dst:*mut u8,len:usize) {pnp::read_into_raw(addr,dst,len);}
 pub fn mode()->u32 { unsafe {MODE} }
-pub fn mode_name()->&'static str { match mode() {1=>"TAIL",2=>"DEEP",_=>"BASE"} }
+pub fn mode_name()->&'static str { match mode() {1=>"TAIL",2=>"DEEP",3=>"ALL",_=>"BASE"} }
 #[no_mangle] pub extern "C" fn suicune_research_arm_ok()->u32 {unsafe {PRE_OK as u32}}
 
 fn capture_pre(target:u32) {
     unsafe {
         ACTIVE=false;PRE_OK=false;MAP_OK=false;END_VALID=false;
         capture_native_frozen();
-        MODE=host_suicune_research_mode().min(2);TARGET=target;NF=0;ND=0;NL=0;DROP_L=0;DROP_F=0;DROP_D=0;
+        MODE=host_suicune_research_mode().min(3);TARGET=target;LCD_COUNTS=[0;2048];LCD_TOTAL=0;LCD_COUNT_DROP=0;NF=0;ND=0;NL=0;DROP_L=0;DROP_F=0;DROP_D=0;
         // Frozen RAM-only reads. No ROM/save/IO accesses and no guest execution.
         for i in 0..RAM_LEN { PRE_RAM[i]=gb_mem::read_u8(0xc000+i as u32); }
         for i in 0..HRAM_LEN { PRE_HRAM[i]=gb_mem::read_u8(0xff80+i as u32); }
@@ -163,7 +167,7 @@ unsafe fn sample(dst:*mut Sample,frame:u32,advance:u32,pc:u16,regs:Option<(&[u32
 
 pub fn frame(frame:u32,advance:u32) {
     unsafe {
-        if !ACTIVE || MODE!=1 || !MAP_OK {return;}
+        if !ACTIVE || (MODE!=1 && MODE!=3) || !MAP_OK {return;}
         let rel=advance.wrapping_sub(TARGET).wrapping_sub(1);
         if !plan::wants_frame(rel) {return;}
         if NF>=plan::FRAME_CAP {DROP_F=DROP_F.saturating_add(1);return;}
@@ -175,7 +179,7 @@ pub fn frame(frame:u32,advance:u32) {
 
 pub fn div_boundary(advance:u32,pc:u16,regs:&[u32],stack:*mut u32) {
     unsafe {
-        if !ACTIVE || MODE!=2 || !MAP_OK || !plan::is_div_pc(pc) {return;}
+        if !ACTIVE || (MODE!=2 && MODE!=3) || !MAP_OK || !plan::is_div_pc(pc) {return;}
         if ND>=plan::DEEP_CAP {DROP_D=DROP_D.saturating_add(1);return;}
         sample(core::ptr::addr_of_mut!(DEEP).cast::<Sample>().add(ND),u32::MAX,advance,pc,Some((regs,stack)));
         ND+=1;
@@ -184,10 +188,17 @@ pub fn div_boundary(advance:u32,pc:u16,regs:&[u32],stack:*mut u32) {
 
 // Crystal JP LCD ISR: PUSH AF at 0552, LDH A,[FFC6] at 0553.
 // The GB read hook sees the operand PC 0554. Observe it without injecting IRQs.
-pub fn lcd_boundary(advance:u32,pc:u16,regs:&[u32],stack:*mut u32) {
+pub fn lcd_boundary(advance:u32,pc:u16,regs:&[u32],stack:*mut u32,final_window:bool) {
     unsafe {
-        if !ACTIVE || MODE!=2 || !MAP_OK || pc!=0x0554 {return;}
-        if NL>=32 {DROP_L=DROP_L.saturating_add(1);return;}
+        if !ACTIVE || (MODE!=2 && MODE!=3) || !MAP_OK || pc!=0x0554 {return;}
+        if MODE!=3 && !final_window {return;}
+        LCD_TOTAL=LCD_TOTAL.saturating_add(1);
+        let offset=advance.wrapping_sub(TARGET) as usize;
+        if offset<2048 {LCD_COUNTS[offset]=LCD_COUNTS[offset].saturating_add(1);}
+        else {LCD_COUNT_DROP=LCD_COUNT_DROP.saturating_add(1);}
+        // Cheap counts throughout ALL; detailed copying only in the final window.
+        if !final_window {return;}
+        if NL>=LCD_CAP {DROP_L=DROP_L.saturating_add(1);return;}
         sample(core::ptr::addr_of_mut!(LCD).cast::<Sample>().add(NL),u32::MAX,advance,pc,Some((regs,stack)));
         NL+=1;
     }
@@ -235,5 +246,12 @@ pub fn save() {
         for i in 0..NF {emit_sample("FRAME",i,&FRAMES[i],&mut line);}
         for i in 0..ND {emit_sample("DIV",i,&DEEP[i],&mut line);}
         for i in 0..NL {emit_sample("LCD",i,&LCD[i],&mut line);}
+        line.clear();let _=write!(line,"R7107_LCDTOTAL,{},{}\n",LCD_TOTAL,LCD_COUNT_DROP);
+        pnp::trace_file_write(line.as_bytes());
+        for i in 0..2048 {
+            if LCD_COUNTS[i]==0 {continue;}
+            line.clear();let _=write!(line,"R7107_LCDCOUNT,{},{}\n",i,LCD_COUNTS[i]);
+            pnp::trace_file_write(line.as_bytes());
+        }
     }
 }

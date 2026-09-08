@@ -1,7 +1,7 @@
-name: Suicune v7.10.4 Frozen Emulator Diagnostic
+name: Suicune v7.10.5 DIV Countdown Probe
 on:
   push:
-    branches: [suicune-v7104-frozen-emulator-diagnostic]
+    branches: [suicune-v7105-div-countdown-probe]
   workflow_dispatch:
 jobs:
   build:
@@ -34,6 +34,6 @@ jobs:
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7104-Emulator-Diagnostic
+          name: PokeReader-Suicune-v7105-Countdown-Probe
           path: v7102-package
           retention-days: 30

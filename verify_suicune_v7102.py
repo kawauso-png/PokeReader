@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import json,subprocess,tempfile,os
-from analyze_suicune_v7102 import read,infer_pairs
+from analyze_suicune_v7102 import read,infer_pairs,countdown_phase
 base=Path(__file__).resolve().parent
 code=(base/'v7102/test_collector.rs.in').read_text().replace('RESEARCH_PATH',json.dumps(str(base/'v7102/research.rs')))
 with tempfile.TemporaryDirectory(prefix='suicune-v7102-') as d:
@@ -11,7 +11,7 @@ with tempfile.TemporaryDirectory(prefix='suicune-v7102-') as d:
     for name,count in [('base',0),('tail',384),('deep',32)]:
         rec,frames,samples,blobs=read(p/(name+'.csv'))
         assert rec['R7102_META']['mode']==name.upper() and len(samples)==count
-        assert len(blobs['NATIVE_CODE'])==0xb1000 and len(blobs['PRE_EMU'])==0x230
+        assert len(blobs['NATIVE_CODE'])==0xb1000 and len(blobs['PRE_EMU'])==0x480
         assert len(blobs['PRE_RAM'])==8192 and blobs['PRE_HRAM'][0x61:0x63]==bytes.fromhex('C23C')
     for a in range(256):
         for s in (0,1,255):
@@ -27,6 +27,24 @@ with tempfile.TemporaryDirectory(prefix='suicune-v7102-') as d:
     _,errors=infer_pairs([dict(pc=0x2f60,state=0,advance=100)])
     assert errors
 print('PASS: Rust CSV -> Python reader; both ADC carry-in branches including wrap; missing boundaries rejected')
+count=0
+for initial_div in (0,127,255):
+    for remain in range(1,65):
+        for budget in range(1,remain+1):
+            for elapsed in range(budget):
+                start=countdown_phase(initial_div,remain,elapsed)
+                d,r,e,b=initial_div,remain,elapsed,budget
+                for cost in (3,1,3,1,3):
+                    e+=cost
+                    if e>=b:
+                        r-=e
+                        if r<=0:d=(d+1)&255;r+=64
+                        e=0;b=r
+                finish=countdown_phase(d,r,e)
+                assert (finish-start)&0x3fff==11
+                assert d==((start+11)&0x3fff)>>6
+                count+=1
+print('PASS:',count,'instruction-pair scheduling cases including early flush and DIV wrap')
 t=(base/'reader_core/src/crystal/trace.rs').read_text()
 c=(base/'3gx/sources/main.c').read_text()
 h=(base/'reader_core/src/crystal/hook.rs').read_text()

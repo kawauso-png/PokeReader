@@ -43,7 +43,7 @@ t=rep(t,'''        pnp::trace_file_close();
 t=rep(t,'        self.save_result = Some(true);','        self.save_result = Some(pnp::trace_last_error()==0);')
 t=rep(t,'    pub fn draw_rng_status(&self) {','''    pub fn draw_rng_status(&self) {
         if let Some(result)=self.probe_result {
-            pnp::println!("S7104 {} DONE",super::research::mode_name());
+            pnp::println!("S7105 {} DONE",super::research::mode_name());
             pnp::println!("DV {:04X}",result.raw_dv);
             if exact_tail_is_shiny(result.raw_dv) {
                 pnp::println!("SHINY - CATCH IT!");
@@ -53,22 +53,22 @@ t=rep(t,'    pub fn draw_rng_status(&self) {','''    pub fn draw_rng_status(&sel
             return;
         }
         if self.practical_miss==16 {
-            pnp::println!("S7104 CAPTURE FAILED");
+            pnp::println!("S7105 CAPTURE FAILED");
             pnp::println!("NO UP - RESET VC");
             pnp::println!("CSV {}",pnp::trace_written_slot());
             return;
         }''')
-t=rep(t,'"S786 NEUTRAL SCAN A/r10 B76"','"S7104 OBSERVE SCAN"',2)
-t=rep(t,'"S786 NEUTRAL ROOT READY"','"S7104 ROOT READY"')
+t=rep(t,'"S786 NEUTRAL SCAN A/r10 B76"','"S7105 OBSERVE SCAN"',2)
+t=rep(t,'"S786 NEUTRAL ROOT READY"','"S7105 ROOT READY"')
 t=rep(t,'"NEUTRAL {}F X+1 Y-1",sp.slot','"NEUTRAL {}F FIXED",sp.slot')
 a=t.index('        } else if self.probe_session && self.probe_active && !self.practical_active {')
 b=t.index('        } else if self.practical_miss != 0 {',a)
 t=t[:a]+'''        } else if self.probe_session && self.probe_active && !self.practical_active {
-            pnp::println!("S7104 {} RECORD",super::research::mode_name());
+            pnp::println!("S7105 {} RECORD",super::research::mode_name());
             pnp::println!("WAIT FOR FINAL DV");
             pnp::println!("RELEASE UP AT PAUSE");
 '''+t[b:]
-t=rep(t,'STALLPHASE,V7100,','STALLPHASE,V7104,')
+t=rep(t,'STALLPHASE,V7100,','STALLPHASE,V7105,')
 
 # Capture DEEP mode at all final-window DIV boundaries, including neighboring
 # VBlank reads. Paired RNG states let analysis infer consumed A/S bytes without
@@ -98,7 +98,7 @@ static void v7102_panel(const char *a,const char *b,const char *d) {
     }
 }
 static void v7102_ready_panel(void) {
-    char title[32];snprintf(title,sizeof(title),"S7104 %s READY",v7102_name());
+    char title[32];snprintf(title,sizeof(title),"S7105 %s READY",v7102_name());
     v7102_panel(title,"X: CHANGE MODE","B -> RELEASE ALL KEYS");
 }''')
 c=rep(c,'''    if (isTopScreen)
@@ -124,7 +124,7 @@ c=rep(c,'''                arm_suicune_probe();
                 suicune_live_pass_ready = arm_suicune_live_pass() != 0;''','''                arm_suicune_probe();
                 if (!suicune_research_arm_ok()) {
                     suicune_wait_up_after_b=false;fixed_armed=false;suicune_live_pass_ready=false;
-                    v7102_panel("S7104 CAPTURE FAILED","NO UP - RESET VC","ERROR SNAPSHOT SAVED IF SD OK");
+                    v7102_panel("S7105 CAPTURE FAILED","NO UP - RESET VC","ERROR SNAPSHOT SAVED IF SD OK");
                     continue;
                 }
                 suicune_live_pass_ready = arm_suicune_live_pass() != 0;''')
@@ -134,8 +134,8 @@ c=rep(c,'''                suicune_start_phase_lock_active = false;
 
             // Neutral delay''','''                suicune_start_phase_lock_active = false;
                 v7102_release_shown=false;
-                if(suicune_live_pass_ready) v7102_panel("S7104 RECORD ARMED","HOLD UP UNTIL PAUSED","THEN RELEASE UP");
-                else v7102_panel("S7104 INPUT ARM FAILED","DO NOT PRESS UP","RESET VC MANUALLY");
+                if(suicune_live_pass_ready) v7102_panel("S7105 RECORD ARMED","HOLD UP UNTIL PAUSED","THEN RELEASE UP");
+                else v7102_panel("S7105 INPUT ARM FAILED","DO NOT PRESS UP","RESET VC MANUALLY");
                 continue;
             }
 

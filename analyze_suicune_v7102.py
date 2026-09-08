@@ -7,6 +7,28 @@ from v7102.analyze_tail import A_FIXED,SITES
 TPS=268111856
 A_PCS={0x2b5,0x2b6,0x2f60};S_PCS={0x2bd,0x2be,0x2f68}
 CENTERS=set(A_FIXED+SITES+[225,241,257,369,42,577,715])
+def countdown_phase(div,remaining,elapsed):
+    if not (0<=div<=255 and 1<=remaining<=64 and 0<=elapsed<remaining):
+        raise ValueError('not a normal instruction-read countdown state')
+    return (div*64+64-remaining+elapsed)&0x3fff
+
+def analyze_countdown(samples):
+    rows=[]
+    for i in range(0,len(samples)-1,2):
+        a,s=samples[i:i+2]
+        if 'div_remaining_before' not in a or 'div_remaining_before' not in s:continue
+        row=dict(sample_a=i,pc=f"{a['pc']:04X}")
+        try:
+            ap=countdown_phase(a['div_before'],a['div_remaining_before'],a['sub_before'])
+            sp=countdown_phase(s['div_before'],s['div_remaining_before'],s['sub_before'])
+            row.update(a_phase=f'{ap:04X}',s_phase=f'{sp:04X}',gap=(sp-ap)&0x3fff,
+                predicted_s_div=f'{((ap+11)&0x3fff)>>6:02X}',observed_s_div=f"{s['div_before']:02X}",
+                fixed_instruction_gap_matches=((sp-ap)&0x3fff)==11,
+                s_div_prediction_matches=(((ap+11)&0x3fff)>>6)==s['div_before'])
+        except ValueError as e:row['error']=str(e)
+        row['stable_during_copy']=all(x['div_remaining_before']==x['div_remaining_after'] for x in (a,s))
+        rows.append(row)
+    return rows
 def wanted(r):return r<=42 or 713<=r<=760 or any(abs(r-c)<=1 for c in CENTERS)
 def infer_pairs(samples,end_state=None,end_advance=None):
     """Enumerate ADC carry-in 0/1; boundary states alone do not identify DIV A."""
@@ -57,7 +79,7 @@ def read(path):
             if off in parts:raise ValueError('duplicate blob chunk')
             parts[off]=b
         elif r[0]=='R7102_SAMPLE':
-            if len(r)!=20:raise ValueError('bad sample row length')
+            if len(r) not in (20,22):raise ValueError('bad sample row length')
             s=dict(kind=r[1],index=int(r[2]),frame=int(r[3]),advance=int(r[4]),rel=int(r[5]),
                 pc=int(r[6],16),state=int(r[7],16),div_before=int(r[8],16),sub_before=int(r[9],16),
                 div_after=int(r[10],16),sub_after=int(r[11],16),tick_begin=int(r[12]),tick_end=int(r[13]),
@@ -65,6 +87,7 @@ def read(path):
                 regs=r[17],stack=r[18],gb_stack=bytes.fromhex(r[19]))
             if [len(s[k]) for k in ('cpu','audio','hram','regs','stack','gb_stack')]!=[64,448,127,120,64,256]:raise ValueError('bad sample payload size')
             if s['state']!=(s['hram'][0x61]<<8|s['hram'][0x62]):raise ValueError('HRAM/state mismatch')
+            if len(r)==22:s.update(div_remaining_before=int(r[20]),div_remaining_after=int(r[21]))
             samples.append(s)
     bdata={}
     for tag,parts in blobs.items():
@@ -81,7 +104,7 @@ def analyze(path):
     if not meta:return result
     issue=result['issues'];target=int(meta['target']);mode=meta['mode']
     if 'native_ok' in meta:
-        result['native_diagnostic_valid']=meta['native_ok']=='1' and meta.get('emu_ok')=='1' and len(blobs.get('NATIVE_CODE',b''))==0xb1000 and len(blobs.get('PRE_EMU',b''))==0x230
+        result['native_diagnostic_valid']=meta['native_ok']=='1' and meta.get('emu_ok')=='1' and len(blobs.get('NATIVE_CODE',b''))==0xb1000 and len(blobs.get('PRE_EMU',b''))==int(meta.get('emu_len','0')) and int(meta.get('emu_len','0')) in (0x230,0x480)
         if not result['native_diagnostic_valid']:issue.append('incomplete native emulator diagnostic')
     for key,n in [('PRE_RAM',8192),('PRE_HRAM',127),('PRE_CPU',64),('END_RAM',8192),('END_HRAM',127),('END_CPU',64)]:
         if len(blobs.get(key,b''))!=n:issue.append('incomplete '+key)
@@ -124,6 +147,7 @@ def analyze(path):
     result['divider_changed_during_copy']=sum((s['div_before'],s['sub_before'])!=(s['div_after'],s['sub_after']) for s in samples)
     if not result['divider_observation_valid']:result['divider_changed_during_copy']=None
     if ds:
+        result['countdown_clock_pairs']=analyze_countdown(ds)
         if not result['divider_observation_valid']:
             ds=[{k:v for k,v in sample.items() if k not in ('div_before','div_after')} for sample in ds]
         end=blobs.get('END_HRAM',b'');st=(end[0x61]<<8)|end[0x62] if len(end)==127 else None

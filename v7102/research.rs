@@ -9,6 +9,7 @@ extern "C" { fn host_suicune_research_mode()->u32; }
 const CPU:u32=0x0022f5e0;
 const DIV_PTR:u32=0x0022f794;
 const SUB:u32=0x0022f604;
+const DIV_REMAIN:u32=0x0022fa50;
 const WRAM_PTR:u32=0x0022f6c8;
 const HRAM_PTR:u32=0x0022f6d8;
 const RAM_LEN:usize=8192;
@@ -16,7 +17,7 @@ const RAM_LEN:usize=8192;
 // 001AF120. Read only while frozen; never copy this in an active hook.
 const NATIVE_BASE:u32=0x00100000;
 const NATIVE_LEN:usize=0x000b1000;
-const EMU_LEN:usize=0x230; // 0022F5E0..0022F80F, pointers and timer context.
+const EMU_LEN:usize=0x480; // 0022F5E0..0022FA5F, includes DIV countdown FA50.
 static mut NATIVE_CODE:[u8;NATIVE_LEN]=[0;NATIVE_LEN];
 static mut PRE_EMU:[u8;EMU_LEN]=[0;EMU_LEN];
 static mut NATIVE_OK:bool=false;
@@ -40,11 +41,11 @@ const HRAM_LEN:usize=127; // FF80..FFFE: excludes IE hardware register.
 #[derive(Clone,Copy)]
 struct Sample {
     frame:u32,advance:u32,rel:u32,pc:u16,div0:u8,sub0:u8,div1:u8,sub1:u8,
-    tick0:u64,tick1:u64,
+    tick0:u64,tick1:u64,remaining0:i32,remaining1:i32,
     ctx:[u8;64],audio:[u8;448],hram:[u8;HRAM_LEN],regs:[u32;15],stack:[u32;8],gb_stack:[u8;256],
 }
 impl Sample { const EMPTY:Self=Self {
-    frame:0,advance:0,rel:0,pc:0,div0:0,sub0:0,div1:0,sub1:0,tick0:0,tick1:0,
+    frame:0,advance:0,rel:0,pc:0,div0:0,sub0:0,div1:0,sub1:0,tick0:0,tick1:0,remaining0:0,remaining1:0,
     ctx:[0;64],audio:[0;448],hram:[0;HRAM_LEN],regs:[0;15],stack:[0;8],gb_stack:[0;256],
 }; }
 static mut FRAMES:[Sample;plan::FRAME_CAP]=[Sample::EMPTY;plan::FRAME_CAP];
@@ -108,7 +109,7 @@ fn capture_pre(target:u32) {
         for i in 0..256 {if byte(wram+i as u32)!=PRE_RAM[i] {return;}}
         for i in 0..HRAM_LEN {if byte(hram+i as u32)!=PRE_HRAM[i] {return;}}
         let div=word(DIV_PTR);
-        if div==0 || !pnp::is_memory_mapped(div) {return;}
+        if div==0 || !pnp::is_memory_mapped(div) || !range_mapped(DIV_REMAIN,4) {return;}
         DIV_HOST=div;
         AUDIO_HOST=audio;HRAM_HOST=hram;MAP_OK=true;
         let st=((PRE_HRAM[0x61] as u16)<<8)|PRE_HRAM[0x62] as u16;
@@ -142,7 +143,7 @@ pub fn arm(target:u32,root_advance:u32,root_state:u16) {
 // temporary Sample is created on the small ARM hook stack.
 unsafe fn sample(dst:*mut Sample,frame:u32,advance:u32,pc:u16,regs:Option<(&[u32],*mut u32)>) {
     let s=&mut *dst;
-    s.tick0=pnp::system_tick();s.div0=byte(DIV_HOST);s.sub0=byte(SUB);
+    s.tick0=pnp::system_tick();s.div0=byte(DIV_HOST);s.sub0=byte(SUB);s.remaining0=word(DIV_REMAIN) as i32;
     s.frame=frame;s.advance=advance;s.rel=advance.wrapping_sub(TARGET).wrapping_sub(1);s.pc=pc;
     copy(CPU,s.ctx.as_mut_ptr(),64);
     copy(AUDIO_HOST,s.audio.as_mut_ptr(),448);
@@ -154,7 +155,7 @@ unsafe fn sample(dst:*mut Sample,frame:u32,advance:u32,pc:u16,regs:Option<(&[u32
         for i in 0..15 {s.regs[i]=r.get(i).copied().unwrap_or(0);}
         for i in 0..8 {s.stack[i]=core::ptr::read_volatile(stack.add(i));}
     }
-    s.div1=byte(DIV_HOST);s.sub1=byte(SUB);s.tick1=pnp::system_tick();
+    s.div1=byte(DIV_HOST);s.sub1=byte(SUB);s.remaining1=word(DIV_REMAIN) as i32;s.tick1=pnp::system_tick();
 }
 
 pub fn frame(frame:u32,advance:u32) {
@@ -204,7 +205,7 @@ fn emit_sample(kind:&str,i:usize,s:&Sample,line:&mut String) {
     hex(line,&s.ctx);line.push(',');hex(line,&s.audio);line.push(',');hex(line,&s.hram);line.push(',');
     for r in s.regs {let _=write!(line,"{:08X}",r);}line.push(',');
     for r in s.stack {let _=write!(line,"{:08X}",r);}line.push(',');
-    hex(line,&s.gb_stack);line.push('\n');
+    hex(line,&s.gb_stack);let _=write!(line,",{},{}\n",s.remaining0,s.remaining1);
     pnp::trace_file_write(line.as_bytes());
 }
 pub fn save() {
@@ -217,7 +218,7 @@ pub fn save() {
         if EMU_OK {blob("PRE_EMU",CPU,&*core::ptr::addr_of!(PRE_EMU),&mut line);}
         blob("PRE_RAM",0xc000,&*core::ptr::addr_of!(PRE_RAM),&mut line);blob("PRE_HRAM",0xff80,&*core::ptr::addr_of!(PRE_HRAM),&mut line);blob("PRE_CPU",CPU,&*core::ptr::addr_of!(PRE_CPU),&mut line);
         blob("END_RAM",0xc000,&*core::ptr::addr_of!(END_RAM),&mut line);blob("END_HRAM",0xff80,&*core::ptr::addr_of!(END_HRAM),&mut line);blob("END_CPU",CPU,&*core::ptr::addr_of!(END_CPU),&mut line);
-        pnp::trace_file_write(b"research_sample,kind,index,frame,advance,rel,pc,state,div_before,sub_before,div_after,sub_after,tick_begin,tick_end,cpu_hex,audio_hex,hram_hex,arm_regs_hex,host_stack_hex,gb_stack_c000_c0ff_hex\n");
+        pnp::trace_file_write(b"research_sample,kind,index,frame,advance,rel,pc,state,div_before,sub_before,div_after,sub_after,tick_begin,tick_end,cpu_hex,audio_hex,hram_hex,arm_regs_hex,host_stack_hex,gb_stack_c000_c0ff_hex,div_remaining_before,div_remaining_after\n");
         for i in 0..NF {emit_sample("FRAME",i,&FRAMES[i],&mut line);}
         for i in 0..ND {emit_sample("DIV",i,&DEEP[i],&mut line);}
     }

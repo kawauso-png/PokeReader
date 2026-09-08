@@ -1,4 +1,4 @@
-name: Suicune v7.10.12 Native Replay RTC Inputs
+name: Suicune v7.10.13 Native Shiny Candidate Gate
 on:
   push:
     branches: [suicune-v7108-ranked-hunt]
@@ -37,16 +37,24 @@ jobs:
         run: python3 verify_suicune_rtc_v7112.py
       - name: Verify collector and analysis
         run: python3 verify_suicune_v7102.py
+      - name: Apply native shiny candidate gate
+        run: python3 apply_suicune_shiny_gate_v7113.py
+      - name: Verify native shiny candidate gate
+        run: python3 verify_suicune_shiny_gate_v7113.py
       - name: Build 3GX
         run: make
       - name: Package
         run: |
-          mkdir -p v7102-package/generated/reader_core/src/crystal v7102-package/generated/3gx/sources
+          mkdir -p v7102-package/generated/3gx/includes v7102-package/generated/reader_core/src/crystal v7102-package/generated/3gx/sources
           cp out/default.3gx v7102-package/default.3gx
           cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/research.rs reader_core/src/crystal/capture_plan.rs reader_core/src/crystal/mod.rs reader_core/src/crystal/clock7110.rs reader_core/src/crystal/snapshot7111.rs reader_core/src/crystal/rtc7112.rs v7102-package/generated/reader_core/src/crystal/
           cp 3gx/sources/main.c 3gx/sources/pnp.c v7102-package/generated/3gx/sources/
           cp 3gx/PokeReader.plgInfo v7102-package/generated/3gx/
-          cp -r v7102 v7108 v7110 v7111 v7112 v7102-package/
+          cp -r v7102 v7108 v7110 v7111 v7112 v7113 v7102-package/
+          cp 3gx/sources/v7113_*.c v7102-package/generated/3gx/sources/
+          cp 3gx/includes/arm_core.h 3gx/includes/shadow.h 3gx/includes/gate_runtime.h v7102-package/generated/3gx/includes/
+          cp 3gx/Makefile v7102-package/generated/3gx/
+          cp apply_suicune_shiny_gate_v7113.py verify_suicune_shiny_gate_v7113.py v7102-package/
           cp apply_suicune_rtc_v7112.py verify_suicune_rtc_v7112.py v7102-package/
           cp apply_suicune_snapshot_v7111.py verify_suicune_snapshot_v7111.py v7102-package/
           cp apply_suicune_clock_v7110.py verify_suicune_clock_v7110.py v7102-package/
@@ -55,6 +63,6 @@ jobs:
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7112-Native-Replay-RTC-Inputs
+          name: PokeReader-Suicune-v7113-Native-Shiny-Candidate-Gate
           path: v7102-package
           retention-days: 30

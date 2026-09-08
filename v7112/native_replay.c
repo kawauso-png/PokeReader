@@ -12,6 +12,8 @@ static uint8_t *known[NP],mapped[NP],full[NP];
 static int failed=0,frame=0,divcount=0,normals=0,finals=0,lcd=0,lcdlong=0,timers=0,rtc_calls=0;
 static uint32_t io;
 static uint64_t fixed_rtc,launch_tick;
+static uint64_t rtc_schedule[1100];
+static int rtc_schedule_enabled=0;
 static int resolving_rtc=0;
 static int initializing=1;
 static void memory(uc_engine *,uc_mem_type,uint64_t,int,int64_t,void *);
@@ -33,7 +35,13 @@ static bool invalid(uc_engine *uc,uc_mem_type type,uint64_t a,int n,int64_t valu
  fprintf(stderr,"UNMAPPED %08llX size %d type %d ARM %08X guest %04X frame %d\n",a,n,type,reg(UC_ARM_REG_PC),word(0x22f5fc)&65535,frame);failed=1;return false;
 }
 static void code(uc_engine *uc,uint64_t a,uint32_t n,void *d){
- if(a==0x178abc&&!resolving_rtc){setreg(UC_ARM_REG_R0,(uint32_t)fixed_rtc);setreg(UC_ARM_REG_R1,fixed_rtc>>32);setreg(UC_ARM_REG_PC,reg(UC_ARM_REG_LR));rtc_calls++;}
+ if(a==0x178abc&&!resolving_rtc){
+  if(rtc_schedule_enabled){
+   if(frame<0||frame>=1100||!rtc_schedule[frame]){fprintf(stderr,"Missing RTC schedule frame %d\n",frame);failed=1;uc_emu_stop(u);return;}
+   fixed_rtc=rtc_schedule[frame];
+  }
+  setreg(UC_ARM_REG_R0,(uint32_t)fixed_rtc);setreg(UC_ARM_REG_R1,fixed_rtc>>32);setreg(UC_ARM_REG_PC,reg(UC_ARM_REG_LR));rtc_calls++;
+ }
  else if(a==0x1a7584 && getenv("HEADLESS")){setreg(UC_ARM_REG_PC,reg(UC_ARM_REG_LR));}
  else if(a==0x19cd10 && !(byte(io+2)&128)){setreg(UC_ARM_REG_R0,1);setreg(UC_ARM_REG_PC,reg(UC_ARM_REG_LR));}
  else if(a==0x14aa9c){setreg(UC_ARM_REG_PC,0x169018);}
@@ -82,6 +90,16 @@ int main(int argc,char **argv){
   if(err||failed||reg(UC_ARM_REG_PC)!=0x7000000){fprintf(stderr,"RTC resolution failed %s ARM %08X\n",uc_strerror(err),reg(UC_ARM_REG_PC));return 2;}
   fixed_rtc=((uint64_t)reg(UC_ARM_REG_R1)<<32)|reg(UC_ARM_REG_R0);resolving_rtc=0;
   fprintf(stderr,"RTC_INPUT_RESOLVED %016llX tick %llu\n",fixed_rtc,launch_tick);
+ }
+ const char *schedule=getenv("RTC_SCHEDULE_FILE");
+ if(schedule){
+  FILE *sf=fopen(schedule,"r");if(!sf)return 2;
+  int fi,count=0;unsigned long long packed;char line[96],extra;
+  while(fgets(line,sizeof(line),sf)){
+   if(sscanf(line,"%d,%llx %c",&fi,&packed,&extra)!=2||fi!=count||count>=1100||!packed||(count&&packed<rtc_schedule[count-1])){fprintf(stderr,"Invalid RTC schedule\n");fclose(sf);return 2;}
+   rtc_schedule[count++]=packed;
+  }
+  fclose(sf);if(count!=1100){fprintf(stderr,"Incomplete RTC schedule\n");return 2;}rtc_schedule_enabled=1;
  }
  int max=atoi(argv[3]);
  for(frame=0;frame<max;frame++){

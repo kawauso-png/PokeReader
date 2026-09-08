@@ -29,7 +29,7 @@ def main():
  if platform.system()=='Darwin':cmd+=['-arch',platform.machine()]
  cmd+=['-I'+str(lib/'include'),str(source),str(lib/'lib/libunicorn.a'),'-lpthread','-lm','-o',str(exe)]
  subprocess.run(cmd,check=True)
- env={k:v for k,v in os.environ.items() if k not in ('RTC_DELTA','RTC_INPUT_FILE','HEADLESS')}
+ env={k:v for k,v in os.environ.items() if k not in ('RTC_DELTA','RTC_INPUT_FILE','RTC_SCHEDULE_FILE','HEADLESS')}
  if a.retrospective_rtc_delta is not None:env['RTC_DELTA']=str(a.retrospective_rtc_delta)
  else:env['RTC_INPUT_FILE']=str((inp/'launch_rtc.bin').resolve())
  if a.headless:env['HEADLESS']='1'

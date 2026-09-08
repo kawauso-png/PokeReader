@@ -21,10 +21,15 @@ mod pnp {
             0x0022f6c8..=0x0022f6cb=>0x10000000u32.to_le_bytes()[(addr-0x22f6c8) as usize],
             0x0022f6d8..=0x0022f6db=>0x10010000u32.to_le_bytes()[(addr-0x22f6d8) as usize],
             0x0022f794..=0x0022f797=>0x1000ff84u32.to_le_bytes()[(addr-0x22f794) as usize],
+            0x0022f77c..=0x0022f77f=>0x10020000u32.to_le_bytes()[(addr-0x22f77c) as usize],
+            0x0022f780..=0x0022f783=>0x10020100u32.to_le_bytes()[(addr-0x22f780) as usize],
+            0x0022f784..=0x0022f787=>0x10020200u32.to_le_bytes()[(addr-0x22f784) as usize],
             0x0022f5fc=>0xb6,0x0022f5fd=>2,0x0022f604=>0x35,
             0x0022fa50=>60,
             0x0022f5e0..=0x0022fa5f=>0,
             0x00100000..=0x001b0fff=>(addr&255) as u8,
+            0x001b1000..=0x002fffff=>(addr&255) as u8,
+            0x10000000..=0x100fffff=>(addr&255) as u8,
             _=>panic!("unmapped read {:x}",addr),
         }
     }

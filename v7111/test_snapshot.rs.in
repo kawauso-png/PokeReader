@@ -1,0 +1,34 @@
+extern crate alloc;
+use std::sync::Mutex;
+struct Fake {out:Vec<u8>,missing:bool,unstable:bool,changed:bool}
+static FAKE:Mutex<Fake>=Mutex::new(Fake{out:Vec::new(),missing:false,unstable:false,changed:false});
+mod pnp {
+    pub fn test_byte(a:u32)->u8 {
+        for (base,value) in [(0x22f6c8u32,0x10000000u32),(0x22f6d8,0x10010000),(0x22f77c,0x10020000),(0x22f780,0x10020100),(0x22f784,0x10020200)] {
+            if (base..base+4).contains(&a) {return value.to_le_bytes()[(a-base) as usize];}
+        }
+        if a==0x22f5fc && crate::FAKE.lock().unwrap().changed {return 99;}
+        (a&255) as u8
+    }
+    pub fn is_memory_mapped(a:u32)->bool {
+        let page=a&!4095;
+        [0x22f000,0x20a000,0x10000000,0x10001000,0x1000f000,0x10010000].contains(&page)
+            || (page==0x10020000 && !crate::FAKE.lock().unwrap().missing)
+    }
+    pub unsafe fn read_into_raw(a:u32,dst:*mut u8,n:usize) {
+        for i in 0..n {*dst.add(i)=test_byte(a+i as u32);}
+        let mut f=crate::FAKE.lock().unwrap();if a==0x22f000 && f.unstable {f.changed=true;}
+    }
+    pub fn trace_file_write(b:&[u8]) {crate::FAKE.lock().unwrap().out.extend_from_slice(b);}
+}
+#[path=SNAPSHOT_PATH] mod snapshot;
+#[test] fn frozen_capture_integrity_and_failure() {
+    assert!(snapshot::capture(1144,true));snapshot::save();
+    let data=FAKE.lock().unwrap().out.clone();
+    std::fs::write(std::env::var("SNAPSHOT_TEST_OUT").unwrap(),data).unwrap();
+    {let mut f=FAKE.lock().unwrap();f.out.clear();f.missing=true;}
+    assert!(!snapshot::capture(1144,true));
+    {let mut f=FAKE.lock().unwrap();f.missing=false;f.unstable=true;}
+    assert!(!snapshot::capture(1144,true));
+    FAKE.lock().unwrap().out.clear();assert!(snapshot::capture(1144,false));snapshot::save();assert!(FAKE.lock().unwrap().out.is_empty());
+}

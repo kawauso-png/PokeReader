@@ -60,6 +60,22 @@ with tempfile.TemporaryDirectory(prefix='suicune-v7102-io-') as d:
     subprocess.run([str(p/'test')],check=True)
 assert 'self.save_result = Some(pnp::trace_last_error()==0);' in t
 print('PASS: short write, write error, flush error and close error are reported')
+mapping=(base/'3gx/sources/pnp.c').read_text().split('bool is_memory_mapped(u32 addr) {',1)[1].split('}',1)[0]
+mapping_test='''#include <stdint.h>
+#include <stdbool.h>
+#include <assert.h>
+typedef uint32_t u32;typedef int32_t s32;
+typedef struct {u32 perm;} MemInfo;typedef struct {u32 flags;} PageInfo;
+static u32 permission=0;static s32 query_result=0;
+s32 svcQueryMemory(MemInfo *i,PageInfo *p,u32 a){i->perm=permission;return query_result;}
+bool is_memory_mapped(u32 addr) {BODY}
+int main(void){assert(!is_memory_mapped(0));permission=2;assert(!is_memory_mapped(0));permission=1;assert(is_memory_mapped(0));permission=5;assert(is_memory_mapped(0));query_result=-1;assert(!is_memory_mapped(0));}
+'''.replace('BODY',mapping)
+with tempfile.TemporaryDirectory(prefix='suicune-mapping-') as d:
+    p=Path(d);(p/'test.c').write_text(mapping_test)
+    subprocess.run(['cc',str(p/'test.c'),'-o',str(p/'test')],check=True)
+    subprocess.run([str(p/'test')],check=True)
+print('PASS: query success without read permission is not readable memory')
 assert 'v7101' not in t.lower() and 'root_candidate' not in t
 assert 'const V797_FORCE_FINAL_DV_VALIDATION: bool = true;' in t
 arm=t[t.index('    pub fn arm_suicune_probe'):t.index('    fn update_suicune_endpoint')]

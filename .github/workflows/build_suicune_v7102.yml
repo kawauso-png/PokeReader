@@ -28,7 +28,7 @@ jobs:
           mkdir -p v7102-package/generated/reader_core/src/crystal v7102-package/generated/3gx/sources
           cp out/default.3gx v7102-package/default.3gx
           cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/research.rs reader_core/src/crystal/capture_plan.rs reader_core/src/crystal/mod.rs v7102-package/generated/reader_core/src/crystal/
-          cp 3gx/sources/main.c v7102-package/generated/3gx/sources/
+          cp 3gx/sources/main.c 3gx/sources/pnp.c v7102-package/generated/3gx/sources/
           cp -r v7102 v7102-package/
           cp apply_suicune_causal_collector_v7102.py analyze_suicune_v7102.py verify_suicune_v7102.py v7102-package/
           sha256sum out/default.3gx > v7102-package/sha256.txt

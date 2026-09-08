@@ -159,5 +159,7 @@ bool is_memory_mapped(u32 addr) {
   MemInfo info;
   PageInfo page;
   s32 result = svcQueryMemory(&info, &page, addr);
-  return result == 0;
+  // Query success also describes unmapped pages. Require read permission
+  // before any caller treats this address as readable memory.
+  return result == 0 && (info.perm & 1U) != 0;
 }

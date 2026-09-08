@@ -60,7 +60,7 @@ fn actual_collector_modes_bounds_and_failed_arming() {
     assert!(!base.contains("R7102_SAMPLE,"));
     assert!(base.contains("NATIVE_CODE,00100000,0,0001020304050607"));
     assert!(base.contains("PRE_EMU,0022F5E0,0,"));
-    assert_eq!(base.lines().filter(|l|l.starts_with("R7102_BLOB,NATIVE_CODE,")).count(),0xb1000/64);
+    assert_eq!(base.lines().filter(|l|l.starts_with("R7102_BLOB,NATIVE_CODE,")).count(),0xb1000/512);
     assert_eq!(base.lines().filter(|l|l.starts_with("R7102_BLOB,PRE_RAM,")).count(),128);
     if let Ok(dir)=std::env::var("V7102_TEST_DIR") {std::fs::write(std::path::Path::new(&dir).join("base.csv"),&base).unwrap();}
     init(1);r::arm(100,97,0);

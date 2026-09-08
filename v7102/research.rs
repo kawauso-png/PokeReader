@@ -190,8 +190,9 @@ pub fn finish() {
 }
 fn hex(line:&mut String,bytes:&[u8]) {for b in bytes {let _=write!(line,"{:02X}",b);}}
 fn blob(tag:&str,base:u32,bytes:&[u8],line:&mut String) {
-    for (i,chunk) in bytes.chunks(64).enumerate() {
-        line.clear();let _=write!(line,"R7102_BLOB,{},{:08X},{},",tag,base,i*64);
+    let chunk_len=if tag=="NATIVE_CODE" {512} else {64};
+    for (i,chunk) in bytes.chunks(chunk_len).enumerate() {
+        line.clear();let _=write!(line,"R7102_BLOB,{},{:08X},{},",tag,base,i*chunk_len);
         hex(line,chunk);line.push('\n');pnp::trace_file_write(line.as_bytes());
     }
 }

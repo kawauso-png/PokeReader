@@ -7,6 +7,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     container: zaksabeast/devkitarm-rust
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Install Python
@@ -27,7 +30,7 @@ jobs:
           cp out/default.3gx v7110/PokeReader-Suicune-v7110-EmpiricalPreHunt.3gx
           cp reader_core/src/crystal/{trace.rs,hook.rs,hunt_v7110.rs,hunt_v7110_models.rs} v7110/source/reader_core/src/crystal/
           cp 3gx/sources/main.c v7110/source/3gx/sources/
-          cp apply_suicune_v7110.py build_v7110.py hunt_v7110_model.b64 v7110/source/
+          cp apply_suicune_v7110.py build_v7110.py hunt_v7110_model.b64 v7110_payload.b64 v7110/source/
           printf '%s\n' 'v7.11.0 EXPERIMENTAL empirical PRE hunt.' 'No physical success-rate claim or device test.' 'Pause, Y+DOWN, release all controls. Scan automatically ranks PRE candidates.' 'Only when S7110 READY: hold physical UP until Exact2 pauses, then release.' 'Keep existing suicune_j_table_v796.bin and calibration files unchanged.' 'All selected attempts run to native final DV. HUNT/HUNTDV CSV fields contain the frozen prediction.' 'No RNG/DIV/DV/save edits. No synthetic UP, Legal Advance or R input.' 'Nearest four of ten whole-path templates, +/-4M transport and +/-1 endpoint SUB model uncertainty.' 'A/r10 root, any bucket; three real neutral frames; FFA4 Exactly2 and M14 preserved.' > v7110/README.txt
           sha256sum v7110/PokeReader-Suicune-v7110-EmpiricalPreHunt.3gx > v7110/SHA256SUMS
           git rev-parse HEAD > v7110/COMMIT.txt

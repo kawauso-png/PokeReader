@@ -16,11 +16,11 @@ mod pnp {
         let lock=crate::FAKE.lock().unwrap();let s=lock.as_ref().unwrap();
         match addr {
             0x10000000..=0x10001fff=>s.ram[(addr-0x10000000+0xc000) as usize],
-            0x10010000..=0x1001007e=>s.ram[(addr-0x10010000+0xff80) as usize],
+            0x1000ff84=>0xa8,
+            0x1000ff80..=0x1001007f=>s.ram[(addr-0x1000ff80+0xff00) as usize],
             0x0022f6c8..=0x0022f6cb=>0x10000000u32.to_le_bytes()[(addr-0x22f6c8) as usize],
             0x0022f6d8..=0x0022f6db=>0x10010000u32.to_le_bytes()[(addr-0x22f6d8) as usize],
-            0x0022f794..=0x0022f797=>0x1002004cu32.to_le_bytes()[(addr-0x22f794) as usize],
-            0x1002004c=>0xa8,
+            0x0022f794..=0x0022f797=>0x1000ff84u32.to_le_bytes()[(addr-0x22f794) as usize],
             0x0022f5fc=>0xb6,0x0022f5fd=>2,0x0022f604=>0x35,
             0x0022fa50=>60,
             0x0022f5e0..=0x0022fa5f=>0,
@@ -72,7 +72,7 @@ fn actual_collector_modes_bounds_and_failed_arming() {
     assert_eq!(tail.lines().filter(|l|l.starts_with("R7102_SAMPLE,FRAME,")).count(),384);
     if let Ok(dir)=std::env::var("V7102_TEST_DIR") {std::fs::write(std::path::Path::new(&dir).join("tail.csv"),&tail).unwrap();}
     let row=tail.lines().find(|l|l.starts_with("R7102_SAMPLE,FRAME,")).unwrap().split(',').collect::<Vec<_>>();
-    assert_eq!(row[8],"A8");assert_eq!(row[10],"A8");assert!(tail.contains("indirect,1002004C"));
+    assert_eq!(row[8],"A8");assert_eq!(row[10],"A8");assert!(tail.contains("indirect,1000FF84"));
     assert_eq!(row.len(),22);assert_eq!(row[20],"60");assert_eq!(row[21],"60");assert_eq!(row[7],"C23C");assert_eq!(row[14].len(),128);assert_eq!(row[15].len(),896);assert_eq!(row[16].len(),254);assert_eq!(row[19].len(),512);
     init(2);r::arm(100,97,0);
     r::frame(0,101);
@@ -81,7 +81,7 @@ fn actual_collector_modes_bounds_and_failed_arming() {
     for _ in 0..520 {r::lcd_boundary(112,0x0554,&[0;15],stack.as_mut_ptr(),true);}
     r::finish();r::save();let deep=output();
     assert_eq!(deep.lines().filter(|l|l.starts_with("R7102_SAMPLE,LCD,")).count(),512);
-    assert!(deep.contains(",512,8\n"));
+    assert!(deep.contains(",512,8,1,1000FF80\n"));
     assert!(deep.contains("R7102_META,DEEP,100,1,1,0,32,0,8,100,1"));
     assert_eq!(deep.lines().filter(|l|l.starts_with("R7102_SAMPLE,DIV,")).count(),32);
     if let Ok(dir)=std::env::var("V7102_TEST_DIR") {std::fs::write(std::path::Path::new(&dir).join("deep.csv"),&deep).unwrap();}
@@ -107,7 +107,7 @@ fn actual_collector_modes_bounds_and_failed_arming() {
     for i in 0..268 {r::lcd_boundary(101+i,0x0554,&[0;15],stack.as_mut_ptr(),true);}
     r::finish();r::save();let volume=output();
     assert_eq!(volume.lines().filter(|l|l.starts_with("R7102_SAMPLE,LCD,")).count(),268);
-    assert!(volume.contains(",268,0\n"));
+    assert!(volume.contains(",268,0,1,1000FF80\n"));
     init(3);r::arm(100,97,0);r::finish();r::save();let reset=output();
     assert!(reset.contains("R7107_LCDTOTAL,0,0\n"));assert!(!reset.contains("R7102_SAMPLE,"));
     init(0);r::arm(100,98,0);assert_eq!(r::suicune_research_arm_ok(),0);

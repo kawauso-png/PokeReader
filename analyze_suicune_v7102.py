@@ -114,6 +114,12 @@ def analyze(path):
     if 'native_ok' in meta:
         result['native_diagnostic_valid']=meta['native_ok']=='1' and meta.get('emu_ok')=='1' and len(blobs.get('NATIVE_CODE',b''))==0xb1000 and len(blobs.get('PRE_EMU',b''))==int(meta.get('emu_len','0')) and int(meta.get('emu_len','0')) in (0x230,0x480)
         if not result['native_diagnostic_valid']:issue.append('incomplete native emulator diagnostic')
+    if 'io_ok' in meta:
+        result['frozen_io_backing_valid']=meta['io_ok']=='1' and all(len(blobs.get(k,b''))==256 for k in ('PRE_IO_BACKING','END_IO_BACKING'))
+        if not result['frozen_io_backing_valid']:issue.append('incomplete frozen IO backing')
+        else:
+            for phase in ('PRE','END'):
+                if blobs[phase+'_IO_BACKING'][0x80:0xff]!=blobs.get(phase+'_HRAM'):issue.append(phase+' IO/HRAM alias mismatch')
     for key,n in [('PRE_RAM',8192),('PRE_HRAM',127),('PRE_CPU',64),('END_RAM',8192),('END_HRAM',127),('END_CPU',64)]:
         if len(blobs.get(key,b''))!=n:issue.append('incomplete '+key)
     for k in ('pre_ok','map_ok','end_valid'):

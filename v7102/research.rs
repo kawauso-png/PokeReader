@@ -73,6 +73,10 @@ static mut MAP_OK:bool=false;
 static mut AUDIO_HOST:u32=0;
 static mut HRAM_HOST:u32=0;
 static mut DIV_HOST:u32=0;
+static mut IO_OK:bool=false;
+static mut IO_HOST:u32=0;
+static mut PRE_IO:[u8;256]=[0;256];
+static mut END_IO:[u8;256]=[0;256];
 static mut PRE_RAM:[u8;RAM_LEN]=[0;RAM_LEN];
 static mut PRE_HRAM:[u8;HRAM_LEN]=[0;HRAM_LEN];
 static mut PRE_CPU:[u8;64]=[0;64];
@@ -97,7 +101,7 @@ pub fn mode_name()->&'static str { match mode() {1=>"TAIL",2=>"DEEP",3=>"ALL",_=
 
 fn capture_pre(target:u32) {
     unsafe {
-        ACTIVE=false;PRE_OK=false;MAP_OK=false;END_VALID=false;
+        ACTIVE=false;PRE_OK=false;MAP_OK=false;END_VALID=false;IO_OK=false;
         capture_native_frozen();
         MODE=host_suicune_research_mode().min(3);TARGET=target;LCD_COUNTS=[0;2048];LCD_TOTAL=0;LCD_COUNT_DROP=0;NF=0;ND=0;NL=0;DROP_L=0;DROP_F=0;DROP_D=0;
         // Frozen RAM-only reads. No ROM/save/IO accesses and no guest execution.
@@ -118,6 +122,14 @@ fn capture_pre(target:u32) {
         let div=word(DIV_PTR);
         if div==0 || !pnp::is_memory_mapped(div) || !range_mapped(DIV_REMAIN,4) {return;}
         DIV_HOST=div;
+        // Frozen native backing for FF00..FFFF. Do not call the guest IO dispatcher.
+        // Only use this alias when the independently resolved DIV pointer agrees.
+        if let Some(io)=hram.checked_sub(0x80) {
+            if io.checked_add(4)==Some(div) && range_mapped(io,256) {
+                IO_HOST=io;IO_OK=true;
+                copy(io,core::ptr::addr_of_mut!(PRE_IO).cast::<u8>(),256);
+            }
+        }
         AUDIO_HOST=audio;HRAM_HOST=hram;MAP_OK=true;
         let st=((PRE_HRAM[0x61] as u16)<<8)|PRE_HRAM[0x62] as u16;
         PRE_OK=hook::rng_advance()==target && gb_mem::read_u16(0xffe1)==st;
@@ -210,6 +222,7 @@ pub fn finish() {
         for i in 0..RAM_LEN {END_RAM[i]=gb_mem::read_u8(0xc000+i as u32);}
         for i in 0..HRAM_LEN {END_HRAM[i]=gb_mem::read_u8(0xff80+i as u32);}
         copy(CPU,core::ptr::addr_of_mut!(END_CPU).cast::<u8>(),64);
+        if IO_OK {copy(IO_HOST,core::ptr::addr_of_mut!(END_IO).cast::<u8>(),256);}
         END_VALID=hook::rng_advance()==END_ADV;
     }
 }
@@ -235,9 +248,13 @@ fn emit_sample(kind:&str,i:usize,s:&Sample,line:&mut String) {
 pub fn save() {
     let mut line=String::new();
     unsafe {
-        let _=write!(line,"\nresearch7102,mode,target,pre_ok,map_ok,frames,deep,dropped_frames,dropped_deep,end_advance,end_valid,root_advance,root_state,pre_ap,pre_sp,audio_host,hram_host,div_source,div_host,native_ok,emu_ok,native_base,native_len,emu_len,lcd_samples,dropped_lcd\nR7102_META,{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:08X},{:08X},indirect,{:08X},{},{},{:08X},{},{},{},{}\n",
-            mode_name(),TARGET,PRE_OK as u8,MAP_OK as u8,NF,ND,DROP_F,DROP_D,END_ADV,END_VALID as u8,ROOT_ADV,ROOT_STATE,PRE_AP,PRE_SP,AUDIO_HOST,HRAM_HOST,DIV_HOST,NATIVE_OK as u8,EMU_OK as u8,NATIVE_BASE,NATIVE_LEN,EMU_LEN,NL,DROP_L);
+        let _=write!(line,"\nresearch7102,mode,target,pre_ok,map_ok,frames,deep,dropped_frames,dropped_deep,end_advance,end_valid,root_advance,root_state,pre_ap,pre_sp,audio_host,hram_host,div_source,div_host,native_ok,emu_ok,native_base,native_len,emu_len,lcd_samples,dropped_lcd,io_ok,io_host\nR7102_META,{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:08X},{:08X},indirect,{:08X},{},{},{:08X},{},{},{},{},{},{:08X}\n",
+            mode_name(),TARGET,PRE_OK as u8,MAP_OK as u8,NF,ND,DROP_F,DROP_D,END_ADV,END_VALID as u8,ROOT_ADV,ROOT_STATE,PRE_AP,PRE_SP,AUDIO_HOST,HRAM_HOST,DIV_HOST,NATIVE_OK as u8,EMU_OK as u8,NATIVE_BASE,NATIVE_LEN,EMU_LEN,NL,DROP_L,IO_OK as u8,IO_HOST);
         pnp::trace_file_write(line.as_bytes());
+        if IO_OK {
+            blob("PRE_IO_BACKING",0xff00,&*core::ptr::addr_of!(PRE_IO),&mut line);
+            if END_VALID {blob("END_IO_BACKING",0xff00,&*core::ptr::addr_of!(END_IO),&mut line);}
+        }
         if NATIVE_OK {blob("NATIVE_CODE",NATIVE_BASE,&*core::ptr::addr_of!(NATIVE_CODE),&mut line);}
         if EMU_OK {blob("PRE_EMU",CPU,&*core::ptr::addr_of!(PRE_EMU),&mut line);}
         blob("PRE_RAM",0xc000,&*core::ptr::addr_of!(PRE_RAM),&mut line);blob("PRE_HRAM",0xff80,&*core::ptr::addr_of!(PRE_HRAM),&mut line);blob("PRE_CPU",CPU,&*core::ptr::addr_of!(PRE_CPU),&mut line);

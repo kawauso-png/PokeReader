@@ -13,6 +13,9 @@ with tempfile.TemporaryDirectory(prefix='suicune-v7102-') as d:
         assert rec['R7102_META']['mode']==name.upper() and len(samples)==count
         if name=='all':
             assert rec['R7107_LCDTOTAL']==dict(total=622,dropped=2) and rec['R7107_LCDCOUNT']=={1:100,12:520}
+        assert len(blobs['PRE_IO_BACKING'])==256 and blobs['PRE_IO_BACKING'][4]==0xa8
+        assert blobs['PRE_IO_BACKING'][0x80:0xff]==blobs['PRE_HRAM']
+        assert len(blobs['END_IO_BACKING'])==256 and rec['R7102_META']['io_ok']=='1'
         assert len(blobs['NATIVE_CODE'])==0xb1000 and len(blobs['PRE_EMU'])==0x480
         assert len(blobs['PRE_RAM'])==8192 and blobs['PRE_HRAM'][0x61:0x63]==bytes.fromhex('C23C')
     for a in range(256):

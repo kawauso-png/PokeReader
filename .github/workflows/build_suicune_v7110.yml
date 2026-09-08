@@ -30,6 +30,38 @@ jobs:
           grep -q 'HUNTDV,V7110' reader_core/src/crystal/trace.rs
           grep -q 'H7110 CANDIDATE' reader_core/src/crystal/trace.rs
           test "$(stat -c %s reader_core/src/crystal/hunt_v7110.bin)" = 332880
+      - name: Test actual Rust evaluator on host
+        run: |
+          cp reader_core/src/crystal/hunt_v7110.rs /tmp/hunt_v7110.rs
+          cp reader_core/src/crystal/hunt_v7110.bin /tmp/hunt_v7110.bin
+          cat > /tmp/hunt_tests.rs <<'RS'
+          #[path="hunt_v7110.rs"] mod hunt;
+          #[test] fn predicted_candidate() {
+              let mut bits=[0u8;8192];
+              let s=hunt::evaluate(0xa9f9,0x0035,6582,&mut bits);
+              assert!(hunt::ready(s)); assert_eq!((s.support,s.score,s.total,s.unique),(2,16,10400,1236));
+              assert_eq!(bits.iter().map(|b|b.count_ones()).sum::<u32>(),s.unique);
+              assert_eq!(s.first&0x0fff,0x0aaa);
+          }
+          #[test] fn second_phase() {
+              let mut bits=[0u8;8192];
+              let s=hunt::evaluate(0xbae4,0x2a35,7120,&mut bits);
+              assert!(hunt::ready(s)); assert_eq!((s.support,s.score,s.total,s.unique),(2,20,10400,1251));
+          }
+          #[test] fn reject_wrong_phase() {
+              let mut bits=[255u8;8192];
+              let s=hunt::evaluate(0xa9f9,0x0034,6582,&mut bits);
+              assert!(!hunt::ready(s));assert_eq!(s.unique,0);assert!(bits.iter().all(|x|*x==0));
+          }
+          #[test] fn deterministic_repeat() {
+              let mut x=[0u8;8192];let mut y=[0u8;8192];
+              let a=hunt::evaluate(0x00ff,0x3375,7140,&mut x);
+              let b=hunt::evaluate(0x00ff,0x3375,7140,&mut y);
+              assert!(hunt::ready(a));assert_eq!(a.score,b.score);assert_eq!(x,y);
+          }
+          RS
+          rustc +nightly-2024-03-21 --edition=2021 --test --target x86_64-unknown-linux-gnu /tmp/hunt_tests.rs -o /tmp/hunt_tests
+          /tmp/hunt_tests
       - name: Build ARM11 3GX
         run: make
       - name: Package executable and generated sources
@@ -39,6 +71,7 @@ jobs:
           cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/hunt_v7110.rs reader_core/src/crystal/hunt_v7110.bin v7110/source/reader_core/src/crystal/
           cp 3gx/sources/main.c v7110/source/3gx/sources/
           cp apply_suicune_hunt_v7110.py hunt_v7110.rs hunt_v7110_donors.b85 hunt_v7110_manifest.json v7110/
+          cp /tmp/hunt_tests.rs v7110/
           printf '%s\n' \
             'EXPERIMENTAL v7.11.0: pre-input workload-adjusted path ensemble.' \
             'Scores are NOT probabilities. Shiny rate and hardware operation are not yet validated.' \
@@ -50,7 +83,7 @@ jobs:
             'Every selected attempt runs to native final DV and saves CSV including frozen HUNTDV predictions.' \
             'No game RNG/DIV/DV/save write or synthetic UP was added.' \
             > v7110/README.txt
-          git rev-parse HEAD > v7110/commit.txt
+          printf '%s\n' "$GITHUB_SHA" > v7110/commit.txt
           sha256sum out/default.3gx reader_core/src/crystal/hunt_v7110.bin > v7110/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:

@@ -5,7 +5,7 @@ import tempfile
 
 root = Path(__file__).resolve().parent.parent
 runtime = (root / 'v7108/rank_runtime.c').read_text()
-block = runtime[runtime.index('static int save_diag_file('):runtime.index('uint32_t rank7108_error(')]
+block = runtime[runtime.index('static int supported_rom('):runtime.index('uint32_t rank7108_error(')]
 # Only translate the 32-bit device pointer into the host mock's byte array.
 block = block.replace('(const uint8_t*)rom', 'rom_bytes(rom)')
 harness = r'''
@@ -29,7 +29,7 @@ static uint32_t lengths[3];
 static const uint8_t *rom_bytes(uint32_t p){assert(p==0x08800010);return original;}
 static int mapped(uint32_t p,uint32_t n){return map_ok;}
 static uint32_t word_at(uint32_t p){assert(p==0x22f6c4);return 0x08800010;}
-static uint32_t fnv(const uint8_t *p,uint32_t n,uint32_t h){assert(p==original && n==2097152);return good_hash?0x6c177283:0x57d31952;}
+static uint32_t fnv(const uint8_t *p,uint32_t n,uint32_t h){assert(p==original && n==2097152);return good_hash==1?0x6c177283:good_hash==2?0x57d31952:0x12345678;}
 static int fsInit(void){return fail==1?-1:0;}
 static void fsExit(void){exited++;}
 static const char *fsMakePath(int t,const char *s){return s;}
@@ -59,15 +59,16 @@ static void init(void){
 int main(void){
     init();assert(!rank7108_rom_preflight());assert(error_code==5 && rom_dump_ok && !rom_seen);
     assert(lengths[1]==2097152 && !memcmp(original,out,sizeof(original)));
-    assert(strstr(meta,"observed_fnv=57D31952") && strstr(meta,"binary_saved=1"));
+    assert(strstr(meta,"observed_fnv=12345678") && strstr(meta,"binary_saved=1"));
     assert(opened==2 && closed==2 && exited==1 && archive_closed==1);
     for(int f=1;f<=9;f++){
         init();fail=f;assert(!rank7108_rom_preflight());assert(error_code==5 && !rom_dump_ok && !rom_seen);
         assert(opened==closed);for(unsigned i=0;i<sizeof(original);i++)assert(original[i]==(uint8_t)(i*17+31));
     }
     init();good_hash=1;assert(rank7108_rom_preflight());assert(!error_code && rom_seen==0x08800010 && !opened);
+    init();good_hash=2;assert(rank7108_rom_preflight());assert(!error_code && rom_seen==0x08800010 && !opened);
     init();map_ok=0;assert(!rank7108_rom_preflight());assert(error_code==2 && !opened);
-    puts("PASS: ROM diagnostic writes exact 2 MiB; mismatch never passes; short writes, collisions and I/O failures cannot report success");
+    puts("PASS: both verified ROMs pass; unknown ROMs stop and dump exact 2 MiB; I/O failures cannot report success");
 }
 '''.replace('BLOCK', block)
 with tempfile.TemporaryDirectory() as td:

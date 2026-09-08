@@ -25,6 +25,11 @@ static uint32_t fnv(const uint8_t *data,uint32_t n,uint32_t h){for(uint32_t i=0;
 void rank7108_begin(void){error_code=checks=cycles=committed=valid=scored=0;rom_dump_ok=0;pre_id=0;pre_advance=seed=pre_hash=0;search_id=svcGetSystemTick();}
 /* Diagnostic export only. The game's loaded ROM is read, never modified.
    Do not accept a different ROM merely because the observed hash is stable. */
+static int supported_rom(uint32_t hash) {
+    /* Reference image and the captured VC image, compared byte-for-byte and
+       replayed on all nine historical PREs. See ROM_COMPATIBILITY.md. */
+    return hash==0x6c177283U || hash==0x57d31952U;
+}
 static int save_diag_file(FS_Archive sd,const char *name,const uint8_t *data,uint32_t length) {
     Handle file;uint64_t size=0;
     if(R_FAILED(FSUSER_OpenFile(&file,sd,fsMakePath(PATH_ASCII,name),FS_OPEN_WRITE|FS_OPEN_CREATE,0)))return 0;
@@ -46,7 +51,7 @@ static void dump_rom(uint32_t rom) {
     char name[160],info[384];
     snprintf(name,sizeof(name),"/luma/plugins/pokereader/traces/rank7108_rom_%016llX.bin",(unsigned long long)search_id);
     int saved=save_diag_file(sd,name,(const uint8_t*)rom,2097152);
-    snprintf(info,sizeof(info),"version=S7108D\nsearch_id=%016llX\nrom_pointer=%08X\nlength=2097152\nexpected_fnv=6C177283\nobserved_fnv=%08X\nbinary_saved=%d\n",
+    snprintf(info,sizeof(info),"version=S7109\nsearch_id=%016llX\nrom_pointer=%08X\nlength=2097152\nexpected_fnv=6C177283,57D31952\nobserved_fnv=%08X\nbinary_saved=%d\n",
         (unsigned long long)search_id,(unsigned)rom,(unsigned)rom_hash,saved);
     snprintf(name,sizeof(name),"/luma/plugins/pokereader/traces/rank7108_rom_%016llX.txt",(unsigned long long)search_id);
     int meta=save_diag_file(sd,name,(const uint8_t*)info,strlen(info));
@@ -59,7 +64,7 @@ int rank7108_rom_preflight(void) {
     uint32_t rom=word_at(0x22f6c4);
     if(!mapped(rom,2097152)){error_code=4;return 0;}
     rom_hash=fnv((const uint8_t*)rom,2097152,2166136261U);
-    if(rom_hash!=0x6c177283U){rom_seen=0;error_code=5;dump_rom(rom);return 0;}
+    if(!supported_rom(rom_hash)){rom_seen=0;error_code=5;dump_rom(rom);return 0;}
     rom_seen=rom;return 1;
 }
 uint32_t rank7108_error(void){return error_code;}
@@ -77,7 +82,7 @@ int rank7108_evaluate(void) {
     if(rom!=rom_seen) {
         if(!mapped(rom,2097152)){error_code=4;return -1;}
         rom_hash=fnv((const uint8_t*)rom,2097152,2166136261U);
-        if(rom_hash!=0x6c177283U){error_code=5;return -1;}
+        if(!supported_rom(rom_hash)){error_code=5;return -1;}
         rom_seen=rom;
     }
     memcpy(ram,(const void*)wram,4096);memcpy(ram+4096,(const void*)bank,4096);

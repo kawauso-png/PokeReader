@@ -1,4 +1,4 @@
-name: Suicune v7.10.8d ROM Diagnostic
+name: Suicune v7.10.9 Verified VC ROM Support
 on:
   push:
     branches: [suicune-v7108-ranked-hunt]
@@ -39,6 +39,6 @@ jobs:
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7108d-ROM-Diagnostic
+          name: PokeReader-Suicune-v7109-VC-ROM-Support
           path: v7102-package
           retention-days: 30

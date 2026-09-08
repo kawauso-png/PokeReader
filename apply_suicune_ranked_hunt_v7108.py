@@ -70,11 +70,11 @@ c=rep(c,'''            // Stage3 current-root live scan start.
                     suicune_root_lock_active=false;suicune_root_lock_ready=false;suicune_root_lock_failed=true;
                     suicune_neutral_probe_pending=false;suicune_wait_up_after_b=false;
                     char info[32];snprintf(info,sizeof(info),"ERROR %08lX",(unsigned long)rank7108_error());
-                    v7102_panel("S7108D ROM CHECK STOP",info,rank7108_rom_dump_ok()?"ROM DUMP SAVED - RETURN SD":"NO UP - DIAGNOSTIC NOT SAVED");
+                    v7102_panel("S7109 ROM CHECK STOP",info,rank7108_rom_dump_ok()?"ROM DUMP SAVED - RETURN SD":"NO UP - DIAGNOSTIC NOT SAVED");
                     continue;
                 }
                 rank7108_hunting=true;''')
-c=c.replace('S7107','S7108').replace('S7108 ','S7108D ')
+c=c.replace('S7107','S7108').replace('S7108 ','S7109 ')
 f.write_text(c)
 
 f=root/'reader_core/src/crystal/trace.rs';t=f.read_text()
@@ -98,8 +98,8 @@ t=rep(t,'        super::research::save();','''        extern "C" {fn rank7108_ap
         let rdv=self.probe_result.map(|r|r.raw_dv as u32).unwrap_or(0);
         unsafe {rank7108_append_result(self.probe_target.advance,self.probe_result.is_some() as u32,rdv);}
         super::research::save();''')
-t=t.replace('S7107','S7108').replace('STALLPHASE,V7107,','STALLPHASE,V7108,')
-t=t.replace('S7108 OBSERVE SCAN','S7108 RANK SEARCH').replace('S7108 ROOT READY','S7108 CHECKING PRE')
+t=t.replace('S7107','S7109').replace('STALLPHASE,V7107,','STALLPHASE,V7109,')
+t=t.replace('S7109 OBSERVE SCAN','S7109 RANK SEARCH').replace('S7109 ROOT READY','S7109 CHECKING PRE')
 f.write_text(t)
 f=root/'reader_core/src/crystal/frame.rs';s=f.read_text()
 s+='''

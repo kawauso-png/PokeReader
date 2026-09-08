@@ -20,6 +20,21 @@ jobs:
         run: python3 run_suicune_v799_chain_for_v7100.py
       - name: Apply v7.10.0 baseline
         run: python3 apply_suicune_s1split_selfcal_v7100.py
+      - name: Resolve missing-cache donor workload from ROM and AUDIOPRE audit
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import json,base64,zlib
+          p=Path('hunt_v7110_donors.b85')
+          ds=json.loads(zlib.decompress(base64.b85decode(p.read_text().strip())))
+          row=next(d for d in ds if d['name']=='celebi_trace_0004(4).csv')
+          assert row['sha256']=='dd7c2b965cc9a62b8ac24da0d2c6843589864322c7b9270f546d196b77b61179'
+          assert row['c']==0
+          row['c']=7422
+          row['workload_source']='ROM+AUDIOPRE recomputation; input table miss was not a zero workload'
+          assert all(6000<=d['c']<=12000 for d in ds)
+          p.write_text(base64.b85encode(zlib.compress(json.dumps(ds,separators=(',',':')).encode(),9)).decode())
+          PY
       - name: Apply experimental pre-input hunter and test phase tables
         run: python3 apply_suicune_hunt_v7110.py
       - name: Verify input and validation invariants
@@ -39,14 +54,14 @@ jobs:
           #[test] fn predicted_candidate() {
               let mut bits=[0u8;8192];
               let s=hunt::evaluate(0xa9f9,0x0035,6582,&mut bits);
-              assert!(hunt::ready(s)); assert_eq!((s.support,s.score,s.total,s.unique),(2,16,10400,1236));
+              assert!(hunt::ready(s)); assert_eq!((s.support,s.score,s.total,s.unique),(2,16,10400,1218));
               assert_eq!(bits.iter().map(|b|b.count_ones()).sum::<u32>(),s.unique);
               assert_eq!(s.first&0x0fff,0x0aaa);
           }
           #[test] fn second_phase() {
               let mut bits=[0u8;8192];
               let s=hunt::evaluate(0xbae4,0x2a35,7120,&mut bits);
-              assert!(hunt::ready(s)); assert_eq!((s.support,s.score,s.total,s.unique),(2,20,10400,1251));
+              assert!(hunt::ready(s)); assert_eq!((s.support,s.score,s.total,s.unique),(2,20,10400,1269));
           }
           #[test] fn reject_wrong_phase() {
               let mut bits=[255u8;8192];

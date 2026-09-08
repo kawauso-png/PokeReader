@@ -41,6 +41,7 @@ jobs:
           cp out/default.3gx v7102-package/default.3gx
           cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/research.rs reader_core/src/crystal/capture_plan.rs reader_core/src/crystal/mod.rs reader_core/src/crystal/clock7110.rs reader_core/src/crystal/snapshot7111.rs v7102-package/generated/reader_core/src/crystal/
           cp 3gx/sources/main.c 3gx/sources/pnp.c v7102-package/generated/3gx/sources/
+          cp 3gx/PokeReader.plgInfo v7102-package/generated/3gx/
           cp -r v7102 v7108 v7110 v7111 v7102-package/
           cp apply_suicune_snapshot_v7111.py verify_suicune_snapshot_v7111.py v7102-package/
           cp apply_suicune_clock_v7110.py verify_suicune_clock_v7110.py v7102-package/

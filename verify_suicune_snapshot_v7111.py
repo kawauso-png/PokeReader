@@ -7,6 +7,7 @@ research=(r/'reader_core/src/crystal/research.rs').read_text()
 assert research.count('snapshot7111::capture(target,PRE_OK && MODE==3)')==1
 assert research.count('snapshot7111::save();')==1
 assert 'S7111 STATE RECORD READY' in (r/'3gx/sources/main.c').read_text()
+assert 'MemorySize: 10MiB' in (r/'3gx/PokeReader.plgInfo').read_text()
 # Snapshot capture must not be invoked in any live observation hook.
 for name in ('hook.rs','clock7110.rs'):assert 'snapshot7111' not in (r/'reader_core/src/crystal'/name).read_text()
 source=(r/'v7111/snapshot.rs').read_text()

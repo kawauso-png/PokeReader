@@ -10,6 +10,8 @@ replace('#[path="clock7110.rs"] mod clock7110;', '#[path="clock7110.rs"] mod clo
 replace('        ACTIVE=PRE_OK;\n        // Persist','        if !snapshot7111::capture(target,PRE_OK && MODE==3) {PRE_OK=false;}\n        ACTIVE=PRE_OK;\n        // Persist')
 replace('pub fn save() {\n    clock7110::save();','pub fn save() {\n    snapshot7111::save();\n    clock7110::save();')
 f.write_text(s);shutil.copyfile(r/'v7111/snapshot.rs',r/'reader_core/src/crystal/snapshot7111.rs')
+f=r/'3gx/PokeReader.plgInfo';s=f.read_text();assert s.count('MemorySize: 5MiB')==1
+f.write_text(s.replace('MemorySize: 5MiB','MemorySize: 10MiB'))
 for path in ['3gx/sources/main.c','reader_core/src/crystal/trace.rs']:
     f=r/path;s=f.read_text().replace('S7110','S7111').replace('STALLPHASE,V7110,','STALLPHASE,V7111,')
     s=s.replace('S7111 CLOCK RECORD READY','S7111 STATE RECORD READY')

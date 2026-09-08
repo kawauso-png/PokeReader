@@ -1,4 +1,4 @@
-name: Suicune v7.10.15 Actual DV Endpoint
+name: Suicune v7.10.16 Fast Snapshot
 on:
   push:
     branches: [suicune-v7108-ranked-hunt]
@@ -49,6 +49,10 @@ jobs:
         run: python3 apply_suicune_dv_endpoint_v7115.py
       - name: Verify actual DV endpoint
         run: python3 verify_suicune_dv_endpoint_v7115.py
+      - name: Apply guarded fast replay and input snapshot
+        run: python3 apply_suicune_fast_snapshot_v7116.py
+      - name: Verify guarded fast replay and input snapshot
+        run: python3 verify_suicune_fast_snapshot_v7116.py
       - name: Build 3GX
         run: make
       - name: Package
@@ -58,9 +62,12 @@ jobs:
           cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/research.rs reader_core/src/crystal/capture_plan.rs reader_core/src/crystal/mod.rs reader_core/src/crystal/clock7110.rs reader_core/src/crystal/snapshot7111.rs reader_core/src/crystal/rtc7112.rs v7102-package/generated/reader_core/src/crystal/
           cp 3gx/sources/main.c 3gx/sources/pnp.c v7102-package/generated/3gx/sources/
           cp 3gx/PokeReader.plgInfo v7102-package/generated/3gx/
-          cp -r v7102 v7108 v7110 v7111 v7112 v7113 v7114 v7115 v7102-package/
+          cp -r v7102 v7108 v7110 v7111 v7112 v7113 v7114 v7115 v7116 v7102-package/
           cp 3gx/sources/v7113_*.c v7102-package/generated/3gx/sources/
           cp 3gx/includes/arm_core.h 3gx/includes/shadow.h 3gx/includes/gate_runtime.h 3gx/includes/dv_endpoint.h v7102-package/generated/3gx/includes/
+          cp 3gx/includes/snapshot.h 3gx/includes/const_core.h 3gx/includes/fast_dispatch.h v7102-package/generated/3gx/includes/
+          cp 3gx/sources/v7116_snapshot.c v7102-package/generated/3gx/sources/
+          cp apply_suicune_fast_snapshot_v7116.py verify_suicune_fast_snapshot_v7116.py v7102-package/
           cp 3gx/Makefile v7102-package/generated/3gx/
           cp apply_suicune_dv_endpoint_v7115.py verify_suicune_dv_endpoint_v7115.py v7102-package/
           cp apply_suicune_fast_gate_v7114.py verify_suicune_fast_gate_v7114.py v7102-package/
@@ -73,6 +80,6 @@ jobs:
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7115-Actual-DV-Endpoint
+          name: PokeReader-Suicune-v7116-Fast-Snapshot
           path: v7102-package
           retention-days: 30

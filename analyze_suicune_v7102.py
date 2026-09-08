@@ -9,7 +9,7 @@ A_PCS={0x2b5,0x2b6,0x2f60};S_PCS={0x2bd,0x2be,0x2f68}
 CENTERS=set(A_FIXED+SITES+[225,241,257,369,42,577,715])
 def wanted(r):return r<=42 or 713<=r<=760 or any(abs(r-c)<=1 for c in CENTERS)
 def infer_pairs(samples,end_state=None,end_advance=None):
-    """Infer consumed divider bytes from consecutive RNG states, not sampled DIV."""
+    """Enumerate ADC carry-in 0/1; boundary states alone do not identify DIV A."""
     out=[];errors=[]
     for i,a in enumerate(samples):
         if a['pc'] not in A_PCS:continue
@@ -18,8 +18,7 @@ def infer_pairs(samples,end_state=None,end_advance=None):
         s=samples[i+1]
         if (a['pc']==0x2f60)!=(s['pc']==0x2f68):
             errors.append(f'pair class mismatch at {i}');continue
-        st0=a['state'];mid=s['state'];av=((mid>>8)-(st0>>8))&255
-        carry=int((st0>>8)+av>255)
+        st0=a['state'];mid=s['state'];delta=((mid>>8)-(st0>>8))&255
         if (st0&255)!=(mid&255):errors.append(f'S changed before S read at {i}');continue
         if i+2<len(samples) and samples[i+2]['pc'] in A_PCS:
             end=samples[i+2]['state'];source='next_A_boundary'
@@ -27,9 +26,14 @@ def infer_pairs(samples,end_state=None,end_advance=None):
             end=end_state;source='terminal_same_advance'
         else:errors.append(f'missing successor after S sample {i+1}');continue
         if end>>8!=mid>>8:errors.append(f'extra A change after S sample {i+1}');continue
-        sv=((mid&255)-(end&255)-carry)&255
+        candidates=[]
+        for carry_in in (0,1):
+            av=(delta-carry_in)&255
+            carry_out=int((st0>>8)+av+carry_in>255)
+            sv=((mid&255)-(end&255)-carry_out)&255
+            candidates.append(dict(carry_in=carry_in,carry_out=carry_out,a_div=av,s_div=sv))
         out.append(dict(index=i,pc=a['pc'],advance=a['advance'],state_before=st0,
-            state_after=end,a_consumed=av,s_consumed=sv,carry=carry,successor=source,
+            state_after=end,effective_add_delta=delta,divider_candidates=candidates,successor=source,
             a_observed=a.get('div_before'),s_observed=s.get('div_before')))
     return out,errors
 
@@ -53,13 +57,13 @@ def read(path):
             if off in parts:raise ValueError('duplicate blob chunk')
             parts[off]=b
         elif r[0]=='R7102_SAMPLE':
-            if len(r)!=19:raise ValueError('bad sample row length')
+            if len(r)!=20:raise ValueError('bad sample row length')
             s=dict(kind=r[1],index=int(r[2]),frame=int(r[3]),advance=int(r[4]),rel=int(r[5]),
                 pc=int(r[6],16),state=int(r[7],16),div_before=int(r[8],16),sub_before=int(r[9],16),
                 div_after=int(r[10],16),sub_after=int(r[11],16),tick_begin=int(r[12]),tick_end=int(r[13]),
                 cpu=bytes.fromhex(r[14]),audio=bytes.fromhex(r[15]),hram=bytes.fromhex(r[16]),
-                regs=r[17],stack=r[18])
-            if [len(s[k]) for k in ('cpu','audio','hram','regs','stack')]!=[64,448,127,120,64]:raise ValueError('bad sample payload size')
+                regs=r[17],stack=r[18],gb_stack=bytes.fromhex(r[19]))
+            if [len(s[k]) for k in ('cpu','audio','hram','regs','stack','gb_stack')]!=[64,448,127,120,64,256]:raise ValueError('bad sample payload size')
             if s['state']!=(s['hram'][0x61]<<8|s['hram'][0x62]):raise ValueError('HRAM/state mismatch')
             samples.append(s)
     bdata={}

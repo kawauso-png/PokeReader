@@ -40,6 +40,7 @@ t=rep(t,'''        pnp::trace_file_close();
         unsafe { v798_save_cal_if_dirty(); v7100_save_if_dirty(); }''','''        super::research::save();
         pnp::trace_file_close();
         if super::research::mode()==0 { unsafe { v798_save_cal_if_dirty(); v7100_save_if_dirty(); } }''')
+t=rep(t,'        self.save_result = Some(true);','        self.save_result = Some(pnp::trace_last_error()==0);')
 t=rep(t,'    pub fn draw_rng_status(&self) {','''    pub fn draw_rng_status(&self) {
         if let Some(result)=self.probe_result {
             pnp::println!("S7102 {} DONE",super::research::mode_name());
@@ -158,6 +159,35 @@ c=rep(c,'''                suicune_neutral_probe_frames = 3;
                 suicune_neutral_probe_remaining''')
 c=rep(c,'u32 resume_keys = fixed_armed ? (KEY_START | KEY_R) : (KEY_A | KEY_START | KEY_R);',
             'u32 resume_keys = fixed_armed ? KEY_START : (KEY_A | KEY_START);')
+# A larger diagnostic CSV must not report OK after a short write or failed flush.
+c=rep(c,'''    if (trace_file == 0)
+    {
+        return 0;
+    }
+
+    // Do not flush''','''    if (trace_file == 0)
+    {
+        if(trace_last_error==0) trace_last_error=0xF7102002U;
+        return 0;
+    }
+
+    // Do not flush''')
+c=rep(c,'''    if (R_FAILED(FSFILE_Write(trace_file, &written, trace_file_offset, data, len, 0)))
+    {
+        return 0;
+    }
+
+    trace_file_offset += written;''','''    Result result=FSFILE_Write(trace_file, &written, trace_file_offset, data, len, 0);
+    if (trace_last_error==0 && (R_FAILED(result) || written!=len))
+        trace_last_error=R_FAILED(result)?(u32)result:0xF7102001U;
+    trace_file_offset += written;''')
+c=rep(c,'''        FSFILE_Flush(trace_file);
+        FSFILE_Close(trace_file);
+        trace_file = 0;''','''        Result flushed=FSFILE_Flush(trace_file);
+        Result closed=FSFILE_Close(trace_file);
+        if(trace_last_error==0 && R_FAILED(flushed)) trace_last_error=(u32)flushed;
+        if(trace_last_error==0 && R_FAILED(closed)) trace_last_error=(u32)closed;
+        trace_file = 0;''')
 m=tpath.with_name('mod.rs');ms=m.read_text();ms=rep(ms,'mod trace;','mod trace;\nmod research;')
 assert 'const u32 wanted = 14U;' in c and 'suicune_neutral_probe_frames++' not in c
 for path,content in [(tpath,t),(hpath,h),(cpath,c),(m,ms)]:path.write_text(content)

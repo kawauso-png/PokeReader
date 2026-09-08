@@ -16,18 +16,49 @@ with tempfile.TemporaryDirectory(prefix='suicune-v7102-') as d:
         for s in (0,1,255):
             for da in (0,1,255):
                 for ds in (0,1,170,255):
-                    carry=int(a+da>255);mid=(((a+da)&255)<<8)|s
-                    end=(mid&0xff00)|((s-ds-carry)&255)
-                    boundaries=[dict(pc=0x2f60,state=(a<<8)|s,advance=100),dict(pc=0x2f68,state=mid,advance=100)]
-                    pairs,errors=infer_pairs(boundaries,end,100)
-                    assert not errors and len(pairs)==1
-                    assert (pairs[0]['a_consumed'],pairs[0]['s_consumed'],pairs[0]['carry'])==(da,ds,carry)
+                    for cin in (0,1):
+                        carry=int(a+da+cin>255);mid=(((a+da+cin)&255)<<8)|s
+                        end=(mid&0xff00)|((s-ds-carry)&255)
+                        boundaries=[dict(pc=0x2f60,state=(a<<8)|s,advance=100),dict(pc=0x2f68,state=mid,advance=100)]
+                        pairs,errors=infer_pairs(boundaries,end,100)
+                        assert not errors and len(pairs)==1
+                        assert dict(carry_in=cin,carry_out=carry,a_div=da,s_div=ds) in pairs[0]['divider_candidates']
     _,errors=infer_pairs([dict(pc=0x2f60,state=0,advance=100)])
     assert errors
-print('PASS: Rust CSV -> Python reader; inferred divider bytes across carry/wrap cases; missing boundaries rejected')
+print('PASS: Rust CSV -> Python reader; both ADC carry-in branches including wrap; missing boundaries rejected')
 t=(base/'reader_core/src/crystal/trace.rs').read_text()
 c=(base/'3gx/sources/main.c').read_text()
 h=(base/'reader_core/src/crystal/hook.rs').read_text()
+io_functions=c[c.index('u32 host_trace_file_write('):c.index('u32 host_v796_table_load(')]
+io_test='''#include <stdint.h>
+#include <assert.h>
+typedef uint32_t u32;typedef uint64_t u64;typedef int32_t Result;
+#define R_FAILED(x) ((x)<0)
+static u32 trace_file=1,trace_last_error=0,write_count=0;
+static u64 trace_file_offset=0;
+static Result write_result=0,flush_result=0,close_result=0;
+Result FSFILE_Write(u32 f,u32 *n,u64 off,const char*d,u32 len,u32 flags){*n=write_count;return write_result;}
+Result FSFILE_Flush(u32 f){return flush_result;}
+Result FSFILE_Close(u32 f){return close_result;}
+void fsExit(void){}
+FUNCTIONS
+int main(void) {
+    write_count=2;host_trace_file_write("abcd",4);assert(trace_last_error==0xF7102001U && trace_file_offset==2);
+    flush_result=-2;host_trace_file_close();assert(trace_last_error==0xF7102001U && trace_file==0);
+    trace_file=1;trace_last_error=0;write_result=-1;write_count=0;
+    host_trace_file_write("abcd",4);assert(trace_last_error==(u32)-1);
+    trace_last_error=0;flush_result=-3;close_result=0;host_trace_file_close();assert(trace_last_error==(u32)-3);
+    trace_file=1;trace_last_error=0;flush_result=0;close_result=-4;host_trace_file_close();assert(trace_last_error==(u32)-4);
+    trace_last_error=0;host_trace_file_write("x",1);assert(trace_last_error==0xF7102002U);
+    return 0;
+}
+'''.replace('FUNCTIONS',io_functions)
+with tempfile.TemporaryDirectory(prefix='suicune-v7102-io-') as d:
+    p=Path(d);(p/'test.c').write_text(io_test)
+    subprocess.run(['cc',str(p/'test.c'),'-o',str(p/'test')],check=True)
+    subprocess.run([str(p/'test')],check=True)
+assert 'self.save_result = Some(pnp::trace_last_error()==0);' in t
+print('PASS: short write, write error, flush error and close error are reported')
 assert 'v7101' not in t.lower() and 'root_candidate' not in t
 assert 'const V797_FORCE_FINAL_DV_VALIDATION: bool = true;' in t
 arm=t[t.index('    pub fn arm_suicune_probe'):t.index('    fn update_suicune_endpoint')]

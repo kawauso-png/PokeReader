@@ -18,11 +18,11 @@ const HRAM_LEN:usize=127; // FF80..FFFE: excludes IE hardware register.
 struct Sample {
     frame:u32,advance:u32,rel:u32,pc:u16,div0:u8,sub0:u8,div1:u8,sub1:u8,
     tick0:u64,tick1:u64,
-    ctx:[u8;64],audio:[u8;448],hram:[u8;HRAM_LEN],regs:[u32;15],stack:[u32;8],
+    ctx:[u8;64],audio:[u8;448],hram:[u8;HRAM_LEN],regs:[u32;15],stack:[u32;8],gb_stack:[u8;256],
 }
 impl Sample { const EMPTY:Self=Self {
     frame:0,advance:0,rel:0,pc:0,div0:0,sub0:0,div1:0,sub1:0,tick0:0,tick1:0,
-    ctx:[0;64],audio:[0;448],hram:[0;HRAM_LEN],regs:[0;15],stack:[0;8],
+    ctx:[0;64],audio:[0;448],hram:[0;HRAM_LEN],regs:[0;15],stack:[0;8],gb_stack:[0;256],
 }; }
 static mut FRAMES:[Sample;plan::FRAME_CAP]=[Sample::EMPTY;plan::FRAME_CAP];
 static mut DEEP:[Sample;plan::DEEP_CAP]=[Sample::EMPTY;plan::DEEP_CAP];
@@ -76,10 +76,11 @@ fn capture_pre(target:u32) {
         let hram=word(HRAM_PTR);
         let audio=match wram.checked_add(0x100) {Some(p)=>p,None=>return};
         if audio.checked_add(447).is_none() || hram.checked_add(126).is_none() {return;}
-        if !pnp::is_memory_mapped(audio) || !pnp::is_memory_mapped(audio+447)
+        if !pnp::is_memory_mapped(wram) || !pnp::is_memory_mapped(audio) || !pnp::is_memory_mapped(audio+447)
             || !pnp::is_memory_mapped(hram) || !pnp::is_memory_mapped(hram+126) {return;}
         // Validate host aliases against the GB dispatcher's frozen RAM view.
         for i in 0..448 {if byte(audio+i as u32)!=PRE_RAM[0x100+i] {return;}}
+        for i in 0..256 {if byte(wram+i as u32)!=PRE_RAM[i] {return;}}
         for i in 0..HRAM_LEN {if byte(hram+i as u32)!=PRE_HRAM[i] {return;}}
         AUDIO_HOST=audio;HRAM_HOST=hram;MAP_OK=true;
         let st=((PRE_HRAM[0x61] as u16)<<8)|PRE_HRAM[0x62] as u16;
@@ -117,6 +118,9 @@ unsafe fn sample(dst:*mut Sample,frame:u32,advance:u32,pc:u16,regs:Option<(&[u32
     s.frame=frame;s.advance=advance;s.rel=advance.wrapping_sub(TARGET).wrapping_sub(1);s.pc=pc;
     copy(CPU,s.ctx.as_mut_ptr(),64);
     copy(AUDIO_HOST,s.audio.as_mut_ptr(),448);
+    // ROM 01B9 initializes SP=C0FF. Retain C000..C0FF so guest return
+    // addresses can be decoded independently of the host ARM stack.
+    copy(AUDIO_HOST-0x100,s.gb_stack.as_mut_ptr(),256);
     copy(HRAM_HOST,s.hram.as_mut_ptr(),HRAM_LEN);
     if let Some((r,stack))=regs {
         for i in 0..15 {s.regs[i]=r.get(i).copied().unwrap_or(0);}
@@ -170,7 +174,8 @@ fn emit_sample(kind:&str,i:usize,s:&Sample,line:&mut String) {
         kind,i,s.frame,s.advance,s.rel,s.pc,state,s.div0,s.sub0,s.div1,s.sub1,s.tick0,s.tick1);
     hex(line,&s.ctx);line.push(',');hex(line,&s.audio);line.push(',');hex(line,&s.hram);line.push(',');
     for r in s.regs {let _=write!(line,"{:08X}",r);}line.push(',');
-    for r in s.stack {let _=write!(line,"{:08X}",r);}line.push('\n');
+    for r in s.stack {let _=write!(line,"{:08X}",r);}line.push(',');
+    hex(line,&s.gb_stack);line.push('\n');
     pnp::trace_file_write(line.as_bytes());
 }
 pub fn save() {
@@ -181,7 +186,7 @@ pub fn save() {
         pnp::trace_file_write(line.as_bytes());
         blob("PRE_RAM",0xc000,&*core::ptr::addr_of!(PRE_RAM),&mut line);blob("PRE_HRAM",0xff80,&*core::ptr::addr_of!(PRE_HRAM),&mut line);blob("PRE_CPU",CPU,&*core::ptr::addr_of!(PRE_CPU),&mut line);
         blob("END_RAM",0xc000,&*core::ptr::addr_of!(END_RAM),&mut line);blob("END_HRAM",0xff80,&*core::ptr::addr_of!(END_HRAM),&mut line);blob("END_CPU",CPU,&*core::ptr::addr_of!(END_CPU),&mut line);
-        pnp::trace_file_write(b"research_sample,kind,index,frame,advance,rel,pc,state,div_before,sub_before,div_after,sub_after,tick_begin,tick_end,cpu_hex,audio_hex,hram_hex,arm_regs_hex,host_stack_hex\n");
+        pnp::trace_file_write(b"research_sample,kind,index,frame,advance,rel,pc,state,div_before,sub_before,div_after,sub_after,tick_begin,tick_end,cpu_hex,audio_hex,hram_hex,arm_regs_hex,host_stack_hex,gb_stack_c000_c0ff_hex\n");
         for i in 0..NF {emit_sample("FRAME",i,&FRAMES[i],&mut line);}
         for i in 0..ND {emit_sample("DIV",i,&DEEP[i],&mut line);}
     }

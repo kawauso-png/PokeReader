@@ -80,6 +80,9 @@ def analyze(path):
     result=dict(file=path.name,collector=bool(meta),mode=meta.get('mode') if meta else 'LEGACY',issues=[])
     if not meta:return result
     issue=result['issues'];target=int(meta['target']);mode=meta['mode']
+    if 'native_ok' in meta:
+        result['native_diagnostic_valid']=meta['native_ok']=='1' and meta.get('emu_ok')=='1' and len(blobs.get('NATIVE_CODE',b''))==0xb1000 and len(blobs.get('PRE_EMU',b''))==0x230
+        if not result['native_diagnostic_valid']:issue.append('incomplete native emulator diagnostic')
     for key,n in [('PRE_RAM',8192),('PRE_HRAM',127),('PRE_CPU',64),('END_RAM',8192),('END_HRAM',127),('END_CPU',64)]:
         if len(blobs.get(key,b''))!=n:issue.append('incomplete '+key)
     for k in ('pre_ok','map_ok','end_valid'):

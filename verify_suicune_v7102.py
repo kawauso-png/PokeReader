@@ -11,6 +11,7 @@ with tempfile.TemporaryDirectory(prefix='suicune-v7102-') as d:
     for name,count in [('base',0),('tail',384),('deep',32)]:
         rec,frames,samples,blobs=read(p/(name+'.csv'))
         assert rec['R7102_META']['mode']==name.upper() and len(samples)==count
+        assert len(blobs['NATIVE_CODE'])==0xb1000 and len(blobs['PRE_EMU'])==0x230
         assert len(blobs['PRE_RAM'])==8192 and blobs['PRE_HRAM'][0x61:0x63]==bytes.fromhex('C23C')
     for a in range(256):
         for s in (0,1,255):
@@ -72,4 +73,5 @@ assert 'super::research::div_boundary(rng_advance(),pc,regs,_stack_pointer);' in
 research=(base/'v7102/research.rs').read_text()
 for forbidden in ('host_write_mem','pnp::write','gb_mem::write','write_volatile'):
     assert forbidden not in research,forbidden
+assert 'capture_native_frozen' not in research[research.index('unsafe fn sample('):research.index('pub fn finish()')]
 print('PASS: observation modes, bounds, snapshot serialization, arm guards, no PRE selection, Exact2/M14, no calibration contamination')

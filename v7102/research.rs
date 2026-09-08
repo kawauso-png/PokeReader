@@ -12,6 +12,29 @@ const SUB:u32=0x0022f604;
 const WRAM_PTR:u32=0x0022f6c8;
 const HRAM_PTR:u32=0x0022f6d8;
 const RAM_LEN:usize=8192;
+// Immutable native code around the observed emulator PC 0014AAA4 and LR
+// 001AF120. Read only while frozen; never copy this in an active hook.
+const NATIVE_BASE:u32=0x00100000;
+const NATIVE_LEN:usize=0x000b1000;
+const EMU_LEN:usize=0x230; // 0022F5E0..0022F80F, pointers and timer context.
+static mut NATIVE_CODE:[u8;NATIVE_LEN]=[0;NATIVE_LEN];
+static mut PRE_EMU:[u8;EMU_LEN]=[0;EMU_LEN];
+static mut NATIVE_OK:bool=false;
+static mut EMU_OK:bool=false;
+unsafe fn range_mapped(base:u32,len:usize)->bool {
+    if len==0 {return false;}
+    let last=match base.checked_add((len-1) as u32) {Some(a)=>a,None=>return false};
+    if !pnp::is_memory_mapped(base) || !pnp::is_memory_mapped(last) {return false;}
+    let mut page=(base&!0xfff).saturating_add(0x1000);
+    while page<=last {if !pnp::is_memory_mapped(page) {return false;} page+=0x1000;}
+    true
+}
+unsafe fn capture_native_frozen() {
+    NATIVE_OK=range_mapped(NATIVE_BASE,NATIVE_LEN);
+    EMU_OK=range_mapped(CPU,EMU_LEN);
+    if NATIVE_OK {copy(NATIVE_BASE,core::ptr::addr_of_mut!(NATIVE_CODE).cast::<u8>(),NATIVE_LEN);}
+    if EMU_OK {copy(CPU,core::ptr::addr_of_mut!(PRE_EMU).cast::<u8>(),EMU_LEN);}
+}
 const HRAM_LEN:usize=127; // FF80..FFFE: excludes IE hardware register.
 
 #[derive(Clone,Copy)]
@@ -67,6 +90,7 @@ pub fn mode_name()->&'static str { match mode() {1=>"TAIL",2=>"DEEP",_=>"BASE"} 
 fn capture_pre(target:u32) {
     unsafe {
         ACTIVE=false;PRE_OK=false;MAP_OK=false;END_VALID=false;
+        capture_native_frozen();
         MODE=host_suicune_research_mode().min(2);TARGET=target;NF=0;ND=0;DROP_F=0;DROP_D=0;
         // Frozen RAM-only reads. No ROM/save/IO accesses and no guest execution.
         for i in 0..RAM_LEN { PRE_RAM[i]=gb_mem::read_u8(0xc000+i as u32); }
@@ -185,9 +209,11 @@ fn emit_sample(kind:&str,i:usize,s:&Sample,line:&mut String) {
 pub fn save() {
     let mut line=String::new();
     unsafe {
-        let _=write!(line,"\nresearch7102,mode,target,pre_ok,map_ok,frames,deep,dropped_frames,dropped_deep,end_advance,end_valid,root_advance,root_state,pre_ap,pre_sp,audio_host,hram_host,div_source,div_host\nR7102_META,{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:08X},{:08X},indirect,{:08X}\n",
-            mode_name(),TARGET,PRE_OK as u8,MAP_OK as u8,NF,ND,DROP_F,DROP_D,END_ADV,END_VALID as u8,ROOT_ADV,ROOT_STATE,PRE_AP,PRE_SP,AUDIO_HOST,HRAM_HOST,DIV_HOST);
+        let _=write!(line,"\nresearch7102,mode,target,pre_ok,map_ok,frames,deep,dropped_frames,dropped_deep,end_advance,end_valid,root_advance,root_state,pre_ap,pre_sp,audio_host,hram_host,div_source,div_host,native_ok,emu_ok,native_base,native_len,emu_len\nR7102_META,{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:08X},{:08X},indirect,{:08X},{},{},{:08X},{},{}\n",
+            mode_name(),TARGET,PRE_OK as u8,MAP_OK as u8,NF,ND,DROP_F,DROP_D,END_ADV,END_VALID as u8,ROOT_ADV,ROOT_STATE,PRE_AP,PRE_SP,AUDIO_HOST,HRAM_HOST,DIV_HOST,NATIVE_OK as u8,EMU_OK as u8,NATIVE_BASE,NATIVE_LEN,EMU_LEN);
         pnp::trace_file_write(line.as_bytes());
+        if NATIVE_OK {blob("NATIVE_CODE",NATIVE_BASE,&*core::ptr::addr_of!(NATIVE_CODE),&mut line);}
+        if EMU_OK {blob("PRE_EMU",CPU,&*core::ptr::addr_of!(PRE_EMU),&mut line);}
         blob("PRE_RAM",0xc000,&*core::ptr::addr_of!(PRE_RAM),&mut line);blob("PRE_HRAM",0xff80,&*core::ptr::addr_of!(PRE_HRAM),&mut line);blob("PRE_CPU",CPU,&*core::ptr::addr_of!(PRE_CPU),&mut line);
         blob("END_RAM",0xc000,&*core::ptr::addr_of!(END_RAM),&mut line);blob("END_HRAM",0xff80,&*core::ptr::addr_of!(END_HRAM),&mut line);blob("END_CPU",CPU,&*core::ptr::addr_of!(END_CPU),&mut line);
         pnp::trace_file_write(b"research_sample,kind,index,frame,advance,rel,pc,state,div_before,sub_before,div_after,sub_after,tick_begin,tick_end,cpu_hex,audio_hex,hram_hex,arm_regs_hex,host_stack_hex,gb_stack_c000_c0ff_hex\n");

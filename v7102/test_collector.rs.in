@@ -22,7 +22,8 @@ mod pnp {
             0x0022f794..=0x0022f797=>0x1002004cu32.to_le_bytes()[(addr-0x22f794) as usize],
             0x1002004c=>0xa8,
             0x0022f5fc=>0xb6,0x0022f5fd=>2,0x0022f604=>0x35,
-            0x0022f5e0..=0x0022f61f=>0,
+            0x0022f5e0..=0x0022f80f=>0,
+            0x00100000..=0x001b0fff=>(addr&255) as u8,
             _=>panic!("unmapped read {:x}",addr),
         }
     }
@@ -57,6 +58,9 @@ fn actual_collector_modes_bounds_and_failed_arming() {
     r::finish();r::save();let base=output();
     assert!(base.contains("R7102_META,BASE,100,1,1,0,0,0,0,100,1"));
     assert!(!base.contains("R7102_SAMPLE,"));
+    assert!(base.contains("NATIVE_CODE,00100000,0,0001020304050607"));
+    assert!(base.contains("PRE_EMU,0022F5E0,0,"));
+    assert_eq!(base.lines().filter(|l|l.starts_with("R7102_BLOB,NATIVE_CODE,")).count(),0xb1000/64);
     assert_eq!(base.lines().filter(|l|l.starts_with("R7102_BLOB,PRE_RAM,")).count(),128);
     if let Ok(dir)=std::env::var("V7102_TEST_DIR") {std::fs::write(std::path::Path::new(&dir).join("base.csv"),&base).unwrap();}
     init(1);r::arm(100,97,0);

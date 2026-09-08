@@ -100,16 +100,16 @@ static int append_file(const char*path,const char*line,int fresh){
 }
 int gate7113_log_scan(int decision){
  char path[160],line[1024];
- snprintf(path,sizeof(path),"/luma/plugins/pokereader/traces/shiny7114_%016llX.csv",(unsigned long long)search_id);
- int used=snprintf(line,sizeof(line),"GATE7114,%u,%u,%04X,%u,%d,%08X,%04X,%u,%04X,%u,%04X,%u,%llu,%llu,%llu\n",checks,advance,seed,rank7108_best_rank(),decision,error,selected,models,results[0].dv,results[0].error,results[1].dv,results[1].error,(unsigned long long)results[0].instructions,(unsigned long long)launch,(unsigned long long)resume);
+ snprintf(path,sizeof(path),"/luma/plugins/pokereader/traces/shiny7115_%016llX.csv",(unsigned long long)search_id);
+ int used=snprintf(line,sizeof(line),"GATE7115,%u,%u,%04X,%u,%d,%08X,%04X,%u,%04X,%u,%04X,%u,%llu,%llu,%llu\n",checks,advance,seed,rank7108_best_rank(),decision,error,selected,models,results[0].dv,results[0].error,results[1].dv,results[1].error,(unsigned long long)results[0].instructions,(unsigned long long)launch,(unsigned long long)resume);
  if(used<0||(unsigned)used>=sizeof(line)){error=0x711310;return 0;}
- int n=snprintf(line+used,sizeof(line)-used,"GATE7114_BENCH,%u,%llu,%llu,%llu,%u,%u,%u,%08X,%08X\n",checks,(unsigned long long)bench_elapsed,(unsigned long long)bench_result.instructions,(unsigned long long)bench_seconds,lead_seconds,bench_ready,bench_result.error,bench_result.arm_pc,bench_result.arm_op);
+ int n=snprintf(line+used,sizeof(line)-used,"GATE7115_BENCH,%u,%llu,%llu,%llu,%u,%u,%u,%08X,%08X\n",checks,(unsigned long long)bench_elapsed,(unsigned long long)bench_result.instructions,(unsigned long long)bench_seconds,lead_seconds,bench_ready,bench_result.error,bench_result.arm_pc,bench_result.arm_op);
  if(n<0||(unsigned)n>=sizeof(line)-used){error=0x711310;return 0;}used+=n;
  for(unsigned p=0;p<2;p++){
-  Shadow7113Result*r=&results[p];n=snprintf(line+used,sizeof(line)-used,"GATE7114_CPU,%u,%u,%u,%08X,%08X,%04X,%u,%u,%u,%u,%llu\n",checks,p,r->error,r->arm_pc,r->arm_op,r->guest_pc,r->frame,r->normal,r->final,r->reads,(unsigned long long)r->instructions);
+  Shadow7113Result*r=&results[p];n=snprintf(line+used,sizeof(line)-used,"GATE7115_CPU,%u,%u,%u,%08X,%08X,%04X,%u,%u,%u,%u,%llu,%u,%u\n",checks,p,r->error,r->arm_pc,r->arm_op,r->guest_pc,r->frame,r->normal,r->final,r->reads,(unsigned long long)r->instructions,r->dv_write_mask,r->dv_write_frame);
   if(n<0||(unsigned)n>=sizeof(line)-used){error=0x711310;return 0;}used+=n;
  }
  if(!append_file(path,line,checks==1)){error=0x711310;return 0;}return 1;
 }
 int gate7113_commit(void){uint32_t a=0,s=suicune_rank_pre_state(&a);if(!selected||a!=advance||!(s&0x80000000U)||(s&65535)!=seed||svcGetSystemTick()+5ULL*clock_hz>=launch){error=0x711311;return 0;}committed=1;return 1;}
-void gate7113_append_result(uint32_t a,uint32_t present,uint32_t dv){if(!committed)return;char line[256];snprintf(line,sizeof(line),"\nGATE7114_RESULT,%u,%u,%04X,%u,%04X,%u,%u\n",advance,a,selected,models,dv,present,a==advance&&present&&dv==selected);host_trace_file_write(line,strlen(line));}
+void gate7113_append_result(uint32_t a,uint32_t present,uint32_t dv){if(!committed)return;char line[256];snprintf(line,sizeof(line),"\nGATE7115_RESULT,%u,%u,%04X,%u,%04X,%u,%u\n",advance,a,selected,models,dv,present,a==advance&&present&&dv==selected);host_trace_file_write(line,strlen(line));}

@@ -1,4 +1,5 @@
 #include "shadow.h"
+#include "dv_endpoint.h"
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -15,7 +16,7 @@
 static const Shadow7113Input *in;
 static Arm7113 cpu;
 static unsigned fail,frame,normals,finals,divs,lcd,lcdlong,timer;
-static uint32_t io,last_a_state,last_a_div;static uint8_t final_s[4];
+static uint32_t io,dv_bank;static DvEndpoint7115 endpoint;
 static uint8_t stack[65536];
 typedef struct {uint32_t base;uint8_t*data,*known;} Extra;
 static Extra extra[128];static unsigned nextra;
@@ -46,34 +47,40 @@ static uint32_t readmem(uint32_t addr,unsigned n){
 }
 static void writemem(uint32_t addr,uint32_t v,unsigned n){
  uint8_t*p=view(addr,n,1);if(!p)return;
- if(n==1){*p=v;return;}
- if(n==4&&((uintptr_t)p&3)==0){*(uint32_t*)p=v;return;}
- if(n==2&&((uintptr_t)p&1)==0){*(uint16_t*)p=v;return;}
- p[0]=v;p[1]=v>>8;if(n==4){p[2]=v>>16;p[3]=v>>24;}
+ if(n==1)*p=v;
+ else if(n==4&&((uintptr_t)p&3)==0)*(uint32_t*)p=v;
+ else if(n==2&&((uintptr_t)p&1)==0)*(uint16_t*)p=v;
+ else {p[0]=v;p[1]=v>>8;if(n==4){p[2]=v>>16;p[3]=v>>24;}}
+ if(addr==0x22f768&&n==4)dv_bank=v;
+ if(n==1&&(addr==dv_bank+0x23d||addr==dv_bank+0x23e))
+  dv7115_observe(&endpoint,dv_bank,addr,n,v,readmem(0x22f5fc,2),readmem(io+0x9d,1),frame);
 }
 static int hook(void){uint32_t a=cpu.r[15];if(a==0x178abc){uint64_t rtc=in->rtc(frame,in->opaque);cpu.r[0]=rtc;cpu.r[1]=rtc>>32;cpu.r[15]=cpu.r[14];return 1;}if(a==0x1a7584){cpu.r[15]=cpu.r[14];return 1;}if(a==0x19cd10&&!(readmem(io+2,1)&128)){cpu.r[0]=1;cpu.r[15]=cpu.r[14];return 1;}if(a==0x14aa9c){cpu.r[15]=0x169018;return 1;}
  if(a==0x1af11c){uint32_t p=readmem(0x22f5fc,4)&65535,addr=cpu.r[0];if(addr==0xffc6&&p==0x554){lcd++;if(readmem(io+0xc6,1))lcdlong++;}if(addr==0xffe9&&p==0x3e25)timer++;
  if(addr==0xff04&&(p==0x2b6||p==0x2be||p==0x2f60||p==0x2f68)){unsigned e=readmem(0x22f604,4),rem=readmem(0x22fa50,4),dv=readmem(io+4,1);if(in->event)in->event(frame,p,(readmem(io+0xe1,1)<<8)|readmem(io+0xe2,1),dv,e,rem,lcd,lcdlong,timer,in->opaque);
- if(p==0x2f68&&finals<4){unsigned a=readmem(io+0xe1,1),s=readmem(io+0xe2,1);unsigned before=last_a_state>>8;unsigned carry=(before+last_a_div)>255;final_s[finals]=(s-dv-carry)&255;}
- if(p==0x2f60){last_a_state=(readmem(io+0xe1,1)<<8)|readmem(io+0xe2,1);last_a_div=dv;}
  divs++;if(p==0x2b6)normals++;if(p==0x2f68)finals++;}}
  return 0;}
 
 Shadow7113Result shadow7113_run(const Shadow7113Input *input,unsigned maxframes){
- in=input;memset(&cpu,0,sizeof(cpu));memset(stack,0,sizeof(stack));memset(final_s,0,sizeof(final_s));
+ in=input;memset(&cpu,0,sizeof(cpu));memset(stack,0,sizeof(stack));memset(&endpoint,0,sizeof(endpoint));
  fail=normals=finals=divs=lcd=lcdlong=timer=0;nextra=0;
- io=readmem(0x22f6d8,4)-128;
+ io=readmem(0x22f6d8,4)-128;dv_bank=readmem(0x22f768,4);
  for(frame=0;frame<maxframes;frame++){
   cpu.r[13]=0x700ffc8;writemem(0x700ffec,0x7000000,4);cpu.r[14]=0x7000000;cpu.r[0]=readmem(readmem(0x1a857c,4),4);cpu.r[15]=0x1a824c;
   if(frame)writemem(0x22f766,frame==1||frame==2?0xffbf:0xffff,2);
   unsigned local=0;
   while(cpu.r[15]!=0x7000000&&!cpu.error&&!fail){if(!hook())shadow_arm_inline(&cpu,readmem,writemem);if(++local>10000000){fail=107;break;}}
-  if(cpu.error||fail||finals>=3)break;
+  if(cpu.error||fail||endpoint.mask==3)break;
   if(in->progress&&!in->progress(frame,cpu.steps,in->opaque)){fail=108;break;}
  }
  Shadow7113Result r={0};r.error=fail?fail:cpu.error;r.arm_pc=cpu.error?cpu.error_pc:cpu.r[15];r.arm_op=cpu.error_op;r.guest_pc=readmem(0x22f5fc,4)&65535;r.frame=frame;r.normal=normals;r.final=finals;r.reads=divs;r.lcd=lcd;r.lcdlong=lcdlong;r.timer=timer;r.instructions=cpu.steps;
- if(finals==3||finals==4){r.dv=(final_s[finals-2]<<8)|final_s[finals-1];r.shiny=(r.dv&0xfff)==0xaaa&&((r.dv>>12)&2);if((final_s[0]>=192)!=(finals==4))r.error=109;}
- else if(maxframes>=1000&&!r.error)r.error=110;
+ r.dv_write_mask=endpoint.mask;r.dv_write_frame=endpoint.frame;
+ if(endpoint.mask==3&&!r.error){
+  unsigned actual=(readmem(endpoint.base+0x23d,1)<<8)|readmem(endpoint.base+0x23e,1);
+  if(fail)r.error=fail;
+  else if(actual!=endpoint.dv)r.error=111;
+  else {r.dv=actual;r.shiny=(r.dv&0xfff)==0xaaa&&((r.dv>>12)&2);}
+ }else if(maxframes>=1000&&!r.error)r.error=110;
  for(unsigned j=0;j<nextra;j++){free(extra[j].data);free(extra[j].known);}nextra=0;
  return r;
 }

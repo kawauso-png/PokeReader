@@ -53,7 +53,7 @@ void rank7108_begin(void){}int rank7108_evaluate(void){return 0;}uint32_t rank71
 Shadow7113Result test_shadow_run(const Shadow7113Input*i,unsigned frames){Shadow7113Result r={0};r.instructions=5000000;calls++;if(frames==20){now+=bench_extra_ticks;return r;}unsigned index=(calls-2)&1;r.dv=dvs[index];r.shiny=(r.dv&0xfff)==0xaaa&&((r.dv>>12)&2);if(bad&&index==1)r.error=7;return r;}
 static void reset(void){now=1000000;bench_extra_ticks=0;calls=bad=change_state=0;rank=100;dvs[0]=dvs[1]=0x43e8;gate7113_begin();}
 int main(void){
- reset();bench_extra_ticks=2681118560ULL;assert(gate7113_evaluate()<0&&gate7113_error()==0x711314&&!gate7113_active());assert(gate7113_log_scan(-1));assert(strstr(gate_output,"GATE7114_BENCH,1,")&&strstr(gate_output,",5000000,"));
+ reset();bench_extra_ticks=2681118560ULL;assert(gate7113_evaluate()<0&&gate7113_error()==0x711314&&!gate7113_active());assert(gate7113_log_scan(-1));assert(strstr(gate_output,"GATE7115_BENCH,1,")&&strstr(gate_output,",5000000,"));
  reset();rank=9999;assert(gate7113_evaluate()==0&&calls==0&&!gate7113_active());
  reset();assert(gate7113_evaluate()==0&&calls==3&&!gate7113_active());
  reset();dvs[0]=0x6aaa;assert(gate7113_evaluate()==1&&gate7113_dv()==0x6aaa&&gate7113_models()==1);assert((gate7113_resume_tick()/4481233)&15U==14U);assert(gate7113_log_scan(1));assert(gate7113_commit());

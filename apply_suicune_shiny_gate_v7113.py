@@ -4,7 +4,7 @@ import shutil
 r=Path(__file__).resolve().parent
 for name in ['arm_core.c','shadow.c','gate_runtime.c']:
  shutil.copyfile(r/'v7113'/name,r/'3gx/sources'/('v7113_'+name))
-for name in ['arm_core.h','shadow.h','gate_runtime.h']:
+for name in ['arm_core.h','shadow.h','gate_runtime.h','dv_endpoint.h']:
  shutil.copyfile(r/'v7113'/name,r/'3gx/includes'/name)
 f=r/'reader_core/src/crystal/snapshot7111.rs';s=f.read_text();assert 'suicune_shadow7113_capture' not in s
 s+='''

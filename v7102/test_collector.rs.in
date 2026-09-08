@@ -19,7 +19,9 @@ mod pnp {
             0x10010000..=0x1001007e=>s.ram[(addr-0x10010000+0xff80) as usize],
             0x0022f6c8..=0x0022f6cb=>0x10000000u32.to_le_bytes()[(addr-0x22f6c8) as usize],
             0x0022f6d8..=0x0022f6db=>0x10010000u32.to_le_bytes()[(addr-0x22f6d8) as usize],
-            0x0022f5fc=>0xb6,0x0022f5fd=>2,0x0022f604=>0x35,0x0022f794=>0xa8,
+            0x0022f794..=0x0022f797=>0x1002004cu32.to_le_bytes()[(addr-0x22f794) as usize],
+            0x1002004c=>0xa8,
+            0x0022f5fc=>0xb6,0x0022f5fd=>2,0x0022f604=>0x35,
             0x0022f5e0..=0x0022f61f=>0,
             _=>panic!("unmapped read {:x}",addr),
         }
@@ -64,6 +66,7 @@ fn actual_collector_modes_bounds_and_failed_arming() {
     assert_eq!(tail.lines().filter(|l|l.starts_with("R7102_SAMPLE,FRAME,")).count(),384);
     if let Ok(dir)=std::env::var("V7102_TEST_DIR") {std::fs::write(std::path::Path::new(&dir).join("tail.csv"),&tail).unwrap();}
     let row=tail.lines().find(|l|l.starts_with("R7102_SAMPLE,FRAME,")).unwrap().split(',').collect::<Vec<_>>();
+    assert_eq!(row[8],"A8");assert_eq!(row[10],"A8");assert!(tail.contains("indirect,1002004C"));
     assert_eq!(row.len(),20);assert_eq!(row[7],"C23C");assert_eq!(row[14].len(),128);assert_eq!(row[15].len(),896);assert_eq!(row[16].len(),254);assert_eq!(row[19].len(),512);
     init(2);r::arm(100,97,0);
     r::frame(0,101);

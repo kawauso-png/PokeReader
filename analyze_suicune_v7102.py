@@ -109,12 +109,20 @@ def analyze(path):
     if neu.get('resume_actual_mod16')!='14':issue.append('M14 not confirmed')
     if ex.get('polled_up_advances')!='2' or ex.get('release_confirmed')!='1':issue.append('physical Exact2 not confirmed')
     if su.get('result')!='OK':issue.append('no final DV')
+    result['collection_complete']=not issue
+    result['divider_observation_valid']=meta.get('div_source')=='indirect'
+    if samples and not result['divider_observation_valid']:
+        issue.append('v7102 direct DIV columns are pointer-slot bytes, not DIV; exclude them from inference')
     result['raw_dv']=su.get('raw_dv');result['post']=rec.get('POSTFP',{})
     result['capture_count']=len(samples)
     costs=[(s['tick_end']-s['tick_begin'])*1e6/TPS for s in samples]
     result['capture_cost_us']={'median':statistics.median(costs),'max':max(costs)} if costs else None
+    result['subtick_changed_during_copy']=sum(s['sub_before']!=s['sub_after'] for s in samples)
     result['divider_changed_during_copy']=sum((s['div_before'],s['sub_before'])!=(s['div_after'],s['sub_after']) for s in samples)
+    if not result['divider_observation_valid']:result['divider_changed_during_copy']=None
     if ds:
+        if not result['divider_observation_valid']:
+            ds=[{k:v for k,v in sample.items() if k not in ('div_before','div_after')} for sample in ds]
         end=blobs.get('END_HRAM',b'');st=(end[0x61]<<8)|end[0x62] if len(end)==127 else None
         pairs,errs=infer_pairs(ds,st,int(meta['end_advance']) if meta.get('end_valid')=='1' else None)
         result['inferred_pairs']=pairs;result['pair_issues']=errs

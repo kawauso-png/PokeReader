@@ -7,7 +7,7 @@ use core::fmt::Write;
 #[path="capture_plan.rs"] mod plan;
 extern "C" { fn host_suicune_research_mode()->u32; }
 const CPU:u32=0x0022f5e0;
-const DIV:u32=0x0022f794;
+const DIV_PTR:u32=0x0022f794;
 const SUB:u32=0x0022f604;
 const WRAM_PTR:u32=0x0022f6c8;
 const HRAM_PTR:u32=0x0022f6d8;
@@ -41,6 +41,7 @@ static mut PRE_OK:bool=false;
 static mut MAP_OK:bool=false;
 static mut AUDIO_HOST:u32=0;
 static mut HRAM_HOST:u32=0;
+static mut DIV_HOST:u32=0;
 static mut PRE_RAM:[u8;RAM_LEN]=[0;RAM_LEN];
 static mut PRE_HRAM:[u8;HRAM_LEN]=[0;HRAM_LEN];
 static mut PRE_CPU:[u8;64]=[0;64];
@@ -82,6 +83,9 @@ fn capture_pre(target:u32) {
         for i in 0..448 {if byte(audio+i as u32)!=PRE_RAM[0x100+i] {return;}}
         for i in 0..256 {if byte(wram+i as u32)!=PRE_RAM[i] {return;}}
         for i in 0..HRAM_LEN {if byte(hram+i as u32)!=PRE_HRAM[i] {return;}}
+        let div=word(DIV_PTR);
+        if div==0 || !pnp::is_memory_mapped(div) {return;}
+        DIV_HOST=div;
         AUDIO_HOST=audio;HRAM_HOST=hram;MAP_OK=true;
         let st=((PRE_HRAM[0x61] as u16)<<8)|PRE_HRAM[0x62] as u16;
         PRE_OK=hook::rng_advance()==target && gb_mem::read_u16(0xffe1)==st;
@@ -114,7 +118,7 @@ pub fn arm(target:u32,root_advance:u32,root_state:u16) {
 // temporary Sample is created on the small ARM hook stack.
 unsafe fn sample(dst:*mut Sample,frame:u32,advance:u32,pc:u16,regs:Option<(&[u32],*mut u32)>) {
     let s=&mut *dst;
-    s.tick0=pnp::system_tick();s.div0=byte(DIV);s.sub0=byte(SUB);
+    s.tick0=pnp::system_tick();s.div0=byte(DIV_HOST);s.sub0=byte(SUB);
     s.frame=frame;s.advance=advance;s.rel=advance.wrapping_sub(TARGET).wrapping_sub(1);s.pc=pc;
     copy(CPU,s.ctx.as_mut_ptr(),64);
     copy(AUDIO_HOST,s.audio.as_mut_ptr(),448);
@@ -126,7 +130,7 @@ unsafe fn sample(dst:*mut Sample,frame:u32,advance:u32,pc:u16,regs:Option<(&[u32
         for i in 0..15 {s.regs[i]=r.get(i).copied().unwrap_or(0);}
         for i in 0..8 {s.stack[i]=core::ptr::read_volatile(stack.add(i));}
     }
-    s.div1=byte(DIV);s.sub1=byte(SUB);s.tick1=pnp::system_tick();
+    s.div1=byte(DIV_HOST);s.sub1=byte(SUB);s.tick1=pnp::system_tick();
 }
 
 pub fn frame(frame:u32,advance:u32) {
@@ -181,8 +185,8 @@ fn emit_sample(kind:&str,i:usize,s:&Sample,line:&mut String) {
 pub fn save() {
     let mut line=String::new();
     unsafe {
-        let _=write!(line,"\nresearch7102,mode,target,pre_ok,map_ok,frames,deep,dropped_frames,dropped_deep,end_advance,end_valid,root_advance,root_state,pre_ap,pre_sp,audio_host,hram_host\nR7102_META,{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:08X},{:08X}\n",
-            mode_name(),TARGET,PRE_OK as u8,MAP_OK as u8,NF,ND,DROP_F,DROP_D,END_ADV,END_VALID as u8,ROOT_ADV,ROOT_STATE,PRE_AP,PRE_SP,AUDIO_HOST,HRAM_HOST);
+        let _=write!(line,"\nresearch7102,mode,target,pre_ok,map_ok,frames,deep,dropped_frames,dropped_deep,end_advance,end_valid,root_advance,root_state,pre_ap,pre_sp,audio_host,hram_host,div_source,div_host\nR7102_META,{},{},{},{},{},{},{},{},{},{},{},{:04X},{:04X},{:04X},{:08X},{:08X},indirect,{:08X}\n",
+            mode_name(),TARGET,PRE_OK as u8,MAP_OK as u8,NF,ND,DROP_F,DROP_D,END_ADV,END_VALID as u8,ROOT_ADV,ROOT_STATE,PRE_AP,PRE_SP,AUDIO_HOST,HRAM_HOST,DIV_HOST);
         pnp::trace_file_write(line.as_bytes());
         blob("PRE_RAM",0xc000,&*core::ptr::addr_of!(PRE_RAM),&mut line);blob("PRE_HRAM",0xff80,&*core::ptr::addr_of!(PRE_HRAM),&mut line);blob("PRE_CPU",CPU,&*core::ptr::addr_of!(PRE_CPU),&mut line);
         blob("END_RAM",0xc000,&*core::ptr::addr_of!(END_RAM),&mut line);blob("END_HRAM",0xff80,&*core::ptr::addr_of!(END_HRAM),&mut line);blob("END_CPU",CPU,&*core::ptr::addr_of!(END_CPU),&mut line);

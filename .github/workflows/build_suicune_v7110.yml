@@ -1,26 +1,23 @@
 name: Suicune v7.11.0 Experimental Empirical Hunt
-
 on:
   push:
-    branches:
-      - suicune-v7110-empirical-hunt
+    branches: [suicune-v7110-empirical-hunt]
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: ubuntu-24.04
     container: zaksabeast/devkitarm-rust
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependency
+      - name: Install Python
         run: |
           apt-get update --allow-releaseinfo-change
           apt-get install -y python3
-      - name: Generate and verify original source chain
-        run: python3 run_suicune_v799_chain_for_v7100.py
-      - name: Apply v7.10.0 baseline
-        run: python3 apply_suicune_s1split_selfcal_v7100.py
-      - name: Resolve missing-cache donor workload from ROM and AUDIOPRE audit
+      - name: Generate audited original source chain
+        run: |
+          python3 run_suicune_v799_chain_for_v7100.py
+          python3 apply_suicune_s1split_selfcal_v7100.py
+      - name: Resolve missing-cache donor workload
         run: |
           python3 - <<'PY'
           from pathlib import Path
@@ -35,43 +32,37 @@ jobs:
           assert all(6000<=d['c']<=12000 for d in ds)
           p.write_text(base64.b85encode(zlib.compress(json.dumps(ds,separators=(',',':')).encode(),9)).decode())
           PY
-      - name: Apply experimental pre-input hunter and test phase tables
-        run: python3 apply_suicune_hunt_v7110.py
-      - name: Verify input and validation invariants
+      - name: Apply hunter and frozen-screen UI
         run: |
+          python3 apply_suicune_hunt_v7110.py
+          python3 finish_suicune_hunt_v7110.py
           grep -q 'JOY_HJOYPAD_DOWN' reader_core/src/crystal/hook.rs
           grep -q 'const u32 wanted = 14U' 3gx/sources/main.c
           grep -q 'const V797_FORCE_FINAL_DV_VALIDATION: bool = true;' reader_core/src/crystal/trace.rs
           grep -q 'HUNTDV,V7110' reader_core/src/crystal/trace.rs
           grep -q 'H7110 CANDIDATE' reader_core/src/crystal/trace.rs
           test "$(stat -c %s reader_core/src/crystal/hunt_v7110.bin)" = 332880
-      - name: Test actual Rust evaluator on host
+      - name: Test actual Rust evaluator
         run: |
-          cp reader_core/src/crystal/hunt_v7110.rs /tmp/hunt_v7110.rs
-          cp reader_core/src/crystal/hunt_v7110.bin /tmp/hunt_v7110.bin
+          cp reader_core/src/crystal/hunt_v7110.rs reader_core/src/crystal/hunt_v7110.bin /tmp/
           cat > /tmp/hunt_tests.rs <<'RS'
           #[path="hunt_v7110.rs"] mod hunt;
           #[test] fn predicted_candidate() {
-              let mut bits=[0u8;8192];
-              let s=hunt::evaluate(0xa9f9,0x0035,6582,&mut bits);
-              assert!(hunt::ready(s)); assert_eq!((s.support,s.score,s.total,s.unique),(2,16,10400,1218));
-              assert_eq!(bits.iter().map(|b|b.count_ones()).sum::<u32>(),s.unique);
-              assert_eq!(s.first&0x0fff,0x0aaa);
+              let mut bits=[0u8;8192];let s=hunt::evaluate(0xa9f9,0x0035,6582,&mut bits);
+              assert!(hunt::ready(s));assert_eq!((s.support,s.score,s.total,s.unique),(2,16,10400,1218));
+              assert_eq!(bits.iter().map(|b|b.count_ones()).sum::<u32>(),s.unique);assert_eq!(s.first&0x0fff,0x0aaa);
           }
           #[test] fn second_phase() {
-              let mut bits=[0u8;8192];
-              let s=hunt::evaluate(0xbae4,0x2a35,7120,&mut bits);
-              assert!(hunt::ready(s)); assert_eq!((s.support,s.score,s.total,s.unique),(2,20,10400,1269));
+              let mut bits=[0u8;8192];let s=hunt::evaluate(0xbae4,0x2a35,7120,&mut bits);
+              assert!(hunt::ready(s));assert_eq!((s.support,s.score,s.total,s.unique),(2,20,10400,1269));
           }
           #[test] fn reject_wrong_phase() {
-              let mut bits=[255u8;8192];
-              let s=hunt::evaluate(0xa9f9,0x0034,6582,&mut bits);
+              let mut bits=[255u8;8192];let s=hunt::evaluate(0xa9f9,0x0034,6582,&mut bits);
               assert!(!hunt::ready(s));assert_eq!(s.unique,0);assert!(bits.iter().all(|x|*x==0));
           }
           #[test] fn deterministic_repeat() {
               let mut x=[0u8;8192];let mut y=[0u8;8192];
-              let a=hunt::evaluate(0x00ff,0x3375,7140,&mut x);
-              let b=hunt::evaluate(0x00ff,0x3375,7140,&mut y);
+              let a=hunt::evaluate(0x00ff,0x3375,7140,&mut x);let b=hunt::evaluate(0x00ff,0x3375,7140,&mut y);
               assert!(hunt::ready(a));assert_eq!(a.score,b.score);assert_eq!(x,y);
           }
           RS
@@ -85,21 +76,10 @@ jobs:
           cp out/default.3gx v7110/PokeReader-Suicune-v7110-EmpiricalHunt.3gx
           cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/hunt_v7110.rs reader_core/src/crystal/hunt_v7110.bin v7110/source/reader_core/src/crystal/
           cp 3gx/sources/main.c v7110/source/3gx/sources/
-          cp apply_suicune_hunt_v7110.py hunt_v7110.rs hunt_v7110_donors.b85 hunt_v7110_manifest.json v7110/
-          cp /tmp/hunt_tests.rs v7110/
-          printf '%s\n' \
-            'EXPERIMENTAL v7.11.0: pre-input workload-adjusted path ensemble.' \
-            'Scores are NOT probabilities. Shiny rate and hardware operation are not yet validated.' \
-            'Keep the existing /luma/plugins/pokereader/suicune_j_table_v796.bin and calibration files.' \
-            'Back up the existing Crystal default.3gx, then replace ONLY that executable.' \
-            'At the existing Suicune preparation point: pause, Y+DOWN, release all keys.' \
-            'The hunter scans and runs neutral frames automatically. Do not press B or R.' \
-            'On H7110 CANDIDATE: physical UP, release after Exact2 auto-pause; M14 resumes automatically.' \
-            'Every selected attempt runs to native final DV and saves CSV including frozen HUNTDV predictions.' \
-            'No game RNG/DIV/DV/save write or synthetic UP was added.' \
-            > v7110/README.txt
+          cp apply_suicune_hunt_v7110.py finish_suicune_hunt_v7110.py hunt_v7110.rs hunt_v7110_donors.b85 hunt_v7110_manifest.json /tmp/hunt_tests.rs v7110/
           printf '%s\n' "$GITHUB_SHA" > v7110/commit.txt
           sha256sum out/default.3gx reader_core/src/crystal/hunt_v7110.bin > v7110/SHA256SUMS
+          printf '%s\n' 'EXPERIMENTAL: scores are not probabilities; shiny lift and hardware unverified.' 'Keep existing Crystal runtime table/calibration; replace only backed-up default.3gx.' 'Pause at existing preparation point, Y+DOWN, release all keys; no B.' 'H7110 CANDIDATE: physical UP, release after Exact2; M14 automatic, no R.' 'All selected attempts run to native DV; HUNTDV is frozen pre-input prediction, not actual DV.' > v7110/README.txt
       - uses: actions/upload-artifact@v4
         with:
           name: PokeReader-Suicune-v7110-EmpiricalHunt

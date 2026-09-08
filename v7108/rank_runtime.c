@@ -9,8 +9,8 @@ extern uint32_t suicune_rank_pre_state(uint32_t *advance);
 extern uint32_t host_trace_file_write(const char*,uint32_t);
 static uint8_t ram[8192],io[256];
 static uint32_t error_code,checks,cycles,pre_advance,seed,candidates,rom_seen,rom_hash,pre_hash;
-static uint64_t pre_id;
-static int committed,valid;
+static uint64_t pre_id,search_id;
+static int committed,valid,scored;
 #define RANK_LIMIT 128U
 static int mapped(uint32_t ptr,uint32_t length) {
     if(!ptr||!length||ptr>UINT32_MAX-(length-1))return 0;
@@ -21,12 +21,12 @@ static int mapped(uint32_t ptr,uint32_t length) {
 }
 static uint32_t word_at(uint32_t addr){return *(const volatile uint32_t*)addr;}
 static uint32_t fnv(const uint8_t *data,uint32_t n,uint32_t h){for(uint32_t i=0;i<n;i++)h=(h^data[i])*16777619U;return h;}
-void rank7108_begin(void){error_code=checks=cycles=committed=valid=0;pre_id=0;}
+void rank7108_begin(void){error_code=checks=cycles=committed=valid=scored=0;pre_id=0;pre_advance=seed=pre_hash=0;search_id=svcGetSystemTick();}
 uint32_t rank7108_error(void){return error_code;}
 uint32_t rank7108_checks(void){return checks;}
 uint32_t rank7108_cycles(void){return cycles;}
 int rank7108_evaluate(void) {
-    valid=committed=0;error_code=0;cycles=0;checks++;
+    valid=committed=scored=0;error_code=0;cycles=0;candidates=0;checks++;
     uint32_t st=suicune_rank_pre_state(&pre_advance);
     if(!(st&0x80000000U)){error_code=1;return -1;}
     seed=st&65535U;
@@ -49,6 +49,7 @@ int rank7108_evaluate(void) {
     /* No extrapolation past the workload range present in this model. */
     if(cycles<8569||cycles>11350)return 0;
     candidates=rank7108_score(seed,(int)cycles,-1);
+    scored=1;
     valid=rank7108_best_rank()>0 && rank7108_best_rank()<=RANK_LIMIT && rank7108_support()>=2;
     return valid;
 }
@@ -65,6 +66,34 @@ static void pre_header(char *line,size_t len) {
         (unsigned long long)pre_id,rank7108_model_id(),(unsigned)pre_advance,(unsigned)seed,(unsigned)cycles,
         rank7108_best_shiny(),(unsigned)rank7108_best_rank(),(unsigned)rank7108_support(),(unsigned)candidates,
         (unsigned)checks,(unsigned)pre_hash,(unsigned)rom_hash);
+}
+int rank7108_log_scan(int decision) {
+    /* One row per inspected PRE, including rejections. Lets the next analysis
+       measure which RNG/audio combinations actually occur without more UPs. */
+    uint32_t original_error=error_code;
+    if(R_FAILED(fsInit())){error_code=0x210;return 0;}
+    FS_Archive sd;
+    if(R_FAILED(FSUSER_OpenArchive(&sd,ARCHIVE_SDMC,fsMakePath(PATH_EMPTY,"")))){error_code=0x211;fsExit();return 0;}
+    FSUSER_CreateDirectory(sd,fsMakePath(PATH_ASCII,"/luma/plugins/pokereader"),0);
+    FSUSER_CreateDirectory(sd,fsMakePath(PATH_ASCII,"/luma/plugins/pokereader/traces"),0);
+    char name[128];snprintf(name,sizeof(name),"/luma/plugins/pokereader/traces/rank7108_scan_%016llX.csv",(unsigned long long)search_id);
+    Writer w={0,0,1};uint64_t size=0;
+    Result r=FSUSER_OpenFile(&w.file,sd,fsMakePath(PATH_ASCII,name),FS_OPEN_WRITE|FS_OPEN_CREATE,0);
+    FSUSER_CloseArchive(sd);
+    if(R_FAILED(r)){error_code=0x212;fsExit();return 0;}
+    if(R_FAILED(FSFILE_GetSize(w.file,&size))||(checks==1 && size!=0)||(checks>1 && size==0)) {
+        error_code=0x213;FSFILE_Close(w.file);fsExit();return 0;
+    }
+    w.offset=size;
+    if(!size)put(&w,"record,search_id,model,check,advance,seed,audio_cycles,decision,error,candidates,shiny_dv,shiny_rank,support,pre_hash,rom_fnv\n");
+    char line[384];snprintf(line,sizeof(line),"RANK7108_SCAN,%016llX,%s,%u,%u,%04X,%u,%d,%08X,%u,%04X,%u,%u,%08X,%08X\n",
+        (unsigned long long)search_id,rank7108_model_id(),(unsigned)checks,(unsigned)pre_advance,(unsigned)seed,(unsigned)cycles,
+        decision,(unsigned)original_error,(unsigned)candidates,scored?rank7108_best_shiny():0,
+        (unsigned)(scored?rank7108_best_rank():0),(unsigned)(scored?rank7108_support():0),(unsigned)pre_hash,(unsigned)rom_hash);
+    put(&w,line);
+    Result flush=FSFILE_Flush(w.file),close=FSFILE_Close(w.file);fsExit();
+    if(!w.ok||R_FAILED(flush)||R_FAILED(close)){error_code=0x214;return 0;}
+    return 1;
 }
 int rank7108_commit(void) {
     uint32_t now=0,st=suicune_rank_pre_state(&now);

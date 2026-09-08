@@ -38,6 +38,7 @@ c=rep(c,'''                suicune_neutral_probe_pending = false;
                 arm_suicune_probe();''','''                suicune_neutral_probe_pending = false;
                 if(rank7108_hunting) {
                     int decision=rank7108_evaluate();
+                    if(!rank7108_log_scan(decision))decision=-1;
                     if(decision<0 || (decision>0 && !rank7108_commit())) {
                         char info[32];snprintf(info,sizeof(info),"ERROR %08lX",(unsigned long)rank7108_error());
                         rank7108_hunting=false;suicune_wait_up_after_b=false;
@@ -64,7 +65,7 @@ c=rep(c,'''            // Stage3 current-root live scan start.
             {''','''            // Ranked experiment: auto-check frozen PRE candidates before UP.
             if (just_pressed & KEY_DDOWN)
             {
-                rank7108_begin();rank7108_hunting=true;''')
+                rank7108_begin();rank7108_hunting=true;suicune_live_pass_ready=false;''')
 c=c.replace('S7107','S7108')
 f.write_text(c)
 

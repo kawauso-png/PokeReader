@@ -26,6 +26,7 @@ static u32 held,suicune_neutral_probe_remaining,suicune_neutral_probe_executed,f
 static u64 suicune_obs_arm_tick;
 static int decision,commit_ok,arm_count,commit_count,evaluate_count,arm_ok=1;
 int rank7108_evaluate(void){evaluate_count++;return decision;}
+int rank7108_log_scan(int d){return 1;}
 int rank7108_commit(void){commit_count++;return commit_ok;}
 u32 rank7108_error(void){return 9;}u32 rank7108_cycles(void){return 9012;}u32 rank7108_checks(void){return 1;}
 unsigned rank7108_best_shiny(void){return 0x2aaa;}unsigned rank7108_best_rank(void){return 40;}

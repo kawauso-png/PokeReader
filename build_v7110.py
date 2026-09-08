@@ -20,6 +20,8 @@ t=t.replace(old,old+'''        if unsafe { H7110_ON } {
             self.probe_result=None;
         }
 ''',1)
+assert t.count('STALLPHASE,V7100,')==1
+t=t.replace('STALLPHASE,V7100,','STALLPHASE,V7110,',1)
 p.write_text(t)
 # These guards are source-level invariants, not hardware tests.
 assert 'const V797_FORCE_FINAL_DV_VALIDATION: bool = true;' in t

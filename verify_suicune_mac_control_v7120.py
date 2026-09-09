@@ -10,3 +10,6 @@ s=(r/'3gx/sources/main.c').read_text();assert s.count('if(gate7119_poll(held))br
 runtime=(r/'3gx/sources/v7113_gate_runtime.c').read_text();assert (r/'v7120_mac/runtime.inc').read_text() in runtime
 s=(r/'3gx/sources/v7116_snapshot.c').read_text();assert 'w[30]=7120' in s and 'mac_samples.bin' in s
 print('PASS: generated integration, full sample binary layout, version tags')
+
+arm=s if False else (r/"3gx/sources/main.c").read_text().split("int host7120_arm(void){",1)[1].split("void host7119_status",1)[0]
+assert "suicune_root_lock_ready=true;" in arm and "suicune_neutral_probe_pending=false;" in arm

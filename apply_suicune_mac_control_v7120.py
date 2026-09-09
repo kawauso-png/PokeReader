@@ -9,7 +9,7 @@ anchor='void host7119_status(unsigned stage,unsigned done,unsigned detail)'
 arm='''/* Accept only a clock-bound Mac prediction for the currently frozen state.
  * Uses the existing physical-UP Exact2 gate; does not synthesize UP. */
 int host7120_arm(void){
- suicune_root_lock_active=false;suicune_root_lock_ready=false;suicune_root_lock_failed=false;
+ suicune_root_lock_active=false;suicune_root_lock_ready=true;suicune_root_lock_failed=false;
  suicune_neutral_probe_pending=false;
  if(clock7110_collection)return 0;
  arm_suicune_probe();

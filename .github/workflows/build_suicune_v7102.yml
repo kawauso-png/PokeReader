@@ -1,7 +1,7 @@
-name: Suicune v7.10.19 Mac Frame Calibration
+name: Suicune v7.10.20 Mac Frame Control
 on:
   push:
-    branches: [suicune-v7119-mac-step]
+    branches: [suicune-v7120-mac-control]
   workflow_dispatch:
 jobs:
   build:
@@ -65,6 +65,10 @@ jobs:
         run: |
           python3 apply_suicune_mac_step_v7119.py
           python3 verify_suicune_mac_step_v7119.py
+      - name: Apply and verify absolute-grid control
+        run: |
+          python3 apply_suicune_mac_control_v7120.py
+          python3 verify_suicune_mac_control_v7120.py
       - name: Build 3GX
         run: make
       - name: Package
@@ -99,9 +103,12 @@ jobs:
           cp -r v7119_mac v7102-package/
           cp apply_suicune_mac_step_v7119.py verify_suicune_mac_step_v7119.py v7102-package/
           cp 3gx/includes/mac7119_protocol.h v7102-package/generated/3gx/includes/
+          cp -r v7120_mac v7102-package/
+          cp apply_suicune_mac_control_v7120.py verify_suicune_mac_control_v7120.py v7102-package/
+          cp 3gx/includes/mac7120_protocol.h v7102-package/generated/3gx/includes/
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7119-Mac-Step
+          name: PokeReader-Suicune-v7120-Mac-Control
           path: v7102-package
           retention-days: 30

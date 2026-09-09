@@ -1,7 +1,7 @@
-name: Suicune v7.10.22 Ordinary DV Calibration
+name: Suicune v7.10.23 Persistent Event Diagnostics
 on:
   push:
-    branches: [suicune-v7122-calibration]
+    branches: [suicune-v7123-diagnostics]
   workflow_dispatch:
 jobs:
   build:
@@ -77,6 +77,10 @@ jobs:
         run: |
           python3 apply_suicune_calibration_v7122.py
           python3 verify_suicune_calibration_v7122.py
+      - name: Apply and verify persistent event diagnostics
+        run: |
+          python3 apply_suicune_diagnostics_v7123.py
+          python3 verify_suicune_diagnostics_v7123.py
       - name: Build 3GX
         run: make
       - name: Package
@@ -119,9 +123,12 @@ jobs:
           cp 3gx/includes/manual7121.h v7102-package/generated/3gx/includes/
           cp -r v7122_calibration v7102-package/
           cp apply_suicune_calibration_v7122.py verify_suicune_calibration_v7122.py v7102-package/
+          cp -r v7123_diagnostics v7102-package/
+          cp apply_suicune_diagnostics_v7123.py verify_suicune_diagnostics_v7123.py v7102-package/
+          cp 3gx/includes/events7123.h v7102-package/generated/3gx/includes/
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7122-DV-Calibration
+          name: PokeReader-Suicune-v7123-Event-Diagnostics
           path: v7102-package
           retention-days: 30

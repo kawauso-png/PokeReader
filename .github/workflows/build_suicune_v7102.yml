@@ -1,7 +1,7 @@
-name: Suicune v7.10.18 Mac Snapshot
+name: Suicune v7.10.19 Mac Frame Calibration
 on:
   push:
-    branches: [suicune-v7118-mac-snapshot]
+    branches: [suicune-v7119-mac-step]
   workflow_dispatch:
 jobs:
   build:
@@ -61,6 +61,10 @@ jobs:
         run: |
           python3 apply_suicune_mac_snapshot_v7118.py
           python3 verify_suicune_mac_snapshot_v7118.py
+      - name: Apply and verify bounded Mac neutral steps
+        run: |
+          python3 apply_suicune_mac_step_v7119.py
+          python3 verify_suicune_mac_step_v7119.py
       - name: Build 3GX
         run: make
       - name: Package
@@ -92,9 +96,12 @@ jobs:
           cp apply_suicune_ranked_hunt_v7108.py verify_suicune_v7108.py v7102-package/
           cp apply_suicune_causal_collector_v7102.py analyze_suicune_v7102.py verify_suicune_v7102.py v7102-package/
           cp apply_suicune_mac_snapshot_v7118.py verify_suicune_mac_snapshot_v7118.py v7102-package/
+          cp -r v7119_mac v7102-package/
+          cp apply_suicune_mac_step_v7119.py verify_suicune_mac_step_v7119.py v7102-package/
+          cp 3gx/includes/mac7119_protocol.h v7102-package/generated/3gx/includes/
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7118-Mac-Snapshot
+          name: PokeReader-Suicune-v7119-Mac-Step
           path: v7102-package
           retention-days: 30

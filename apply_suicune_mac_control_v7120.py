@@ -10,7 +10,8 @@ arm='''/* Accept only a clock-bound Mac prediction for the currently frozen stat
  * Uses the existing physical-UP Exact2 gate; does not synthesize UP. */
 int host7120_arm(void){
  suicune_root_lock_active=false;suicune_root_lock_ready=false;suicune_root_lock_failed=false;
- suicune_neutral_probe_pending=false;clock7110_collection=false;
+ suicune_neutral_probe_pending=false;
+ if(clock7110_collection)return 0;
  arm_suicune_probe();
  if(!suicune_research_arm_ok())return 0;
  suicune_live_pass_ready=arm_suicune_live_pass()!=0;

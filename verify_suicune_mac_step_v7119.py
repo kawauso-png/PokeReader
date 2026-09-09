@@ -32,6 +32,7 @@ static unsigned poll(void){unsigned release=gate7119_poll(keys);if(release){rele
 static void finish(void){for(unsigned i=0;i<1000&&gate7119_running();i++){tick+=clock_hz/30;poll();}assert(!gate7119_running());}
 int main(int argc,char**argv){
  for(unsigned n=1;n<=32;n++){reset();make_request(n);assert(!poll()&&gate7119_running()&&!release_count);finish();assert(release_count==n&&mac7119_done==n&&!mac7119_error&&export_calls==2);assert(strstr(saved_report,"\"phase\":\"complete\"")&&strstr(saved_report,"\"guest_input_sent\":false"));for(unsigned i=0;i<5;i++){tick+=clock_hz;assert(!poll());}assert(release_count==n);}
+ reset();native_keys=0xfcff;make_request(2);assert(!poll());finish();assert(release_count==2&&!mac7119_error);
  reset();make_request(33);assert(mac7119_validate(request,&mac7119_meta,mac7119_hashes,0,tick,0)==2);assert(!poll()&&mac7119_error==22&&!release_count);
  reset();make_request(1);request[18]=1;checksum();assert(mac7119_validate(request,&mac7119_meta,mac7119_hashes,0,tick,0)==2);
  reset();make_request(1);request[14]++;checksum();assert(mac7119_validate(request,&mac7119_meta,mac7119_hashes,0,tick,0)==3);

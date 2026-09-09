@@ -11,3 +11,5 @@ At acceptance, a fresh BEFORE image is exported as `mac_before.bin/json`. A `sta
 Do not retry an uncertain request using a new nonce. Read its status first. Replaying the same consumed nonce never executes more frames. A complete report and both matching snapshots are required before treating a calibration sample as valid. Physical keys pressed during a release can affect the real game before the next pause; that trial is aborted and must not count as neutral validation.
 
 `verify_suicune_mac_step_v7119.py` tests exact bounds 1–32, no duplicate release, stale identity, deadlines, held keys, export/journal failures, JSON capacity, generated integration guards, and snapshot serialization integrity. These software tests do not establish hardware RNG prediction accuracy.
+
+A captured physical neutral state stores `0xFCFF` in the cached key halfword; offline neutral replays use `0xFFFF`. The GB button mask is the low byte (confirmed in the VC joypad routine at `0x195DF4`). Test neutrality of that byte and physical HID separately, while recording the full halfword. Do not reject a real neutral state solely for its upper byte.

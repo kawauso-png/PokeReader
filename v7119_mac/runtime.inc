@@ -22,7 +22,7 @@ static int mac7119_sample(Mac7119Sample*s){
  if(!is_memory_mapped(rp)||!is_memory_mapped(rp+7)||!is_memory_mapped(rawp)||!is_memory_mapped(io+4))return 0;
  s->tick=svcGetSystemTick();s->state=suicune_native_pre_state(&s->advance);s->pc=word(0x22f5fc)&65535;
  s->native_keys=((uint32_t)byte(0x22f766)|((uint32_t)byte(0x22f767)<<8));s->rtc=wide(rp);s->raw=byte(rawp);s->div=byte(io+4);s->elapsed=word(0x22f604);s->remaining=word(0x22fa50);
- return (s->state&0x80000000U)&&s->native_keys==0xffffU;
+ return (s->state&0x80000000U)&&(s->native_keys&255U)==255U;
 }
 static int mac7119_write_report(const char*phase,uint64_t after){
  int n=snprintf(mac7119_json,sizeof(mac7119_json),
@@ -61,7 +61,7 @@ unsigned gate7119_poll(uint32_t held){
   unsigned e=mac7119_validate(req,&mac7119_meta,mac7119_hashes,mac7119_last_nonce,now,held);
   if(e){mac7119_reject(20+e);return 0;}
   uint32_t adv=0,st=suicune_native_pre_state(&adv);
-  if(!(st&0x80000000U)||adv!=mac7119_meta.advance||(st&65535)!=mac7119_meta.seed||(((uint32_t)byte(0x22f766)|((uint32_t)byte(0x22f767)<<8)))!=0xffffU){mac7119_reject(27);return 0;}
+  if(!(st&0x80000000U)||adv!=mac7119_meta.advance||(st&65535)!=mac7119_meta.seed||byte(0x22f766)!=255U){mac7119_reject(27);return 0;}
   mac7119_nonce=mac7119_u64(req+4);mac7119_last_nonce=mac7119_nonce;mac7119_requested_id=mac7119_meta.search_id;
   mac7119_frames=req[10];mac7119_fps=req[11];mac7119_deadline=mac7119_u64(req+12);mac7119_done=mac7119_inflight=0;mac7119_error=0;
   memset(mac7119_samples,0,sizeof(mac7119_samples));

@@ -15,7 +15,7 @@ uint64_t svcGetSystemTick(void){return tick;}
 int is_memory_mapped(uint32_t a){return 1;}
 uint32_t suicune_native_pre_state(uint32_t*a){*a=advance;return keys?0:state;}
 static uint32_t word(uint32_t a){if(a==0x22f644)return 0x8a01000;if(a==0x22f640)return 0x8a01010;if(a==0x22f6d8)return 0x8a02080;if(a==0x22f766)return native_keys;return 0;}
-static uint8_t byte(uint32_t a){return 0;}
+static uint8_t byte(uint32_t a){if(a==0x22f766)return native_keys&255;if(a==0x22f767)return native_keys>>8;return 0;}
 static uint64_t wide(uint32_t a){return 1;}
 int snapshot7119_request(uint32_t*w){if(read_fail)return 0;memcpy(w,request,128);return 1;}
 int snapshot7119_prepare(void){memset(request,0,128);return !prepare_fail;}

@@ -1,7 +1,7 @@
-name: Suicune v7.10.21 Manual Approach
+name: Suicune v7.10.22 Ordinary DV Calibration
 on:
   push:
-    branches: [suicune-v7121-manual]
+    branches: [suicune-v7122-calibration]
   workflow_dispatch:
 jobs:
   build:
@@ -73,6 +73,10 @@ jobs:
         run: |
           python3 apply_suicune_manual_v7121.py
           python3 verify_suicune_manual_v7121.py
+      - name: Apply and verify ordinary calibration snapshot policy
+        run: |
+          python3 apply_suicune_calibration_v7122.py
+          python3 verify_suicune_calibration_v7122.py
       - name: Build 3GX
         run: make
       - name: Package
@@ -113,9 +117,11 @@ jobs:
           cp -r v7121_manual v7102-package/
           cp apply_suicune_manual_v7121.py verify_suicune_manual_v7121.py v7102-package/
           cp 3gx/includes/manual7121.h v7102-package/generated/3gx/includes/
+          cp -r v7122_calibration v7102-package/
+          cp apply_suicune_calibration_v7122.py verify_suicune_calibration_v7122.py v7102-package/
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7121-Manual-Approach
+          name: PokeReader-Suicune-v7122-DV-Calibration
           path: v7102-package
           retention-days: 30

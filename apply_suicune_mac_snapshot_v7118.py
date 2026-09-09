@@ -15,6 +15,7 @@ a='        u32 held = get_current_keys();';assert s.count(a)==1;s=s.replace(a,a+
             continue;
         }
 ''');s=s.replace('S7117','S7118');p.write_text(s)
+p=r/'3gx/sources/main.c';s=p.read_text();a='                        if(gate7113_error()==0x711314) v7102_panel';assert s.count(a)==1;s=s.replace(a,'                        if(gate7113_error()==0x711301) mac7118_export_pending=true;\n'+a);p.write_text(s)
 p=r/'reader_core/src/crystal/trace.rs';s=p.read_text().replace('S7117','S7118').replace('STALLPHASE,V7117,','STALLPHASE,V7118,');p.write_text(s)
 p=r/'3gx/PokeReader.plgInfo';s=p.read_text().replace('    Major: 1','    Major: 7').replace('    Minor: 0','    Minor: 10').replace('    Revision: 0','    Revision: 18');p.write_text(s)
 print('Applied v7118 Mac snapshot: SELECT stops, release keys exports copy + PID; no auto launch')

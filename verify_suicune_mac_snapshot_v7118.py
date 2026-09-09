@@ -50,6 +50,7 @@ s=(r/'3gx/sources/main.c').read_text();assert s.count('gate7118_export(&pid)')==
 assert 'if(mac7118_export_pending)' in s and 'if(held){svcSleepThread(1000000);continue;}' in s
 assert 'S7118 MAC SNAPSHOT READY' in s and 'S7117' not in s
 assert 'mac7118_export_pending=true;' in s and 'NO GAME INPUT SENT' in s
+assert 'if(gate7113_error()==0x711301) mac7118_export_pending=true;' in s
 assert 'suicune_exact2_release_confirmed();' in s and 'suicune_neutral_probe_remaining--;' in s
 export=(r/'v7118_mac/export.inc').read_text()
 assert 'shadow7113_run(' not in export and 'gate7113_commit(' not in export

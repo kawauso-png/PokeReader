@@ -1,7 +1,7 @@
-name: Suicune v7.10.17 Broad Native Search
+name: Suicune v7.10.18 Mac Snapshot
 on:
   push:
-    branches: [suicune-v7108-ranked-hunt]
+    branches: [suicune-v7118-mac-snapshot]
   workflow_dispatch:
 jobs:
   build:
@@ -57,6 +57,10 @@ jobs:
         run: python3 apply_suicune_broad_prefix_v7117.py
       - name: Verify broad PRE search
         run: python3 verify_suicune_broad_prefix_v7117.py
+      - name: Apply and verify Mac snapshot export
+        run: |
+          python3 apply_suicune_mac_snapshot_v7118.py
+          python3 verify_suicune_mac_snapshot_v7118.py
       - name: Build 3GX
         run: make
       - name: Package
@@ -66,7 +70,7 @@ jobs:
           cp reader_core/src/crystal/trace.rs reader_core/src/crystal/hook.rs reader_core/src/crystal/research.rs reader_core/src/crystal/capture_plan.rs reader_core/src/crystal/mod.rs reader_core/src/crystal/clock7110.rs reader_core/src/crystal/snapshot7111.rs reader_core/src/crystal/rtc7112.rs v7102-package/generated/reader_core/src/crystal/
           cp 3gx/sources/main.c 3gx/sources/pnp.c v7102-package/generated/3gx/sources/
           cp 3gx/PokeReader.plgInfo v7102-package/generated/3gx/
-          cp -r v7102 v7108 v7110 v7111 v7112 v7113 v7114 v7115 v7116 v7117 v7102-package/
+          cp -r v7102 v7108 v7110 v7111 v7112 v7113 v7114 v7115 v7116 v7117 v7118_mac v7102-package/
           cp 3gx/sources/v7113_*.c v7102-package/generated/3gx/sources/
           cp 3gx/includes/arm_core.h 3gx/includes/shadow.h 3gx/includes/gate_runtime.h 3gx/includes/dv_endpoint.h v7102-package/generated/3gx/includes/
           cp 3gx/includes/snapshot.h 3gx/includes/const_core.h 3gx/includes/fast_dispatch.h v7102-package/generated/3gx/includes/
@@ -87,9 +91,10 @@ jobs:
           cp apply_suicune_clock_v7110.py verify_suicune_clock_v7110.py v7102-package/
           cp apply_suicune_ranked_hunt_v7108.py verify_suicune_v7108.py v7102-package/
           cp apply_suicune_causal_collector_v7102.py analyze_suicune_v7102.py verify_suicune_v7102.py v7102-package/
+          cp apply_suicune_mac_snapshot_v7118.py verify_suicune_mac_snapshot_v7118.py v7102-package/
           sha256sum out/default.3gx > v7102-package/sha256.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: PokeReader-Suicune-v7117-Broad-Native-Search
+          name: PokeReader-Suicune-v7118-Mac-Snapshot
           path: v7102-package
           retention-days: 30
